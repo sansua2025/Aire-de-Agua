@@ -1,0 +1,521 @@
+{
+  "name": "E3B - Amplitude Daily Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "cronExpression", "expression": "0 7 * * *" }
+          ]
+        }
+      },
+      "id": "a1b2c3d4-1001-4aaa-b001-000000000001",
+      "name": "Cron 7am COT",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [0, 400]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            { "id": "a1", "name": "yesterday", "value": "={{ $now.minus(1, \"day\").toFormat(\"yyyyMMdd\") }}", "type": "string" },
+            { "id": "a2", "name": "yesterdayISO", "value": "={{ $now.minus(1, \"day\").toFormat(\"yyyy-MM-dd\") }}", "type": "string" },
+            { "id": "a3", "name": "weekStart", "value": "={{ $now.minus(1, \"day\").startOf(\"week\").toFormat(\"yyyy-MM-dd\") }}", "type": "string" },
+            { "id": "a4", "name": "weekStartAmp", "value": "={{ $now.minus(1, \"day\").startOf(\"week\").toFormat(\"yyyyMMdd\") }}", "type": "string" },
+            { "id": "a5", "name": "isMonday", "value": "={{ $now.weekday === 1 }}", "type": "boolean" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-1001-4aaa-b001-000000000002",
+      "name": "Set Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [224, 400]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://amplitude.com/api/2/events/segmentation",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            { "name": "e", "value": "{\"event_type\":\"session_start\"}" },
+            { "name": "m", "value": "totals" },
+            { "name": "start", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
+            { "name": "end", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
+            { "name": "i", "value": "1" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-1001-4aaa-b001-000000000003",
+      "name": "Get Sessions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [480, 0],
+      "credentials": { "httpBasicAuth": { "id": "", "name": "Amplitude API" } }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://amplitude.com/api/2/events/segmentation",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            { "name": "e", "value": "{\"event_type\":\"_active\"}" },
+            { "name": "m", "value": "uniques" },
+            { "name": "start", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
+            { "name": "end", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
+            { "name": "i", "value": "1" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-1001-4aaa-b001-000000000004",
+      "name": "Get Active Users",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [480, 128],
+      "credentials": { "httpBasicAuth": { "id": "", "name": "Amplitude API" } }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://amplitude.com/api/2/users",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            { "name": "m", "value": "new" },
+            { "name": "start", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
+            { "name": "end", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
+            { "name": "i", "value": "1" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-1001-4aaa-b001-00000000000a",
+      "name": "Get New Users",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [480, 256],
+      "credentials": { "httpBasicAuth": { "id": "", "name": "Amplitude API" } }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://amplitude.com/api/2/events/segmentation",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            { "name": "e", "value": "{\"event_type\":\"[Amplitude] Page Viewed\"}" },
+            { "name": "m", "value": "totals" },
+            { "name": "start", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
+            { "name": "end", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
+            { "name": "i", "value": "1" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-1001-4aaa-b001-000000000005",
+      "name": "Get Pageviews",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [480, 384],
+      "credentials": { "httpBasicAuth": { "id": "", "name": "Amplitude API" } }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://amplitude.com/api/2/events/segmentation",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            { "name": "e", "value": "{\"event_type\":\"[Amplitude] Product Viewed\"}" },
+            { "name": "m", "value": "totals" },
+            { "name": "start", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
+            { "name": "end", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
+            { "name": "i", "value": "1" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-1001-4aaa-b001-000000000006",
+      "name": "Get Product Views",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [480, 512],
+      "credentials": { "httpBasicAuth": { "id": "", "name": "Amplitude API" } }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://amplitude.com/api/2/events/segmentation",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            { "name": "e", "value": "{\"event_type\":\"[Amplitude] Product Added To Cart\"}" },
+            { "name": "m", "value": "totals" },
+            { "name": "start", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
+            { "name": "end", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
+            { "name": "i", "value": "1" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-1001-4aaa-b001-000000000007",
+      "name": "Get Add to Cart",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [480, 640],
+      "credentials": { "httpBasicAuth": { "id": "", "name": "Amplitude API" } }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://amplitude.com/api/2/events/segmentation",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            { "name": "e", "value": "{\"event_type\":\"[Amplitude] Checkout Started\"}" },
+            { "name": "m", "value": "totals" },
+            { "name": "start", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
+            { "name": "end", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
+            { "name": "i", "value": "1" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-1001-4aaa-b001-000000000008",
+      "name": "Get Checkout",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [480, 768],
+      "credentials": { "httpBasicAuth": { "id": "", "name": "Amplitude API" } }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://amplitude.com/api/2/events/segmentation",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            { "name": "e", "value": "{\"event_type\":\"[Amplitude] Order Created\"}" },
+            { "name": "m", "value": "totals" },
+            { "name": "start", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
+            { "name": "end", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
+            { "name": "i", "value": "1" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-1001-4aaa-b001-000000000009",
+      "name": "Get Orders",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [480, 896],
+      "credentials": { "httpBasicAuth": { "id": "", "name": "Amplitude API" } }
+    },
+    {
+      "parameters": {
+        "mode": "append",
+        "numberInputs": 8
+      },
+      "id": "a1b2c3d4-1001-4aaa-b001-000000000020",
+      "name": "Merge",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [928, 400]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const yesterday = $(\"Set Config\").first().json.yesterdayISO;\nfunction getVal(nodeName) {\n  try {\n    const data = $(nodeName).first().json;\n    if (data && data.data && data.data.series && data.data.series[0]) {\n      return data.data.series[0][0] || 0;\n    }\n    return 0;\n  } catch (e) { return 0; }\n}\nconst sesiones = getVal(\"Get Sessions\");\nconst usuarios_activos = getVal(\"Get Active Users\");\nconst usuarios_nuevos = getVal(\"Get New Users\");\nconst pageviews = getVal(\"Get Pageviews\");\nconst vistas_producto = getVal(\"Get Product Views\");\nconst agrega_carrito = getVal(\"Get Add to Cart\");\nconst inicia_checkout = getVal(\"Get Checkout\");\nconst compras = getVal(\"Get Orders\");\nconst paginas_por_sesion = sesiones > 0 ? parseFloat((pageviews / sesiones).toFixed(2)) : 0;\nreturn [{ json: { metrics_data: { fecha: yesterday, sesiones, usuarios_activos, usuarios_nuevos, pageviews, vistas_producto, agrega_carrito, inicia_checkout, compras, duracion_sesion_avg: null, paginas_por_sesion, tasa_rebote: null } } }];"
+      },
+      "id": "a1b2c3d4-1001-4aaa-b001-000000000011",
+      "name": "Transform Daily Metrics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1184, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/rpc/upsert_amplitude_daily",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=representation" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ metrics_data: $json.metrics_data }) }}",
+        "options": {}
+      },
+      "id": "a1b2c3d4-1001-4aaa-b001-000000000012",
+      "name": "Upsert Daily Metrics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [1376, 400],
+      "credentials": { "httpHeaderAuth": { "id": "", "name": "Supabase API" } }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-isMonday",
+              "leftValue": "={{ $(\"Set Config\").first().json.isMonday }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-1001-4aaa-b001-000000000013",
+      "name": "If Monday",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [1600, 400]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://amplitude.com/api/2/events/segmentation",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            { "name": "e", "value": "{\"event_type\":\"[Amplitude] Product Viewed\",\"group_by\":[{\"type\":\"event\",\"value\":\"[Amplitude] Title\"}]}" },
+            { "name": "m", "value": "totals" },
+            { "name": "start", "value": "={{ $(\"Set Config\").first().json.weekStartAmp }}" },
+            { "name": "end", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
+            { "name": "i", "value": "7" },
+            { "name": "limit", "value": "20" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-1001-4aaa-b001-000000000014",
+      "name": "Get Top Products",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [1840, 208],
+      "credentials": { "httpBasicAuth": { "id": "", "name": "Amplitude API" } }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://amplitude.com/api/2/events/segmentation",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            { "name": "e", "value": "{\"event_type\":\"[Amplitude] Product Viewed\",\"group_by\":[{\"type\":\"event\",\"value\":\"[Amplitude] Title\"}]}" },
+            { "name": "m", "value": "uniques" },
+            { "name": "start", "value": "={{ $(\"Set Config\").first().json.weekStartAmp }}" },
+            { "name": "end", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
+            { "name": "i", "value": "7" },
+            { "name": "limit", "value": "20" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-1001-4aaa-b001-000000000015",
+      "name": "Get Top Uniques",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [2096, 208],
+      "credentials": { "httpBasicAuth": { "id": "", "name": "Amplitude API" } }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const ws = $(\"Set Config\").first().json.weekStart;\nconst vd = $(\"Get Top Products\").first().json;\nconst ud = $(\"Get Top Uniques\").first().json;\nconst lb = (vd && vd.data && vd.data.seriesLabels) || [];\nconst vs = (vd && vd.data && vd.data.seriesCollapsed) || [];\nconst us = (ud && ud.data && ud.data.seriesCollapsed) || [];\nfunction num(v) { if (v == null) return 0; if (typeof v === 'object') return Number(v.value) || 0; return Number(v) || 0; }\nfunction lbl(v) { if (Array.isArray(v)) return String(v[v.length - 1]); return String(v == null ? '' : v); }\nconst content = [];\nfor (let i = 0; i < lb.length; i++) {\n  const vistas = num(vs[i] && vs[i][0]);\n  if (vistas <= 0) continue;\n  const name = lbl(lb[i]);\n  content.push({ semana_inicio: ws, tipo: \"producto\", entidad_id: name, nombre: name, vistas: vistas, usuarios_unicos: num(us[i] && us[i][0]), tasa_conversion: null, posicion_ranking: i + 1 });\n}\nreturn [{ json: { content_data: content } }];"
+      },
+      "id": "a1b2c3d4-1001-4aaa-b001-000000000016",
+      "name": "Transform Top Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2352, 304]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/rpc/upsert_amplitude_top_content",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=representation" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ content_data: $json.content_data }) }}",
+        "options": {}
+      },
+      "id": "a1b2c3d4-1001-4aaa-b001-000000000017",
+      "name": "Upsert Top Content",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [2608, 304],
+      "credentials": { "httpHeaderAuth": { "id": "", "name": "Supabase API" } }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "{\"evento\":\"e3b_amplitude_daily\",\"entidad\":\"amplitude_daily_metrics\",\"estado\":\"ok\"}",
+        "options": {}
+      },
+      "id": "a1b2c3d4-1001-4aaa-b001-000000000018",
+      "name": "Log Sync Full",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [2864, 304],
+      "credentials": { "httpHeaderAuth": { "id": "", "name": "Supabase API" } }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "{\"evento\":\"e3b_amplitude_daily\",\"entidad\":\"amplitude_daily_metrics\",\"estado\":\"ok\"}",
+        "options": {}
+      },
+      "id": "a1b2c3d4-1001-4aaa-b001-000000000019",
+      "name": "Log Sync Daily",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [1840, 608],
+      "credentials": { "httpHeaderAuth": { "id": "", "name": "Supabase API" } }
+    }
+  ],
+  "connections": {
+    "Cron 7am COT": {
+      "main": [[{ "node": "Set Config", "type": "main", "index": 0 }]]
+    },
+    "Set Config": {
+      "main": [[
+        { "node": "Get Sessions", "type": "main", "index": 0 },
+        { "node": "Get Active Users", "type": "main", "index": 0 },
+        { "node": "Get New Users", "type": "main", "index": 0 },
+        { "node": "Get Pageviews", "type": "main", "index": 0 },
+        { "node": "Get Product Views", "type": "main", "index": 0 },
+        { "node": "Get Add to Cart", "type": "main", "index": 0 },
+        { "node": "Get Checkout", "type": "main", "index": 0 },
+        { "node": "Get Orders", "type": "main", "index": 0 }
+      ]]
+    },
+    "Get Sessions":      { "main": [[{ "node": "Merge", "type": "main", "index": 0 }]] },
+    "Get Active Users":  { "main": [[{ "node": "Merge", "type": "main", "index": 1 }]] },
+    "Get New Users":     { "main": [[{ "node": "Merge", "type": "main", "index": 2 }]] },
+    "Get Pageviews":     { "main": [[{ "node": "Merge", "type": "main", "index": 3 }]] },
+    "Get Product Views": { "main": [[{ "node": "Merge", "type": "main", "index": 4 }]] },
+    "Get Add to Cart":   { "main": [[{ "node": "Merge", "type": "main", "index": 5 }]] },
+    "Get Checkout":      { "main": [[{ "node": "Merge", "type": "main", "index": 6 }]] },
+    "Get Orders":        { "main": [[{ "node": "Merge", "type": "main", "index": 7 }]] },
+    "Merge": {
+      "main": [[{ "node": "Transform Daily Metrics", "type": "main", "index": 0 }]]
+    },
+    "Transform Daily Metrics": {
+      "main": [[{ "node": "Upsert Daily Metrics", "type": "main", "index": 0 }]]
+    },
+    "Upsert Daily Metrics": {
+      "main": [[{ "node": "If Monday", "type": "main", "index": 0 }]]
+    },
+    "If Monday": {
+      "main": [
+        [{ "node": "Get Top Products", "type": "main", "index": 0 }],
+        [{ "node": "Log Sync Daily", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Top Products": {
+      "main": [[{ "node": "Get Top Uniques", "type": "main", "index": 0 }]]
+    },
+    "Get Top Uniques": {
+      "main": [[{ "node": "Transform Top Content", "type": "main", "index": 0 }]]
+    },
+    "Transform Top Content": {
+      "main": [[{ "node": "Upsert Top Content", "type": "main", "index": 0 }]]
+    },
+    "Upsert Top Content": {
+      "main": [[{ "node": "Log Sync Full", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

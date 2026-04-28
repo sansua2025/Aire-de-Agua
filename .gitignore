@@ -1,0 +1,33 @@
+# Entornos
+.env
+.env.local
+.env.production
+.env.staging
+.env.development
+.env.test
+.env.*.local
+
+# Supabase CLI
+.supabase/
+supabase/.branches/
+
+# Dependencias
+node_modules/
+
+# Claves y certificados
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Datos con PII potencial o respuestas de API
+docs/Errores/*.json
+docs/products.json
