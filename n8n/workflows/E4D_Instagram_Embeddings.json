@@ -1,0 +1,130 @@
+{
+  "name": "E4D - Instagram Embeddings",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "059295f7-8890-4b90-a5e3-65247659131e",
+      "name": "Run Bulk Posts",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 304]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "triggerAtHour": 9, "triggerAtMinute": 30 }
+          ]
+        }
+      },
+      "id": "fcc787b6-246c-4c56-b5e8-52919446d5fe",
+      "name": "Schedule Diario Posts",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [0, 80]
+    },
+    {
+      "parameters": {
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/posts_pendientes_embedding?select=meta_post_id,plataforma,tipo,caption",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "4006b7b2-9c03-4aba-83f8-c30e39b335d9",
+      "name": "Fetch Posts Pendientes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [304, 304]
+    },
+    {
+      "parameters": {
+        "jsCode": "const posts = $input.all().map(i => i.json).filter(p => p.meta_post_id);\nif (!posts.length) return [];\nconst sanitize = (s) => s ? String(s).replace(/[\\x00-\\x1F]/g, \" \").substring(0, 3000) : \"\";\nconst texts = posts.map(p => {\n  const parts = [];\n  if (p.tipo) parts.push(p.tipo);\n  if (p.plataforma) parts.push(\"Plataforma: \" + p.plataforma);\n  if (p.caption) parts.push(\"Caption: \" + sanitize(p.caption));\n  return parts.join(\" | \");\n});\nreturn [{ json: { texts, posts } }];"
+      },
+      "id": "d05b4e0c-43dc-4e6d-8ea4-1f7e7b92ca42",
+      "name": "Preparar Textos Posts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [608, 304]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/embeddings",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: \"text-embedding-3-small\", input: $json.texts }) }}",
+        "options": {}
+      },
+      "id": "5cb6a2b1-519a-48f8-9042-7035263129e4",
+      "name": "OpenAI Embeddings Posts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [912, 304]
+    },
+    {
+      "parameters": {
+        "jsCode": "const embs = $input.first().json.data.sort((a, b) => a.index - b.index);\nconst d = $(\"Preparar Textos Posts\").first().json;\nreturn d.posts.map((p, i) => ({ json: {\n  meta_post_id: p.meta_post_id,\n  plataforma: p.plataforma || null,\n  tipo: p.tipo || null,\n  texto_fuente: d.texts[i],\n  embedding: embs[i].embedding,\n  modelo: \"text-embedding-3-small\"\n} }));"
+      },
+      "id": "3691d11d-cb2c-4c64-a61a-d025e57f6e0c",
+      "name": "Separar Embeddings Posts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 304]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/instagram_post_embeddings?on_conflict=meta_post_id",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal,resolution=merge-duplicates" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ meta_post_id: $json.meta_post_id, plataforma: $json.plataforma, tipo: $json.tipo, texto_fuente: $json.texto_fuente, embedding: $json.embedding, modelo: $json.modelo }) }}",
+        "options": {}
+      },
+      "id": "1294e55e-5c6b-4011-8e1d-ea9f03998744",
+      "name": "Guardar Embedding Post",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [1504, 304]
+    }
+  ],
+  "connections": {
+    "Run Bulk Posts": {
+      "main": [[{ "node": "Fetch Posts Pendientes", "type": "main", "index": 0 }]]
+    },
+    "Schedule Diario Posts": {
+      "main": [[{ "node": "Fetch Posts Pendientes", "type": "main", "index": 0 }]]
+    },
+    "Fetch Posts Pendientes": {
+      "main": [[{ "node": "Preparar Textos Posts", "type": "main", "index": 0 }]]
+    },
+    "Preparar Textos Posts": {
+      "main": [[{ "node": "OpenAI Embeddings Posts", "type": "main", "index": 0 }]]
+    },
+    "OpenAI Embeddings Posts": {
+      "main": [[{ "node": "Separar Embeddings Posts", "type": "main", "index": 0 }]]
+    },
+    "Separar Embeddings Posts": {
+      "main": [[{ "node": "Guardar Embedding Post", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
