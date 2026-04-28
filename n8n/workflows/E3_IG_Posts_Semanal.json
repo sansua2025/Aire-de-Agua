@@ -1,0 +1,148 @@
+{
+  "name": "E3 - IG Posts Semanal (Sheets → Supabase)",
+  "nodes": [
+    {
+      "id": "eef1a135-7455-4138-8e53-96fbc5070f17",
+      "name": "Domingo 10pm COT",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [-224, 112],
+      "parameters": {
+        "rule": { "interval": [{ "field": "weeks", "triggerAtHour": 22 }] }
+      }
+    },
+    {
+      "id": "c895ee2c-2d11-4872-88fe-aa6932955d9b",
+      "name": "Leer Posts Feed",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [0, 0],
+      "parameters": {
+        "documentId": { "__rl": true, "mode": "id", "value": "1iTRUildmV6RCdvzQwWqtMNBvsVZ7-zpxACWav5wiy74" },
+        "sheetName": { "__rl": true, "mode": "name", "value": "Post Performance" },
+        "options": {
+          "outputFormatting": {
+            "values": { "general": "FORMATTED_VALUE", "date": "FORMATTED_STRING" }
+          }
+        }
+      }
+    },
+    {
+      "id": "b912df37-32c4-419a-ab77-1aaeccc618a2",
+      "name": "Transformar Posts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [224, 0],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const posts = $input.all();\nconst results = [];\nfor (const item of posts) {\n  const d = item.json;\n  if (!d[\"Post link\"] && !d[\"Post ID\"]) continue;\n  const postLink = d[\"Post link\"] || \"\";\n  const m = postLink.match(/\\/p\\/([^\\/]+)\\//);\n  const shortcode = m ? m[1] : null;\n  const postId = String(d[\"Post ID\"] || \"\").trim();\n  if (!postId) continue;\n  const rawDate = String(d[\"Post date\"] || \"\");\n  if (rawDate.length !== 8) continue;\n  const fecha = rawDate.slice(0,4)+\"-\"+rawDate.slice(4,6)+\"-\"+rawDate.slice(6,8);\n  const postType = d[\"Post type\"] || \"\";\n  let tipo = \"feed\";\n  if (postType === \"CAROUSEL_ALBUM\") tipo = \"carousel\";\n  else if (postType === \"VIDEO\") tipo = \"reel\";\n  results.push({ json: {\n    upsert_key: postId,\n    post_shortcode: shortcode, post_url: postLink,\n    image_url: d[\"Post image URL\"] || null,\n    meta_post_id: postId,\n    plataforma: \"instagram\", tipo, fecha_publicacion: fecha,\n    caption: (d[\"Post caption\"] || \"\").substring(0, 3000),\n    alcance: Math.round(Number(d[\"Post reach\"]) || 0),\n    impresiones: Math.round(Number(d[\"Post impressions\"]) || 0),\n    likes: Math.round(Number(d[\"Post likes\"]) || 0),\n    comentarios: Math.round(Number(d[\"Post comments count\"]) || 0),\n    guardados: Math.round(Number(d[\"Post saves\"]) || 0),\n    engagement_rate: Number(d[\"Post engagement rate\"]) || 0,\n    compartidos: 0, visualizaciones: 0\n  }});\n}\nreturn results;"
+      }
+    },
+    {
+      "id": "4af2e322-f2e5-4c0c-b145-64bafd5063a4",
+      "name": "Leer Reels",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [0, 208],
+      "parameters": {
+        "documentId": { "__rl": true, "mode": "id", "value": "1iTRUildmV6RCdvzQwWqtMNBvsVZ7-zpxACWav5wiy74" },
+        "sheetName": { "__rl": true, "mode": "name", "value": "Reels" },
+        "options": {
+          "outputFormatting": {
+            "values": { "general": "FORMATTED_VALUE", "date": "FORMATTED_STRING" }
+          }
+        }
+      }
+    },
+    {
+      "id": "5dc27d79-b489-470b-ab12-b751daf0a9b7",
+      "name": "Transformar Reels",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [224, 208],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const reels = $input.all();\nconst seen = new Map();\nfor (const item of reels) {\n  const d = item.json;\n  const postId = String(d[\"Post ID\"] || \"\").trim();\n  if (!postId) continue;\n  const rawDate = String(d[\"Post date\"] || \"\");\n  if (rawDate.length !== 8) continue;\n  const fecha = rawDate.slice(0,4)+\"-\"+rawDate.slice(4,6)+\"-\"+rawDate.slice(6,8);\n  const existing = seen.get(postId);\n  const likes = Math.round(Number(d[\"Reels likes\"]) || 0);\n  if (existing && existing.likes >= likes) continue;\n  seen.set(postId, {\n    upsert_key: postId,\n    post_shortcode: null, post_url: null,\n    meta_post_id: postId,\n    plataforma: \"instagram\", tipo: \"reel\", fecha_publicacion: fecha,\n    caption: (d[\"Post caption\"] || \"\").substring(0, 3000),\n    alcance: 0, impresiones: 0, likes,\n    comentarios: Math.round(Number(d[\"Reels comments\"]) || 0),\n    guardados: 0, engagement_rate: 0,\n    compartidos: Math.round(Number(d[\"Reels shares\"]) || 0),\n    visualizaciones: Math.round(Number(d[\"Reels plays\"]) || 0)\n  });\n}\nreturn Array.from(seen.values()).map(json => ({ json }));"
+      }
+    },
+    {
+      "id": "c8096e52-0fb6-49d4-b59e-b6f18ac609b9",
+      "name": "Merge Posts + Reels",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [448, 112],
+      "parameters": { "mode": "append" }
+    },
+    {
+      "id": "17fca423-1cc2-47d3-941f-113f89863c71",
+      "name": "Split en Batches",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [672, 112],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const items = $input.all();\nconst SCHEMA = [\"upsert_key\",\"post_shortcode\",\"post_url\",\"image_url\",\"meta_post_id\",\n  \"plataforma\",\"tipo\",\"fecha_publicacion\",\"caption\",\"alcance\",\"impresiones\",\"likes\",\n  \"comentarios\",\"guardados\",\"engagement_rate\",\"compartidos\",\"visualizaciones\"];\nconst normalized = items.map(it => {\n  const out = {};\n  for (const k of SCHEMA) out[k] = it.json[k] !== undefined ? it.json[k] : null;\n  return out;\n});\nconst batchSize = 50;\nconst batches = [];\nfor (let i = 0; i < normalized.length; i += batchSize) {\n  batches.push({ json: { batch: normalized.slice(i, i + batchSize) }});\n}\nreturn batches;"
+      }
+    },
+    {
+      "id": "6333c7d5-6fe5-41d3-a295-c0cf186d958c",
+      "name": "Upsert Supabase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [896, 112],
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/meta_organic_posts",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": { "parameters": [{ "name": "on_conflict", "value": "upsert_key" }] },
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "resolution=merge-duplicates,return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.batch) }}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Domingo 10pm COT": {
+      "main": [[
+        { "node": "Leer Posts Feed", "type": "main", "index": 0 },
+        { "node": "Leer Reels", "type": "main", "index": 0 }
+      ]]
+    },
+    "Leer Posts Feed": {
+      "main": [[{ "node": "Transformar Posts", "type": "main", "index": 0 }]]
+    },
+    "Transformar Posts": {
+      "main": [[{ "node": "Merge Posts + Reels", "type": "main", "index": 0 }]]
+    },
+    "Leer Reels": {
+      "main": [[{ "node": "Transformar Reels", "type": "main", "index": 0 }]]
+    },
+    "Transformar Reels": {
+      "main": [[{ "node": "Merge Posts + Reels", "type": "main", "index": 1 }]]
+    },
+    "Merge Posts + Reels": {
+      "main": [[{ "node": "Split en Batches", "type": "main", "index": 0 }]]
+    },
+    "Split en Batches": {
+      "main": [[{ "node": "Upsert Supabase", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
