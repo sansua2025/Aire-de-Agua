@@ -1,0 +1,146 @@
+# E5 · Loop semanal de aprendizaje — Runbook operacional
+
+> Última actualización: 2026-04-30
+> Linear: [AIR-9](https://linear.app/airedeagua/issue/AIR-9)
+
+## Arquitectura en 30 segundos
+
+```
+[Cron lunes 7am COT]  →  Loop - Weekly Analysis     →  email + insights
+[Cron diario 8am COT] →  Loop - Closer Daily        →  ajusta score por evidencia 28d post-acción
+[Cron diario 9am COT] →  Loop - Health Check        →  alerta si weekly stale >8d
+[Cron mensual día 1]  →  Loop - Insights Decay      →  archiva insights sin reconfirmar >56d
+```
+
+**Principio rector:** SQL calcula, Claude solo interpreta. Toda métrica/delta/anomalía vive en RPCs `analytics.*`; el LLM jamás computa números.
+
+## Workflows en n8n cloud
+
+| Workflow | ID | Cron | Frecuencia |
+|---|---|---|---|
+| Loop - Weekly Analysis | `9uDRQuIEOjKwRfYF` | `0 12 * * 1` UTC | Lunes 7am COT |
+| Loop - Closer Daily | `GuopyIlOL1z4FPXM` | `0 13 * * *` UTC | Diario 8am COT |
+| Loop - Health Check | `9NJ9rL5opJVneBSv` | `0 14 * * *` UTC | Diario 9am COT |
+| Loop - Insights Decay | `4OI0n6oZ4hoVEO7L` | `0 14 1 * *` UTC | Día 1 de cada mes |
+
+**Credenciales requeridas** (mismas para los 4 workflows):
+- `Supabase API` (httpHeaderAuth con `Authorization: Bearer <service_role_key>`)
+- `Anthropic API` (httpHeaderAuth con `x-api-key`)
+- `Gmail account` (gmailOAuth2)
+
+## Capa analítica en Supabase
+
+**Schema `analytics`** — solo funciones y vistas:
+- `compute_weekly_snapshot(p_inicio, p_fin)` — UPSERT idempotente
+- `detect_anomalies(p_inicio, p_fin)` — z-score sobre ventana 8w (NULL si n<4)
+- `recompute_creative_learnings(p_lookback_days)` — suavizado bayesiano k=10
+- `recompute_audience_segments(p_fecha_corte)` — RFM-light: VIP/Recurrente/Nuevo/Riesgo/Dormant
+- `upsert_insight(p_insight jsonb)` — dedup ILIKE + cosine_distance(embedding) < 0.15
+- `close_insight_loop(p_insight_id uuid)` — eficacia retrospectiva 28d post-acción
+- `decay_stale_insights()` — vigente=false si sin reconfirmar >56d
+- `metric_value_in_range(metrica, inicio, fin)` — helper para close_insight_loop
+- 5 vistas `view_dashboard_*` (sin PII, para Looker Studio)
+
+**Wrappers en `public`** (para PostgREST): `analytics_<rpc_name>` por cada RPC. Vistas `v_loop_pending_close`, `v_loop_system_health`.
+
+**Tablas afectadas (siempre en `public`):**
+- `weekly_snapshot` (UPSERT por `semana_inicio`)
+- `insights` (UPSERT con dedup, columna `accion_evaluada` agregada en E5-D)
+- `creative_learnings` (UPSERT por `(elemento, valor, canal)`)
+- `audience_segments` (UPSERT por `nombre`)
+- `ai_analysis_log` (INSERT por corrida)
+
+## Operaciones comunes
+
+### Re-correr una semana específica
+
+Hay 2 caminos según la naturaleza:
+
+**Solo recomputar el snapshot determinístico** (sin Claude, sin email):
+```sql
+SELECT analytics.compute_weekly_snapshot('2026-04-13'::date, '2026-04-19'::date);
+```
+Idempotente — se puede correr cualquier número de veces.
+
+**Re-correr el análisis completo** (con Claude + email):
+- En n8n abrir `Loop - Weekly Analysis` → Execute Workflow.
+- Por defecto, calcula la semana inmediatamente anterior (`now - 7d` startOf week → `now - 1d`). Si necesitás otra semana, editar temporalmente el nodo `Set Week Config` para hardcodear las fechas, ejecutar, y revertir.
+
+### Backfillear semanas históricas
+
+Usar el script SQL reutilizable:
+```bash
+# Editar v_inicio_global y v_fin_global en el archivo, luego:
+psql "$SUPABASE_URL" -f supabase/scripts/loop_backfill_snapshots.sql
+```
+O pegarlo en el SQL Editor de Supabase. Es cronológico forzado (oldest first) para que los `delta_*_pct` se calculen contra el snapshot previo real.
+
+### Marcar un insight como "acción tomada"
+
+```sql
+UPDATE public.insights
+SET accion_tomada = true, ultima_confirmacion = now()
+WHERE id = '<uuid>';
+```
+Después de 28 días, el `Loop - Closer Daily` lo evaluará automáticamente y ajustará el score.
+
+### Disparar manualmente el cierre de un insight específico
+
+```sql
+SELECT analytics.close_insight_loop('<uuid>');
+```
+
+### Ver candidatos a cierre
+
+```sql
+SELECT * FROM public.v_loop_pending_close;
+```
+
+### Ver salud del loop
+
+```sql
+SELECT * FROM public.v_loop_system_health;
+```
+
+## Errores comunes y diagnóstico
+
+| Síntoma | Causa típica | Fix |
+|---|---|---|
+| Email semanal no llegó el lunes | Workflow desactivado, credencial caída, o Claude rate-limit | Revisar `ai_analysis_log` últimas 7d. Si no hay fila para el lunes: el workflow no corrió (revisar n8n executions). Si fila tiene `estado=error`: revisar `error_mensaje`. |
+| `upstream_stale: sync_log >24h` | Algún workflow E3* no corrió | Revisar workflows E3 (Meta, Amplitude, Klaviyo). El loop weekly aborta correctamente para no analizar datos viejos. |
+| `Claude response not valid JSON` | Claude respondió con markdown o texto extra | El parser tiene fallback de extracción markdown. Si persiste: revisar el prompt en el nodo `Build Prompt (sanitized)`. |
+| `insights_dominio_check` violation | Claude generó un dominio fuera del enum permitido | Expandir el constraint `insights_dominio_check` con el valor nuevo (ver migración 032 como ejemplo). |
+| Anomalías z=∞ o ruidosas | Pocas observaciones históricas (n<4 efectivo) | Esperar más semanas. La RPC retorna `confiable: false` con n<4. |
+
+## Parámetros ajustables
+
+Para cambiar comportamiento, editar la migración correspondiente y aplicar `CREATE OR REPLACE FUNCTION`:
+
+| Parámetro | Default | Migración | Efecto |
+|---|---|---|---|
+| Ventana z-score anomalías | 8 semanas | `025_analytics_detect_anomalies.sql` | Cambiar `LIMIT 8` |
+| Umbral z-score | 2.0 | `025` | Cambiar `ABS(z) >= 2.0` |
+| k Bayesiano (creative_learnings) | 10 | `026_analytics_recompute_creative_learnings.sql` | Cambiar literal `10` |
+| Lookback creative_learnings | 28 días | `026` | Parámetro `p_lookback_days` |
+| Threshold cosine dedup | 0.15 | `028_analytics_upsert_insight.sql` | Cambiar `< 0.15` |
+| Score growth function | `s + (1-s)*0.15` | `028` | Cambiar `0.15` |
+| Score decay sin_cambio | -0.05 | `033_analytics_close_insight_loop.sql` | Cambiar `- 0.05` |
+| Score boost confirmado | +0.10 | `033` | Cambiar `+ 0.10` |
+| Decay umbral | 56 días | `035_analytics_decay_and_system_health.sql` | Cambiar `INTERVAL '56 days'` |
+
+## Limitaciones conocidas
+
+1. **Atribución Meta→Shopify caída** — `roas_meta=0` casi siempre. El loop lo refleja correctamente (no oculta). Resolver via [AIR-44](https://linear.app/airedeagua/issue/AIR-44).
+2. **Klaviyo no integrado** — métricas de email en NULL hasta que E3E esté activo. El `audience_segments` queda con datos pero sin enriquecer accion_klaviyo hasta entonces.
+3. **`detect_anomalies` ruidoso con n<4 efectivo** — para métricas como `cvr_web` que solo tienen valor en algunas semanas (gap de Amplitude), z-score se computa sobre poca muestra. Comportamiento correcto pero los z-scores pueden ser dramáticos (ej. z=5.7) hasta acumular más historia.
+4. **Score asimétrico simple** — el `close_insight_loop` actual usa heurística direccional débil (no distingue "más es mejor" vs "menos es mejor" por métrica). v2 podría añadir un campo `signo_predicho` al schema de insights.
+5. **MCP `update_workflow` desconecta credenciales** — para cambios pequeños usar la UI; para cambios estructurales usar SDK pero presupuestar reasignación de credenciales.
+
+## Métricas de éxito del épico (criterios de cierre AIR-9)
+
+- [x] `weekly_snapshot` se llena cada lunes 7am COT sin intervención
+- [x] Mínimo 3 insights creados/actualizados por corrida
+- [x] `veces_confirmado` y `score_confianza` evolucionan con la fórmula no lineal
+- [ ] Dashboard Looker accesible para stakeholders no técnicos (E5-E pendiente)
+- [x] Email semanal legible llega al inbox
+- [ ] `view_system_health` muestra cobertura_loop_pct >80% (requiere 28d operando + acciones marcadas)
