@@ -28,6 +28,9 @@ logs/
 .DS_Store
 Thumbs.db
 
+# Claude Code local settings
+.claude/
+
 # Datos con PII potencial o respuestas de API
 docs/Errores/*.json
 docs/products.json
