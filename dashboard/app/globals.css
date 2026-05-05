@@ -1,0 +1,168 @@
+@import "tailwindcss";
+
+/* =============================================================================
+ * Design tokens — Light theme (única tema en v1.0; dark queda en backlog)
+ * Adaptados del wireframe Dashboard AdeA/styles.css con paleta AdeA navy
+ * =============================================================================
+ */
+:root,
+:root[data-theme="light"] {
+  /* Backgrounds escalonados */
+  --bg:           oklch(0.99 0.003 250);
+  --bg-elev-1:    oklch(1 0 0);
+  --bg-elev-2:    oklch(0.985 0.003 250);
+  --bg-elev-3:    oklch(0.97 0.005 250);
+  --bg-hover:     oklch(0.965 0.005 250);
+  --bg-active:    oklch(0.95 0.008 250);
+
+  /* Foreground escalonado */
+  --fg:           oklch(0.20 0.015 250);
+  --fg-muted:     oklch(0.40 0.015 250);
+  --fg-subtle:    oklch(0.55 0.014 250);
+  --fg-faint:     oklch(0.70 0.012 250);
+
+  /* Borders */
+  --border:        oklch(0.91 0.008 250);
+  --border-strong: oklch(0.85 0.008 250);
+  --border-subtle: oklch(0.945 0.006 250);
+
+  /* Accent — Navy AdeA */
+  --accent:       oklch(0.50 0.18 250);
+  --accent-fg:    oklch(0.99 0 0);
+  --accent-bg:    oklch(0.92 0.05 250);
+  --accent-soft:  oklch(0.96 0.025 250);
+
+  /* Semánticos */
+  --success:      oklch(0.55 0.16 155);
+  --success-bg:   oklch(0.94 0.05 155);
+  --success-soft: oklch(0.97 0.025 155);
+
+  --danger:       oklch(0.55 0.20 25);
+  --danger-bg:    oklch(0.95 0.04 25);
+  --danger-soft:  oklch(0.98 0.018 25);
+
+  --warning:      oklch(0.65 0.16 75);
+  --warning-bg:   oklch(0.95 0.06 75);
+  --warning-soft: oklch(0.98 0.025 75);
+
+  /* Sombras */
+  --shadow-sm:  0 1px 2px rgba(15,23,42,0.06);
+  --shadow-md:  0 6px 16px rgba(15,23,42,0.08);
+  --shadow-lg:  0 16px 40px rgba(15,23,42,0.10);
+  --shadow-pop: 0 8px 24px rgba(15,23,42,0.12), 0 0 0 1px var(--border);
+
+  /* Charts */
+  --grid-line: var(--border-subtle);
+}
+
+/* =============================================================================
+ * Tailwind v4 theme — expone tokens como utility classes
+ * =============================================================================
+ */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-bg-elev-1: var(--bg-elev-1);
+  --color-bg-elev-2: var(--bg-elev-2);
+  --color-bg-elev-3: var(--bg-elev-3);
+  --color-bg-hover: var(--bg-hover);
+  --color-bg-active: var(--bg-active);
+
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-subtle: var(--fg-subtle);
+  --color-fg-faint: var(--fg-faint);
+
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-border-subtle: var(--border-subtle);
+
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-bg: var(--accent-bg);
+  --color-accent-soft: var(--accent-soft);
+
+  --color-success: var(--success);
+  --color-success-bg: var(--success-bg);
+  --color-danger: var(--danger);
+  --color-danger-bg: var(--danger-bg);
+  --color-warning: var(--warning);
+  --color-warning-bg: var(--warning-bg);
+
+  --font-sans: var(--font-inter), Inter, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), 'JetBrains Mono', ui-monospace, monospace;
+}
+
+/* =============================================================================
+ * Base styles
+ * =============================================================================
+ */
+html, body {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Tabular numbers — para alineación de números en tablas y KPIs */
+.tnum {
+  font-feature-settings: 'tnum';
+  font-variant-numeric: tabular-nums;
+}
+
+/* =============================================================================
+ * App shell — sidebar + main + content
+ * =============================================================================
+ */
+.app-shell {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  height: 100vh;
+}
+.app-shell[data-sidebar="collapsed"] {
+  grid-template-columns: 64px 1fr;
+}
+
+.app-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.app-content {
+  flex: 1;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.app-content::-webkit-scrollbar { width: 8px; height: 8px; }
+.app-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+.app-content::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+.app-content::-webkit-scrollbar-track { background: transparent; }
+
+.app-page {
+  padding: 20px 28px 64px;
+  max-width: 1600px;
+  margin: 0 auto;
+}
+
+/* =============================================================================
+ * Print — para exportar PDF con window.print()
+ * =============================================================================
+ */
+@media print {
+  @page { size: A4 landscape; margin: 12mm; }
+  .no-print, aside, header.topbar { display: none !important; }
+  .app-shell { display: block; }
+  .app-content { overflow: visible !important; height: auto !important; }
+  .app-page { max-width: none; padding: 0; }
+  /* Evita cortar cards a la mitad */
+  .card, .kpi { break-inside: avoid; }
+}
