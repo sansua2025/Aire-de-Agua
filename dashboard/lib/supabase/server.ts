@@ -21,6 +21,9 @@ if (!supabaseUrl || !supabaseKey) {
  * - Tipos manuales (types/analytics.ts) porque `supabase gen types` solo emite
  *   schema `public`
  */
+// El cliente apunta directo a schema `analytics` — single source of truth.
+// PostgREST lo expone vía el setting `pgrst.db_schemas` en el rol authenticator
+// (mig 046b). El cliente envía `Accept-Profile: analytics` automáticamente.
 export const supabase = createClient<AnalyticsDatabase>(supabaseUrl, supabaseKey, {
   db: { schema: 'analytics' },
   auth: { persistSession: false, autoRefreshToken: false },

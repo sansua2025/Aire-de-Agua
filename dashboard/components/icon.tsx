@@ -17,9 +17,10 @@ interface IconProps {
   name: IconName
   size?: number
   className?: string
+  style?: React.CSSProperties
 }
 
-export function Icon({ name, size = 16, className = '' }: IconProps) {
+export function Icon({ name, size = 16, className = '', style }: IconProps) {
   const props = {
     width: size,
     height: size,
@@ -30,6 +31,7 @@ export function Icon({ name, size = 16, className = '' }: IconProps) {
     strokeLinecap: 'round' as const,
     strokeLinejoin: 'round' as const,
     className,
+    style,
     'aria-hidden': true,
   }
 

@@ -3,24 +3,20 @@ import { unstable_cache } from 'next/cache'
 import { supabase } from '@/lib/supabase/server'
 
 /**
- * Capa de queries server-side con caché por tags.
+ * Capa de queries server-side cacheadas con tags.
+ * Cliente scopeado a `analytics` schema (mig 046b expone via authenticator).
  *
- * Patrón:
- *   - Cada query envuelta en unstable_cache con tag(s) específicos
- *   - revalidate fallback de 1h (ver decisión arquitectónica AIR-55)
- *   - Tags invalidables vía POST /api/revalidate desde n8n al final del Loop
- *
- * Tags canónicos:
- *   weekly   → invalida Loop - Weekly Analysis (lunes 7am COT)
- *   daily    → invalida Loop - Closer Daily (8am COT)
- *   insights → invalida tras upsert_insight + decay
- *   paid     → invalida E3 Meta Ads Daily Sync (6am COT)
- *   funnel   → invalida E3B Amplitude Daily Sync (7am COT)
- *   email    → invalida E3E Klaviyo Daily Sync (8am COT)
- *   producto → invalida E2 webhooks Shopify Products/Orders/Inventory
+ * Tags canónicos invalidables vía POST /api/revalidate desde n8n:
+ *   weekly   → Loop - Weekly Analysis (lunes 7am COT)
+ *   daily    → Loop - Closer Daily (8am COT)
+ *   insights → upsert_insight + decay
+ *   paid     → E3 Meta Ads Daily Sync (6am COT)
+ *   funnel   → E3B Amplitude Daily Sync (7am COT)
+ *   email    → E3E Klaviyo Daily Sync (8am COT)
+ *   producto → E2 webhooks Shopify Products/Orders/Inventory
  */
 
-const CACHE_FALLBACK_SECONDS = 3600 // 1h — el architect lo bajó de 6h
+const CACHE_FALLBACK_SECONDS = 3600
 
 // =============================================================================
 // Overview
@@ -33,7 +29,7 @@ export const getWeeklyKpi = unstable_cache(
       .select('*')
       .order('semana_inicio', { ascending: false })
       .limit(1)
-      .single()
+      .maybeSingle()
     if (error) throw error
     return data
   },
@@ -48,7 +44,7 @@ export const getKpiHistory = unstable_cache(
       .select('*')
       .order('semana_inicio', { ascending: true })
     if (error) throw error
-    return data
+    return data ?? []
   },
   ['kpi_history'],
   { tags: ['weekly'], revalidate: CACHE_FALLBACK_SECONDS }
@@ -60,7 +56,7 @@ export const getChannelsMix = unstable_cache(
       .from('view_dashboard_channels_mix')
       .select('*')
     if (error) throw error
-    return data
+    return data ?? []
   },
   ['channels_mix'],
   { tags: ['weekly'], revalidate: CACHE_FALLBACK_SECONDS }
@@ -77,7 +73,7 @@ export const getFunnel = unstable_cache(
       .select('*')
       .order('fecha', { ascending: false })
     if (error) throw error
-    return data
+    return data ?? []
   },
   ['funnel'],
   { tags: ['funnel'], revalidate: CACHE_FALLBACK_SECONDS }
@@ -94,7 +90,7 @@ export const getPaidCampaigns = unstable_cache(
       .select('*')
       .order('gasto', { ascending: false })
     if (error) throw error
-    return data
+    return data ?? []
   },
   ['paid_campaigns'],
   { tags: ['paid'], revalidate: CACHE_FALLBACK_SECONDS }
@@ -106,7 +102,7 @@ export const getTopAds = unstable_cache(
       .from('view_dashboard_top_ads')
       .select('*')
     if (error) throw error
-    return data
+    return data ?? []
   },
   ['top_ads'],
   { tags: ['paid'], revalidate: CACHE_FALLBACK_SECONDS }
@@ -118,7 +114,7 @@ export const getCreativeLearnings = unstable_cache(
       .from('view_dashboard_creative_learnings')
       .select('*')
     if (error) throw error
-    return data
+    return data ?? []
   },
   ['creative_learnings'],
   { tags: ['weekly'], revalidate: CACHE_FALLBACK_SECONDS }
@@ -134,7 +130,7 @@ export const getTopSkus = unstable_cache(
       .from('view_dashboard_top_skus')
       .select('*')
     if (error) throw error
-    return data
+    return data ?? []
   },
   ['top_skus'],
   { tags: ['producto'], revalidate: CACHE_FALLBACK_SECONDS }
@@ -146,7 +142,7 @@ export const getInventoryHealth = unstable_cache(
       .from('view_dashboard_inventory_health')
       .select('*')
     if (error) throw error
-    return data
+    return data ?? []
   },
   ['inventory_health'],
   { tags: ['producto'], revalidate: CACHE_FALLBACK_SECONDS }
@@ -158,7 +154,7 @@ export const getDiscountMix = unstable_cache(
       .from('view_dashboard_discount_mix')
       .select('*')
     if (error) throw error
-    return data
+    return data ?? []
   },
   ['discount_mix'],
   { tags: ['producto'], revalidate: CACHE_FALLBACK_SECONDS }
@@ -174,7 +170,7 @@ export const getCustomerPanel = unstable_cache(
       .from('view_dashboard_customer_panel')
       .select('*')
     if (error) throw error
-    return data
+    return data ?? []
   },
   ['customer_panel'],
   { tags: ['weekly'], revalidate: CACHE_FALLBACK_SECONDS }
@@ -186,7 +182,7 @@ export const getInsightsActivos = unstable_cache(
       .from('view_dashboard_insights_activos')
       .select('*')
     if (error) throw error
-    return data
+    return data ?? []
   },
   ['insights_activos'],
   { tags: ['insights'], revalidate: CACHE_FALLBACK_SECONDS }
@@ -198,7 +194,7 @@ export const getAnomalias = unstable_cache(
       .from('view_dashboard_anomalias')
       .select('*')
     if (error) throw error
-    return data
+    return data ?? []
   },
   ['anomalias'],
   { tags: ['insights'], revalidate: CACHE_FALLBACK_SECONDS }

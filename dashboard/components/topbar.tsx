@@ -1,19 +1,9 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { useRouter, usePathname, useSearchParams } from 'next/navigation'
 import { Icon } from './icon'
-
-/**
- * Topbar global con título de página + 3 filtros (período, canal, comparar) + acciones.
- *
- * Decisiones AIR-55:
- *   - Filtros persisten en URL (?range=7d&channel=all&compare=prev_week)
- *     → Server Components leen searchParams y reactualizan queries cacheadas
- *   - `compare: vs año anterior` deshabilitado hasta sep 2026 (sin 12 meses de historia)
- *   - `channel` solo aplica a Overview/Funnel/Producto; en Paid/Email queda gris
- *   - Title/subtitle derivados de pathname (un solo lugar, single source of truth)
- */
 
 const PAGE_META: Record<string, { title: string; subtitle: string }> = {
   '/':           { title: 'Resumen ejecutivo',     subtitle: 'view_dashboard_weekly_kpi · KPIs semana en curso' },
@@ -41,13 +31,13 @@ const channelOptions = [
 
 const compareOptions = [
   { value: 'prev_week', label: 'vs semana anterior',          disabled: false },
-  { value: 'prev_year', label: 'vs mismo período año ant.',   disabled: true,  note: 'Disponible en sep 2026' },
+  { value: 'prev_year', label: 'vs mismo período año ant.',   disabled: true,  note: 'sep 2026' },
   { value: 'goal',      label: 'vs meta',                     disabled: false },
   { value: 'none',      label: 'Sin comparativa',             disabled: false },
 ] as const
 
 interface TopbarProps {
-  signOutSlot?: React.ReactNode
+  signOutSlot?: ReactNode
 }
 
 export function Topbar({ signOutSlot }: TopbarProps) {
@@ -69,19 +59,15 @@ export function Topbar({ signOutSlot }: TopbarProps) {
   const channelDisabled = pathname.startsWith('/paid') || pathname.startsWith('/email')
 
   return (
-    <header className="topbar h-14 border-b border-border-subtle bg-bg-elev-1 px-6 flex items-center gap-4 shrink-0">
-      <div className="flex-1 min-w-0">
-        <h1 className="text-[14px] font-semibold text-fg leading-tight truncate">
-          {meta.title}
-        </h1>
-        {meta.subtitle && (
-          <div className="text-[11px] text-fg-subtle font-mono leading-tight truncate">
-            {meta.subtitle}
-          </div>
-        )}
+    <header className="topbar">
+      <div className="topbar-title">
+        <h1>{meta.title}</h1>
+        {meta.subtitle && <div className="crumb">{meta.subtitle}</div>}
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="topbar-spacer" />
+
+      <div className="topbar-filters">
         <FilterDropdown
           icon="cal"
           label="Período"
@@ -106,12 +92,12 @@ export function Topbar({ signOutSlot }: TopbarProps) {
           onChange={(v) => updateParam('compare', v)}
         />
 
-        <div className="w-px h-6 bg-border mx-1" />
+        <div style={{ width: 1, height: 22, background: 'var(--border)', margin: '0 4px' }} />
 
         <button
           type="button"
-          className="p-2 rounded-md text-fg-subtle hover:bg-bg-hover hover:text-fg transition-colors"
-          aria-label="Refrescar datos"
+          className="icon-btn"
+          aria-label="Refrescar"
           title="Refrescar datos"
           onClick={() => router.refresh()}
         >
@@ -119,7 +105,7 @@ export function Topbar({ signOutSlot }: TopbarProps) {
         </button>
         <button
           type="button"
-          className="p-2 rounded-md text-fg-subtle hover:bg-bg-hover hover:text-fg transition-colors no-print"
+          className="icon-btn no-print"
           aria-label="Exportar PDF"
           title="Exportar PDF"
           onClick={() => window.print()}
@@ -131,10 +117,6 @@ export function Topbar({ signOutSlot }: TopbarProps) {
     </header>
   )
 }
-
-// =============================================================================
-// FilterDropdown
-// =============================================================================
 
 interface FilterOption {
   value: string
@@ -156,77 +138,107 @@ interface FilterDropdownProps {
 function FilterDropdown({
   icon, label, value, options, onChange, disabled, disabledNote,
 }: FilterDropdownProps) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
+  const [open, setOpen] = useState<{ top: number; right: number } | null>(null)
+  const [mounted, setMounted] = useState(false)
+  const btnRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
 
+  useEffect(() => setMounted(true), [])
+
+  // Click fuera cierra el menu (chequea botón Y menu portal)
   useEffect(() => {
+    if (!open) return
     const onDocClick = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false)
+      const t = e.target as Node
+      if (btnRef.current?.contains(t)) return
+      if (menuRef.current?.contains(t)) return
+      setOpen(null)
     }
-    document.addEventListener('mousedown', onDocClick)
-    return () => document.removeEventListener('mousedown', onDocClick)
-  }, [])
+    // Usamos click (no mousedown) para no interceptar el toggle del botón
+    document.addEventListener('click', onDocClick)
+    return () => document.removeEventListener('click', onDocClick)
+  }, [open])
+
+  // Cierra al hacer scroll/resize (posición fixed quedaría descalibrada)
+  useEffect(() => {
+    if (!open) return
+    const close = () => setOpen(null)
+    window.addEventListener('scroll', close, true)
+    window.addEventListener('resize', close)
+    return () => {
+      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('resize', close)
+    }
+  }, [open])
+
+  const toggle = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (open) {
+      setOpen(null)
+      return
+    }
+    if (!btnRef.current) return
+    const rect = btnRef.current.getBoundingClientRect()
+    setOpen({
+      top: rect.bottom + 6,
+      right: window.innerWidth - rect.right,
+    })
+  }
 
   const current = options.find((o) => o.value === value) || options[0]
 
   return (
-    <div ref={ref} className="relative">
+    <>
       <button
+        ref={btnRef}
         type="button"
+        className="filter-btn"
         disabled={disabled}
-        onClick={() => setOpen((v) => !v)}
-        className={`flex items-center gap-2 px-3 h-9 rounded-md border text-[12px] transition-colors ${
-          disabled
-            ? 'border-border-subtle text-fg-faint bg-bg-elev-2 cursor-not-allowed'
-            : 'border-border text-fg-muted bg-bg-elev-1 hover:bg-bg-hover hover:text-fg'
-        }`}
+        onClick={toggle}
         title={disabled ? disabledNote : undefined}
       >
-        <Icon name={icon} size={13} className="text-fg-subtle" />
-        <span className="text-fg-faint">{label}:</span>
-        <span className="font-medium">{current.label}</span>
-        <Icon name="chevDown" size={12} className="text-fg-subtle" />
+        <Icon name={icon} size={13} style={{ color: 'var(--fg-subtle)' }} />
+        <span className="filter-label">{label}:</span>
+        <span className="filter-value">{current.label}</span>
+        <Icon name="chevDown" size={12} className="chev" />
       </button>
 
-      {open && !disabled && (
-        <div className="absolute right-0 top-11 z-20 w-64 rounded-lg border border-border bg-bg-elev-1 shadow-lg overflow-hidden">
-          <div className="px-3 py-2 text-[10px] font-mono uppercase tracking-wider text-fg-faint border-b border-border-subtle">
-            {label}
-          </div>
-          <ul>
-            {options.map((opt) => {
-              const isActive = opt.value === value
-              return (
-                <li key={opt.value}>
-                  <button
-                    type="button"
-                    disabled={opt.disabled}
-                    onClick={() => {
-                      if (opt.disabled) return
-                      onChange(opt.value)
-                      setOpen(false)
-                    }}
-                    className={`w-full text-left px-3 py-2 text-[12px] flex items-center justify-between gap-2 transition-colors ${
-                      opt.disabled
-                        ? 'text-fg-faint cursor-not-allowed'
-                        : isActive
-                          ? 'bg-accent-soft text-accent font-medium'
-                          : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
-                    }`}
-                    title={opt.note}
-                  >
-                    <span>{opt.label}</span>
-                    {isActive && <Icon name="check" size={13} className="text-accent" />}
-                    {opt.note && !isActive && (
-                      <span className="text-[10px] font-mono text-fg-faint">soon</span>
-                    )}
-                  </button>
-                </li>
-              )
-            })}
-          </ul>
-        </div>
+      {mounted && open && !disabled && createPortal(
+        <div
+          ref={menuRef}
+          className="menu"
+          style={{ top: open.top, right: open.right }}
+        >
+          <div className="menu-section">{label}</div>
+          {options.map((opt) => {
+            const isActive = opt.value === value
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                className={`menu-item${isActive ? ' active' : ''}`}
+                disabled={opt.disabled}
+                onClick={() => {
+                  if (opt.disabled) return
+                  onChange(opt.value)
+                  setOpen(null)
+                }}
+                title={opt.note}
+              >
+                <span>{opt.label}</span>
+                {isActive ? (
+                  <Icon name="check" size={13} style={{ color: 'var(--accent)' }} />
+                ) : opt.note ? (
+                  <span style={{ fontSize: 10, fontFamily: 'var(--font-mono-stack)', color: 'var(--fg-faint)' }}>
+                    {opt.note}
+                  </span>
+                ) : null}
+              </button>
+            )
+          })}
+        </div>,
+        document.body,
       )}
-    </div>
+    </>
   )
 }

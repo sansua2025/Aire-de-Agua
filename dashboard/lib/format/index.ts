@@ -49,6 +49,8 @@ export function formatNumber(n: number | null | undefined, decimals = 0): string
 
 /**
  * Formatea porcentaje con signo opcional.
+ * Regla Zelazny: redondear evita falsa precisión. Para enteros omitimos decimales.
+ *   formatPct(18)            → "18%"        (no "18.0%")
  *   formatPct(12.345)        → "12.3%"
  *   formatPct(12.345, true)  → "+12.3%"
  *   formatPct(-3.5, true)    → "-3.5%"
@@ -59,8 +61,10 @@ export function formatPct(
   decimals = 1
 ): string {
   if (n == null || isNaN(n)) return '—'
-  const sign = withSign ? (n > 0 ? '+' : n < 0 ? '' : '') : ''
-  return `${sign}${n.toFixed(decimals)}%`
+  const isInt = Number.isInteger(n)
+  const fixed = isInt ? n.toString() : n.toFixed(decimals)
+  const sign = withSign && n > 0 ? '+' : ''
+  return `${sign}${fixed}%`
 }
 
 /**

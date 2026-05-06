@@ -1,12 +1,180 @@
-import { PagePlaceholder } from '@/components/page-placeholder'
+import { KpiTile } from '@/components/ui'
+import {
+  ProductoCharts,
+  type TopSkuDatum,
+  type DiscountTrendDatum,
+} from '@/components/producto/producto-charts'
+import {
+  InventoryTable,
+  type InventoryItem,
+} from '@/components/producto/inventory-table'
+import {
+  getTopSkus,
+  getInventoryHealth,
+  getDiscountMix,
+} from '@/lib/data/queries'
+import { formatCop, formatNumber } from '@/lib/format'
 
-export default function ProductoPage() {
+function parseNumber(v: unknown): number | null {
+  if (v == null) return null
+  const n = typeof v === 'number' ? v : parseFloat(String(v))
+  return isNaN(n) ? null : n
+}
+
+const shortLabel = (label: string | null) =>
+  (label || '—').replace(/^\d{4}-/, '')
+
+export default async function ProductoPage() {
+  const [topSkusRaw, inventoryRaw, discountRaw] = await Promise.all([
+    getTopSkus().catch(() => []),
+    getInventoryHealth().catch(() => []),
+    getDiscountMix().catch(() => []),
+  ])
+
+  // Top SKUs
+  const topSkus: TopSkuDatum[] = (topSkusRaw || []).map((s) => ({
+    producto_titulo: s.producto_titulo || '—',
+    revenue: parseNumber(s.revenue) ?? 0,
+    margen_total: parseNumber(s.margen_total) ?? 0,
+    margen_pct: parseNumber(s.margen_pct),
+    rank_revenue: parseNumber(s.rank_revenue) ?? 0,
+    rank_margen: parseNumber(s.rank_margen) ?? 0,
+    unidades: parseNumber(s.unidades) ?? 0,
+    ordenes: parseNumber(s.ordenes) ?? 0,
+    ticket_promedio: parseNumber(s.ticket_promedio),
+    coleccion: s.coleccion,
+    tipo: s.tipo,
+  }))
+
+  // Inventory health
+  const inventory: InventoryItem[] = (inventoryRaw || []).map((i) => ({
+    producto_id: i.producto_id,
+    producto_titulo: i.producto_titulo,
+    variante_id: i.variante_id,
+    ubicacion_id: i.ubicacion_id,
+    sku: i.sku,
+    talla: i.talla,
+    color: i.color,
+    ubicacion_nombre: i.ubicacion_nombre,
+    cantidad_disponible: parseNumber(i.cantidad_disponible),
+    unidades_vendidas_14d: parseNumber(i.unidades_vendidas_14d),
+    estado_salud: i.estado_salud,
+    dias_hasta_stockout: parseNumber(i.dias_hasta_stockout),
+    capital_inmovilizado: parseNumber(i.capital_inmovilizado),
+  }))
+
+  // KPIs comerciales agregados
+  const stockoutsCriticos = inventory.filter((i) => i.estado_salud === 'stockout_critico').length
+  const stockoutsInminentes = inventory.filter((i) => i.estado_salud === 'stockout_inminente').length
+  const deadstockSkus = inventory.filter((i) => i.estado_salud === 'deadstock').length
+  const capitalInmovilizado = inventory
+    .filter((i) => i.estado_salud === 'deadstock')
+    .reduce((sum, i) => sum + (i.capital_inmovilizado ?? 0), 0)
+
+  const ventasUltSemana = inventory.reduce((s, i) => s + (i.unidades_vendidas_14d ?? 0), 0)
+  const totalSkusVendiendo = inventory.filter((i) => (i.unidades_vendidas_14d ?? 0) > 0).length
+
+  // Top SKUs aggregates
+  const margenPromedio = topSkus.length > 0
+    ? topSkus.reduce((s, t) => s + (t.margen_pct ?? 0), 0) / topSkus.length
+    : 0
+  const revenueTop = topSkus.reduce((s, t) => s + t.revenue, 0)
+
+  // Discount trend
+  const discountTrend: DiscountTrendDatum[] = (discountRaw || []).map((d) => ({
+    w: shortLabel(d.semana_label),
+    rate: parseNumber(d.discount_rate_pct) ?? 0,
+    ordenes: parseNumber(d.ordenes) ?? 0,
+    aov_sin: parseNumber(d.aov_sin_codigo),
+    aov_con: parseNumber(d.aov_con_codigo),
+    pct_codigo: parseNumber(d.pct_ordenes_con_codigo) ?? 0,
+    is_current: !!d.is_current,
+  }))
+
+  // Action title dinámico
+  const actionTitle = (() => {
+    if (stockoutsCriticos > 0) {
+      return `${stockoutsCriticos} SKUs en stockout crítico — perdiendo ventas`
+    }
+    if (capitalInmovilizado > 10_000_000) {
+      return `${formatCop(capitalInmovilizado)} en deadstock · ${deadstockSkus} SKUs sin movimiento`
+    }
+    return 'Producto y Comercial — operación de inventario'
+  })()
+
   return (
-    <PagePlaceholder
-      subfase="Sub-fase 2E"
-      title="Producto y Comercial"
-      description="Top SKUs por revenue + margen real (cogs), salud de inventario (stockouts + deadstock con capital inmovilizado), discount mix semanal con AOV partido."
-      views={['view_dashboard_top_skus', 'view_dashboard_inventory_health', 'view_dashboard_discount_mix']}
-    />
+    <>
+      <div className="page-hero">
+        <div>
+          <h1>{actionTitle}</h1>
+          <div className="lede">
+            Salud del catálogo en tiempo real desde Shopify webhooks. Stockouts perden venta inmediata,
+            deadstock inmoviliza capital. Top SKUs muestra rank dual revenue/margen — los #1 por revenue
+            no siempre son los más rentables.
+          </div>
+        </div>
+        <div className="meta-block">
+          <span>SKUs alerta · <span className="v">{stockoutsCriticos + stockoutsInminentes + deadstockSkus}</span></span>
+          <span>Total catálogo · <span className="v">{formatNumber(inventory.length + 135 /* saludables no aparecen */)}</span></span>
+          <span>Margen avg top · <span className="v">{margenPromedio.toFixed(1)}%</span></span>
+        </div>
+      </div>
+
+      {/* KPI tiles comerciales */}
+      <div className="grid grid-kpis">
+        <KpiTile
+          label="Stockout crítico"
+          value={String(stockoutsCriticos)}
+          unit="SKUs"
+          icon="alert"
+          deltaValue={null}
+          goodDirection="down"
+        />
+        <KpiTile
+          label="Inminente"
+          value={String(stockoutsInminentes)}
+          unit="SKUs"
+          icon="cart"
+          deltaValue={null}
+          goodDirection="down"
+        />
+        <KpiTile
+          label="Deadstock"
+          value={String(deadstockSkus)}
+          unit="SKUs"
+          icon="bag"
+          deltaValue={null}
+        />
+        <KpiTile
+          label="Capital inmov."
+          value={(capitalInmovilizado / 1_000_000).toFixed(1)}
+          unit="M COP"
+          icon="dollar"
+          deltaValue={null}
+          goodDirection="down"
+        />
+        <KpiTile
+          label="Top revenue 7d"
+          value={(revenueTop / 1_000_000).toFixed(2)}
+          unit="M COP"
+          icon="dollar"
+          deltaValue={null}
+        />
+        <KpiTile
+          label="SKUs vendiendo"
+          value={formatNumber(totalSkusVendiendo)}
+          icon="users"
+          deltaValue={null}
+        />
+      </div>
+
+      {/* Charts: top SKUs + discount trend */}
+      <ProductoCharts topSkus={topSkus} discountTrend={discountTrend} />
+
+      {/* Inventory table con filtros */}
+      <div style={{ marginTop: 14 }}>
+        <InventoryTable items={inventory} />
+      </div>
+    </>
   )
 }

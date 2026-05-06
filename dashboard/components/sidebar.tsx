@@ -10,6 +10,7 @@ interface NavItem {
   icon: Parameters<typeof Icon>[0]['name']
   label: string
   badge?: string
+  count?: number
 }
 
 const navMain: NavItem[] = [
@@ -30,37 +31,54 @@ export function Sidebar() {
   const pathname = usePathname()
 
   return (
-    <aside className="bg-bg-elev-1 border-r border-border-subtle flex flex-col">
-      {/* Brand */}
-      <div className="px-5 py-5 border-b border-border-subtle flex items-center gap-3">
-        <div className="w-8 h-8 rounded-full bg-accent grid place-items-center text-accent-fg shrink-0">
-          <span className="text-xs font-semibold tracking-tight">AdA</span>
-        </div>
-        <div className="min-w-0">
-          <div className="text-[13px] font-semibold text-fg leading-tight truncate">
-            Aire de Agua
-          </div>
-          <div className="text-[11px] text-fg-subtle font-mono leading-tight">
-            el Cerebro
-          </div>
+    <aside className="sidebar">
+      <div className="sidebar-header">
+        <div className="sidebar-logo" aria-hidden />
+        <div className="sidebar-brand">
+          <div className="sidebar-brand-name">Aire de Agua</div>
+          <div className="sidebar-brand-sub">el Cerebro</div>
         </div>
       </div>
 
-      {/* Nav */}
-      <nav className="flex-1 px-3 py-4 overflow-y-auto">
-        <NavSection title="Dashboard" items={navMain} pathname={pathname} />
-        <NavSection title="Sistema" items={navSystem} pathname={pathname} className="mt-6" />
+      <nav className="sidebar-nav">
+        <div className="nav-section">Dashboard</div>
+        {navMain.map((it) => (
+          <NavLink key={it.href} item={it} active={isActive(pathname, it.href)} />
+        ))}
+
+        <div className="nav-section">Sistema</div>
+        {navSystem.map((it) => (
+          <NavLink key={it.href} item={it} active={isActive(pathname, it.href)} />
+        ))}
       </nav>
 
-      {/* Footer */}
       <SidebarFooter />
     </aside>
   )
 }
 
+function isActive(pathname: string, href: string): boolean {
+  if (href === '/') return pathname === '/'
+  return pathname === href || pathname.startsWith(href + '/')
+}
+
+function NavLink({ item, active }: { item: NavItem; active: boolean }) {
+  return (
+    <Link
+      href={item.href}
+      className={`nav-item${active ? ' active' : ''}`}
+      title={item.label}
+    >
+      <Icon name={item.icon} size={16} className="nav-icon" />
+      <span className="nav-label">{item.label}</span>
+      {item.badge && <span className="nav-badge">{item.badge}</span>}
+      {item.count != null && <span className="nav-count">{item.count}</span>}
+    </Link>
+  )
+}
+
 function SidebarFooter() {
-  // Fecha se calcula solo en cliente post-mount para evitar mismatch de hidratación
-  // (ICU locale data difiere entre Node y browser → "5 de may." vs "5 de may," etc.)
+  // Fecha solo en cliente post-mount → evita hydration mismatch
   const [now, setNow] = useState<string | null>(null)
 
   useEffect(() => {
@@ -69,59 +87,17 @@ function SidebarFooter() {
         day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
       })
     setNow(fmt())
-    const id = setInterval(() => setNow(fmt()), 60_000) // refresca cada minuto
+    const id = setInterval(() => setNow(fmt()), 60_000)
     return () => clearInterval(id)
   }, [])
 
   return (
-    <div className="px-5 py-4 border-t border-border-subtle flex items-center gap-3">
-      <span className="w-2 h-2 rounded-full bg-success shrink-0" aria-hidden />
-      <div className="text-[11px] text-fg-subtle leading-tight font-mono">
+    <div className="sidebar-footer">
+      <span className="status-dot" aria-hidden />
+      <div className="sidebar-footer-text">
         Sincronizado<br />
         <span suppressHydrationWarning>{now ?? '—'}</span>
       </div>
-    </div>
-  )
-}
-
-interface NavSectionProps {
-  title: string
-  items: NavItem[]
-  pathname: string
-  className?: string
-}
-
-function NavSection({ title, items, pathname, className = '' }: NavSectionProps) {
-  return (
-    <div className={className}>
-      <div className="px-3 mb-2 text-[10px] font-mono uppercase tracking-wider text-fg-faint">
-        {title}
-      </div>
-      <ul className="space-y-0.5">
-        {items.map((it) => {
-          const active = pathname === it.href || (it.href !== '/' && pathname.startsWith(it.href))
-          return (
-            <li key={it.href}>
-              <Link
-                href={it.href}
-                className={`flex items-center gap-3 px-3 py-2 rounded-md text-[13px] transition-colors ${
-                  active
-                    ? 'bg-accent-soft text-accent font-medium'
-                    : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
-                }`}
-              >
-                <Icon name={it.icon} size={15} />
-                <span className="flex-1 truncate">{it.label}</span>
-                {it.badge && (
-                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-warning-bg text-warning">
-                    {it.badge}
-                  </span>
-                )}
-              </Link>
-            </li>
-          )
-        })}
-      </ul>
     </div>
   )
 }

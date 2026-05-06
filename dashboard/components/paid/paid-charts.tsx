@@ -1,0 +1,287 @@
+'use client'
+
+import { Card, Pill, TT } from '@/components/ui'
+import { Icon } from '@/components/icon'
+import { BarHorizontal } from '@/components/charts'
+import { formatCop, formatNumber, formatPct, formatX } from '@/lib/format'
+
+export interface CampaignDatum {
+  campaign_id: string
+  campaign_name: string
+  num_ads: number
+  gasto: number
+  compras: number
+  valor_compras: number
+  ctr_pct: number | null
+  cpc: number | null
+  roas: number | null
+  cpa: number | null
+  objetivo: string | null
+}
+
+export interface TopAdDatum {
+  ad_id: string
+  ad_name: string
+  campaign_name: string | null
+  formato: string | null
+  gasto: number
+  compras: number
+  valor_compras: number
+  roas: number | null
+  share_pct: number | null
+}
+
+export interface LearningDatum {
+  id: string
+  elemento: string
+  valor: string
+  level: 'high' | 'med' | 'low'
+  indice_rendimiento: number | null
+  score_confianza: number | null
+  muestra_anuncios: number
+  conclusion: string | null
+  canal: string | null
+  objetivo: string | null
+}
+
+interface PaidChartsProps {
+  campaigns: CampaignDatum[]
+  topAds: TopAdDatum[]
+  learnings: LearningDatum[]
+  totals: {
+    gasto: number
+    compras: number
+    revenue: number
+    ctr_avg: number
+    cpc_avg: number
+  }
+}
+
+function statusForCampaign(c: CampaignDatum): 'good' | 'ok' | 'warn' | 'bad' {
+  // Meta atribuye mal (AIR-44), por eso categorizamos por CTR + actividad real
+  if ((c.ctr_pct ?? 0) >= 5 && c.compras > 0) return 'good'
+  if ((c.ctr_pct ?? 0) >= 3 && c.compras > 0) return 'ok'
+  if (c.gasto >= 100_000 && c.compras === 0) return 'warn'
+  return 'ok'
+}
+
+const STATUS_PILL: Record<'good' | 'ok' | 'warn' | 'bad', 'success' | 'accent' | 'warning' | 'danger'> = {
+  good: 'success',
+  ok:   'accent',
+  warn: 'warning',
+  bad:  'danger',
+}
+
+export function PaidCharts({ campaigns, topAds, learnings, totals }: PaidChartsProps) {
+  // Banner si todas las campañas tienen ROAS = 0 (bug AIR-44)
+  const allRoasZero = campaigns.length > 0 && campaigns.every((c) => (c.roas ?? 0) === 0)
+
+  const topAdsForChart = topAds
+    .filter((a) => a.valor_compras > 0)
+    .map((a) => ({
+      name: a.ad_name,
+      revenue: a.valor_compras,
+      gasto: a.gasto,
+      roas: a.roas,
+      share_pct: a.share_pct,
+    }))
+
+  return (
+    <>
+      {allRoasZero && (
+        <div
+          style={{
+            padding: '12px 14px',
+            background: 'var(--warning-bg)',
+            border: '1px solid color-mix(in oklab, var(--warning) 25%, transparent)',
+            borderLeft: '3px solid var(--warning)',
+            borderRadius: 8,
+            fontSize: 12,
+            color: 'var(--fg)',
+            lineHeight: 1.5,
+            marginTop: 14,
+            display: 'flex',
+            gap: 10,
+          }}
+        >
+          <Icon name="alert" size={14} className="alert-icon" />
+          <div>
+            <strong style={{ color: 'var(--warning)' }}>Atribución Meta degradada (AIR-44).</strong>{' '}
+            El pixel reporta <code>value=0</code> en eventos Purchase para casi todas las campañas.
+            Para ROAS real, mirá el atribuido en Resumen ejecutivo (cruza ventas web con utm_term de Meta).
+            Esta página muestra datos crudos de Meta — útil para CTR, CPC, gasto y volumen pero no para ROAS.
+          </div>
+        </div>
+      )}
+
+      {/* Tabla campañas + creative learnings */}
+      <div className="grid grid-2-1" style={{ marginTop: 14 }}>
+        <Card
+          title={`${campaigns.length} campañas activas · ${formatCop(totals.gasto)} gastado`}
+          subtitle="Meta Ads · últimos 30 días · ordenadas por gasto"
+          source="analytics.view_dashboard_paid"
+        >
+          <div style={{ overflowX: 'auto' }}>
+            <table className="tbl" style={{ marginTop: 4 }}>
+              <thead>
+                <tr>
+                  <th>Campaña</th>
+                  <th className="right">Ads</th>
+                  <th className="right">Gasto</th>
+                  <th className="right">CTR</th>
+                  <th className="right">CPC</th>
+                  <th className="right">CPA</th>
+                  <th className="right">Compras</th>
+                  <th className="right">ROAS</th>
+                  <th className="right">Estado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {campaigns.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} style={{ textAlign: 'center', padding: '24px 0', color: 'var(--fg-faint)' }}>
+                      Sin campañas activas en los últimos 30 días.
+                    </td>
+                  </tr>
+                ) : (
+                  campaigns.map((c) => {
+                    const status = statusForCampaign(c)
+                    return (
+                      <tr key={`${c.campaign_id}-${c.objetivo ?? 'none'}`}>
+                        <td className="label">
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                            <span
+                              className="dot"
+                              style={{ background: `var(--${STATUS_PILL[status] === 'success' ? 'success' : STATUS_PILL[status] === 'accent' ? 'accent' : STATUS_PILL[status] === 'warning' ? 'warning' : 'danger'})` }}
+                            />
+                            {c.campaign_name}
+                          </span>
+                        </td>
+                        <td className="right">{c.num_ads}</td>
+                        <td className="right">{formatCop(c.gasto)}</td>
+                        <td className="right">{c.ctr_pct != null ? formatPct(c.ctr_pct) : '—'}</td>
+                        <td className="right">{c.cpc != null ? formatCop(c.cpc) : '—'}</td>
+                        <td className="right">{c.cpa != null ? formatCop(c.cpa) : '—'}</td>
+                        <td className="right">{c.compras}</td>
+                        <td className="right">
+                          {c.roas != null && c.roas > 0 ? (
+                            <Pill kind={c.roas >= 2.5 ? 'success' : c.roas >= 1.5 ? 'accent' : 'warning'}>
+                              {formatX(c.roas)}
+                            </Pill>
+                          ) : (
+                            <span style={{ color: 'var(--fg-faint)' }}>—</span>
+                          )}
+                        </td>
+                        <td className="right">
+                          <Pill kind={STATUS_PILL[status]}>
+                            {status === 'good' && '★ top'}
+                            {status === 'ok' && 'ok'}
+                            {status === 'warn' && '⚠ revisar'}
+                            {status === 'bad' && 'bad'}
+                          </Pill>
+                        </td>
+                      </tr>
+                    )
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+
+        <Card
+          title={`Creative learnings · ${learnings.length} patrones vigentes`}
+          subtitle="Suavizado bayesiano k=10 · index > 1.0"
+          source="analytics.view_dashboard_creative_learnings"
+        >
+          <div className="stack-sm">
+            {learnings.length === 0 ? (
+              <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--fg-faint)', fontSize: 12, fontFamily: 'var(--font-mono-stack)' }}>
+                Sin learnings con muestra suficiente.<br />
+                Loop Weekly los recalcula los lunes.
+              </div>
+            ) : (
+              learnings.map((l) => (
+                <div
+                  key={l.id}
+                  style={{
+                    padding: '10px 0',
+                    borderBottom: '1px solid var(--border-subtle)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 6,
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Pill kind={l.level === 'high' ? 'success' : l.level === 'med' ? 'accent' : 'muted'}>
+                      {l.indice_rendimiento != null ? `${l.indice_rendimiento.toFixed(2)}×` : '—'}
+                    </Pill>
+                    <span style={{ fontSize: 11, fontFamily: 'var(--font-mono-stack)', color: 'var(--fg-subtle)' }}>
+                      {l.elemento} · {l.valor}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--fg)', lineHeight: 1.5 }}>
+                    {l.conclusion ?? (
+                      <span style={{ color: 'var(--fg-faint)', fontStyle: 'italic' }}>
+                        Conclusion pendiente · score {l.score_confianza?.toFixed(2)} · {l.muestra_anuncios} anuncios
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </Card>
+      </div>
+
+      {/* Top ads — bar horizontal */}
+      <div className="grid" style={{ marginTop: 14 }}>
+        <Card
+          title={
+            topAdsForChart.length > 0
+              ? `Top ${topAdsForChart.length} ad${topAdsForChart.length > 1 ? 's' : ''} con compras atribuidas · últimos 7 días`
+              : 'Top ads · sin compras atribuidas en 7 días'
+          }
+          subtitle="Bar horizontal por valor_compras · ROAS al lado · solo ads con valor > 0"
+          source="analytics.view_dashboard_top_ads"
+        >
+          {topAdsForChart.length > 0 ? (
+            <BarHorizontal
+              data={topAdsForChart}
+              labelKey="name"
+              valueKey="revenue"
+              valueFmt={(v) => formatCop(v)}
+              suffixKey="roas"
+              suffixFmt={(v) => (typeof v === 'number' ? `${v.toFixed(1)}×` : '—')}
+              tooltip={(d) => (
+                <TT
+                  title={d.name}
+                  rows={[
+                    { k: 'Revenue atribuido', v: formatCop(d.revenue) },
+                    { k: 'Gasto', v: formatCop(d.gasto) },
+                    { k: 'ROAS', v: d.roas != null ? formatX(d.roas) : '—' },
+                    { k: 'Share top 5', v: d.share_pct != null ? `${d.share_pct}%` : '—' },
+                  ]}
+                />
+              )}
+            />
+          ) : (
+            <div
+              style={{
+                padding: '32px 0',
+                textAlign: 'center',
+                color: 'var(--fg-faint)',
+                fontSize: 12,
+                fontFamily: 'var(--font-mono-stack)',
+                lineHeight: 1.6,
+              }}
+            >
+              Ningún ad con valor_compras &gt; 0 en los últimos 7 días.<br />
+              Esto refleja AIR-44 (pixel Meta no captura value).
+            </div>
+          )}
+        </Card>
+      </div>
+    </>
+  )
+}

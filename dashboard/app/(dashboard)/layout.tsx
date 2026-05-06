@@ -8,7 +8,6 @@ export default async function DashboardLayout({
 }: {
   children: React.ReactNode
 }) {
-  // Defensa en profundidad: además del middleware, revalidamos sesión aquí
   const session = await auth()
   if (!session) redirect('/login')
 
@@ -19,23 +18,19 @@ export default async function DashboardLayout({
         await signOut({ redirectTo: '/login' })
       }}
     >
-      <button
-        type="submit"
-        className="ml-1 px-3 h-9 rounded-md border border-border text-[12px] text-fg-muted bg-bg-elev-1 hover:bg-bg-hover hover:text-fg transition-colors"
-        title="Cerrar sesión"
-      >
+      <button type="submit" className="signout-btn" title="Cerrar sesión">
         Salir
       </button>
     </form>
   )
 
   return (
-    <div className="app-shell">
+    <div className="app">
       <Sidebar />
-      <div className="app-main">
+      <div className="main">
         <Topbar signOutSlot={signOutSlot} />
-        <div className="app-content">
-          <div className="app-page">{children}</div>
+        <div className="content">
+          <div className="page page-fade">{children}</div>
         </div>
       </div>
     </div>

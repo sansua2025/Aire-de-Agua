@@ -1,15 +1,10 @@
 /**
- * Tipos manuales del schema `analytics`.
+ * Tipos manuales para las views `analytics.view_dashboard_*`.
+ * El cliente Supabase está scopeado al schema `analytics` (mig 046b expone via
+ * pgrst.db_schemas en el rol authenticator).
  *
- * Por qué manual: el generador `supabase gen types` solo emite tipos del schema
- * `public`. Las 13 view_dashboard_* viven en `analytics` y necesitan tipado
- * explícito. Si el generador agrega soporte para schemas adicionales, esto se
- * puede reemplazar por el output auto-generado.
- *
- * Mantenimiento: cuando se modifique una view (CREATE OR REPLACE en alguna
- * migración), actualizar el Row aquí. La SQL es source-of-truth.
- *
- * Las views son read-only → Insert: never, Update: never.
+ * Por qué tipos manuales: `supabase gen types typescript` solo emite schema
+ * `public`. Mantenemos esto sincronizado a mano cuando se modifica una view.
  */
 
 type ReadOnlyView<Row> = {
@@ -179,10 +174,13 @@ type ViewInsightsActivos = ReadOnlyView<{
   veces_confirmado: number | null
   ultima_confirmacion: string | null
   accion_sugerida: string | null
-  accion_tomada: string | null
+  accion_tomada: boolean | null
   periodo_inicio: string | null
   periodo_fin: string | null
   created_at: string | null
+  accion_tomada_at: string | null
+  accion_tomada_por: string | null
+  accion_notas: string | null
 }>
 
 type ViewAnomalias = ReadOnlyView<{
@@ -290,32 +288,29 @@ type ViewCustomerPanel = ReadOnlyView<{
   ultima_actualizacion: string | null
 }>
 
-export type AnalyticsSchema = {
-  Tables: {
-    view_dashboard_weekly_kpi: ViewWeeklyKpi
-    view_dashboard_kpi_history: ViewKpiHistory
-    view_dashboard_funnel: ViewFunnel
-    view_dashboard_paid: ViewPaid
-    view_dashboard_top_ads: ViewTopAds
-    view_dashboard_channels_mix: ViewChannelsMix
-    view_dashboard_creative_learnings: ViewCreativeLearnings
-    view_dashboard_insights_activos: ViewInsightsActivos
-    view_dashboard_anomalias: ViewAnomalias
-    view_dashboard_top_skus: ViewTopSkus
-    view_dashboard_inventory_health: ViewInventoryHealth
-    view_dashboard_discount_mix: ViewDiscountMix
-    view_dashboard_customer_panel: ViewCustomerPanel
-  }
-  Views: Record<string, never>
-  Functions: Record<string, never>
-  Enums: Record<string, never>
-  CompositeTypes: Record<string, never>
-}
-
 /**
- * Tipo Database minimal para el cliente Supabase del dashboard.
- * Solo necesitamos el schema `analytics` — el cliente está scopeado a esa schema.
+ * Tipo Database scopeado al schema `analytics` con las 13 views dashboard.
  */
 export type AnalyticsDatabase = {
-  analytics: AnalyticsSchema
+  analytics: {
+    Tables: {
+      view_dashboard_weekly_kpi: ViewWeeklyKpi
+      view_dashboard_kpi_history: ViewKpiHistory
+      view_dashboard_funnel: ViewFunnel
+      view_dashboard_paid: ViewPaid
+      view_dashboard_top_ads: ViewTopAds
+      view_dashboard_channels_mix: ViewChannelsMix
+      view_dashboard_creative_learnings: ViewCreativeLearnings
+      view_dashboard_insights_activos: ViewInsightsActivos
+      view_dashboard_anomalias: ViewAnomalias
+      view_dashboard_top_skus: ViewTopSkus
+      view_dashboard_inventory_health: ViewInventoryHealth
+      view_dashboard_discount_mix: ViewDiscountMix
+      view_dashboard_customer_panel: ViewCustomerPanel
+    }
+    Views: Record<string, never>
+    Functions: Record<string, never>
+    Enums: Record<string, never>
+    CompositeTypes: Record<string, never>
+  }
 }
