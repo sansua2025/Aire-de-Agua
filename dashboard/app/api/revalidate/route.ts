@@ -35,6 +35,10 @@ const ALLOWED_TAGS = new Set([
   'producto', // E2 webhooks Shopify Products/Orders/Inventory
 ])
 
+// Tamaño fijo para neutralizar timing leak por diferencia de longitud.
+// REVALIDATE_SECRET debe ser <= 128 chars (típicamente 32-64 hex).
+const SECRET_BUFFER_SIZE = 128
+
 function isAuthorized(req: NextRequest): boolean {
   const expected = process.env.REVALIDATE_SECRET
   if (!expected) {
@@ -47,10 +51,21 @@ function isAuthorized(req: NextRequest): boolean {
   const provided = header.slice('Bearer '.length).trim()
   if (provided.length === 0) return false
 
-  // timing-safe compare requires equal-length buffers
-  const a = Buffer.from(provided, 'utf8')
-  const b = Buffer.from(expected, 'utf8')
-  if (a.length !== b.length) return false
+  // Pad a longitud fija antes de comparar: timingSafeEqual SIEMPRE se ejecuta
+  // sin importar la longitud del provided. Elimina el length-based timing leak.
+  const a = Buffer.alloc(SECRET_BUFFER_SIZE)
+  const b = Buffer.alloc(SECRET_BUFFER_SIZE)
+  Buffer.from(provided, 'utf8').copy(a, 0, 0, SECRET_BUFFER_SIZE)
+  Buffer.from(expected, 'utf8').copy(b, 0, 0, SECRET_BUFFER_SIZE)
+  // Comparación adicional de longitud después del timing-safe: necesario porque
+  // si provided != expected pero ambos truncados son iguales (poco probable),
+  // queremos que la auth falle igual.
+  if (provided.length !== expected.length) {
+    // ejecutamos timingSafeEqual igual para mantener el tiempo constante, pero
+    // descartamos el resultado
+    try { timingSafeEqual(a, b) } catch { /* noop */ }
+    return false
+  }
   try {
     return timingSafeEqual(a, b)
   } catch {

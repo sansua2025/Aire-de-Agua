@@ -5,13 +5,15 @@ export default auth((req) => {
   const { pathname } = req.nextUrl
   const isAuth = !!req.auth
 
-  // Permitir login y assets sin sesión
+  // Permitir login y assets sin sesión.
+  // Match exacto en /api/* para evitar que rutas como /api/revalidate-other
+  // queden públicas inadvertidamente.
   const isPublic =
     pathname === '/login' ||
-    pathname.startsWith('/api/auth') ||
-    pathname.startsWith('/api/revalidate') ||
-    pathname.startsWith('/api/health') ||
-    pathname.startsWith('/_next') ||
+    pathname === '/api/revalidate' ||
+    pathname === '/api/health' ||
+    pathname.startsWith('/api/auth/') ||
+    pathname.startsWith('/_next/') ||
     pathname === '/favicon.ico'
 
   if (!isAuth && !isPublic) {
