@@ -42,6 +42,9 @@ type ViewWeeklyKpi = ReadOnlyView<{
   roas_meta_atribuido: number | null
   revenue_paid_atribuido: number | null
   mix_canal_web: unknown | null
+  // AIR-65: métricas primarias de margen
+  roas_margen_atribuido: number | null
+  margen_paid_atribuido: number | null
 }>
 
 type ViewKpiHistory = ReadOnlyView<{
@@ -101,10 +104,18 @@ type ViewPaid = ReadOnlyView<{
   gasto: number | null
   compras: number | null
   valor_compras: number | null
+  ventas_atribuidas: number | null
+  revenue_atribuido: number | null
+  margen_atribuido: number | null
+  // AIR-65: métricas de margen
+  roas_margen: number | null
+  roas_revenue: number | null
+  roas: number | null
   ctr_pct: number | null
   cpc: number | null
-  roas: number | null
   cpa: number | null
+  pixel_value_bug: boolean | null
+  recomendacion: string | null
 }>
 
 type ViewTopAds = ReadOnlyView<{
