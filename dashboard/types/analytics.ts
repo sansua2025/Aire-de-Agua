@@ -300,8 +300,23 @@ type ViewCustomerPanel = ReadOnlyView<{
   ultima_actualizacion: string | null
 }>
 
+type ViewCogsFaltante = ReadOnlyView<{
+  producto_id: string
+  producto_titulo: string | null
+  tipo: string | null
+  estado_producto: string | null
+  variantes_sin_cogs: number | null
+  precio_promedio: number | null
+  ventas_90d: number | null
+  unidades_90d: number | null
+  revenue_90d: number | null
+  en_ssot: boolean | null
+  diagnostico: string | null
+  accion: string | null
+}>
+
 /**
- * Tipo Database scopeado al schema `analytics` con las 13 views dashboard.
+ * Tipo Database scopeado al schema `analytics` con las views dashboard.
  */
 export type AnalyticsDatabase = {
   analytics: {
@@ -319,6 +334,7 @@ export type AnalyticsDatabase = {
       view_dashboard_inventory_health: ViewInventoryHealth
       view_dashboard_discount_mix: ViewDiscountMix
       view_dashboard_customer_panel: ViewCustomerPanel
+      view_dashboard_cogs_faltante: ViewCogsFaltante
     }
     Views: Record<string, never>
     Functions: Record<string, never>

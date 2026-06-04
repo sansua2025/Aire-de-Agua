@@ -9,7 +9,9 @@ import {
   getPaidCampaigns,
   getTopAds,
   getCreativeLearnings,
+  getCogsFaltante,
 } from '@/lib/data/queries'
+import { CogsFaltanteAlert } from '@/components/paid/cogs-faltante-alert'
 import { formatCop, formatNumber, formatPct, formatX } from '@/lib/format'
 
 function parseNumber(v: unknown): number | null {
@@ -19,10 +21,11 @@ function parseNumber(v: unknown): number | null {
 }
 
 export default async function PaidPage() {
-  const [campaignsRaw, topAdsRaw, learningsRaw] = await Promise.all([
+  const [campaignsRaw, topAdsRaw, learningsRaw, cogsFaltanteRaw] = await Promise.all([
     getPaidCampaigns().catch(() => []),
     getTopAds().catch(() => []),
     getCreativeLearnings().catch(() => []),
+    getCogsFaltante().catch(() => []),
   ])
 
   // Dedup campañas: nueva vista agrupa por (campaign_id, campaign_name) — sin duplicados.
@@ -203,6 +206,8 @@ export default async function PaidPage() {
           deltaValue={null}
         />
       </div>
+
+      <CogsFaltanteAlert items={cogsFaltanteRaw} />
 
       <PaidCharts
         campaigns={campaigns}
