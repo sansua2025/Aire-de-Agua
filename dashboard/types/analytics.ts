@@ -116,6 +116,7 @@ type ViewPaid = ReadOnlyView<{
   cpa: number | null
   pixel_value_bug: boolean | null
   recomendacion: string | null
+  cobertura_cogs_pct: number | null
 }>
 
 type ViewTopAds = ReadOnlyView<{

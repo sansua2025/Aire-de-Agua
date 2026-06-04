@@ -59,6 +59,7 @@ export default async function PaidPage() {
         cpa: parseNumber(c.cpa),
         objetivo: c.objetivo ?? null,
         recomendacion: c.recomendacion ?? null,
+        cobertura_cogs_pct: parseNumber(c.cobertura_cogs_pct),
       })
     }
   }

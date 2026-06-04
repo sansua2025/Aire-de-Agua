@@ -21,6 +21,7 @@ export interface CampaignDatum {
   cpa: number | null
   objetivo: string | null
   recomendacion: string | null
+  cobertura_cogs_pct: number | null
 }
 
 export interface TopAdDatum {
@@ -62,14 +63,30 @@ interface PaidChartsProps {
 }
 
 function statusForCampaign(c: CampaignDatum): 'good' | 'ok' | 'warn' | 'bad' {
-  if (c.recomendacion === 'escalar') return 'good'
-  if (c.recomendacion === 'mantener') return 'ok'
-  if (c.recomendacion === 'revisar') return 'warn'
-  if (c.recomendacion === 'pausar') return 'bad'
-  // Fallback: sin datos de margen → usar CTR + actividad
+  switch (c.recomendacion) {
+    case 'escalar': return 'good'
+    case 'mantener': return 'ok'
+    case 'revisar': return 'warn'
+    case 'pausar': return 'bad'
+    case 'sin_conversion': return 'warn'   // gasto sin ventas atribuidas
+    case 'cogs_incompleto': return 'warn'  // margen no confiable (<50% cobertura)
+  }
+  // Fallback: sin recomendación → usar CTR + actividad
   if ((c.ctr_pct ?? 0) >= 5 && c.compras > 0) return 'good'
   if (c.gasto >= 100_000 && c.compras === 0) return 'warn'
   return 'ok'
+}
+
+function labelForRecomendacion(rec: string | null, status: 'good' | 'ok' | 'warn' | 'bad'): string {
+  switch (rec) {
+    case 'escalar': return '★ escalar'
+    case 'mantener': return 'mantener'
+    case 'revisar': return '⚠ revisar'
+    case 'pausar': return '✕ pausar'
+    case 'sin_conversion': return 'sin conv.'
+    case 'cogs_incompleto': return 'COGS ?'
+  }
+  return status === 'good' ? '★ top' : status === 'warn' ? '⚠ revisar' : 'ok'
 }
 
 const STATUS_PILL: Record<'good' | 'ok' | 'warn' | 'bad', 'success' | 'accent' | 'warning' | 'danger'> = {
@@ -136,8 +153,8 @@ export function PaidCharts({ campaigns, topAds, learnings, totals }: PaidChartsP
                   <th className="right">Gasto</th>
                   <th className="right">ROAS-margen</th>
                   <th className="right">ROAS-revenue</th>
+                  <th className="right">Cobertura COGS</th>
                   <th className="right">CTR</th>
-                  <th className="right">CPC</th>
                   <th className="right">Compras</th>
                   <th className="right">Recomendación</th>
                 </tr>
@@ -153,6 +170,7 @@ export function PaidCharts({ campaigns, topAds, learnings, totals }: PaidChartsP
                   campaigns.map((c) => {
                     const status = statusForCampaign(c)
                     const rm = c.roas_margen
+                    const cob = c.cobertura_cogs_pct
                     return (
                       <tr key={`${c.campaign_id}-${c.objetivo ?? 'none'}`}>
                         <td className="label">
@@ -166,7 +184,7 @@ export function PaidCharts({ campaigns, topAds, learnings, totals }: PaidChartsP
                         </td>
                         <td className="right">{formatCop(c.gasto)}</td>
                         <td className="right">
-                          {rm != null ? (
+                          {rm != null && (c.roas_revenue ?? 0) > 0 ? (
                             <Pill kind={rm >= 1.5 ? 'success' : rm >= 1.0 ? 'accent' : 'warning'}>
                               {formatX(rm)}
                             </Pill>
@@ -179,15 +197,20 @@ export function PaidCharts({ campaigns, topAds, learnings, totals }: PaidChartsP
                             ? formatX(c.roas_revenue)
                             : <span style={{ color: 'var(--fg-faint)' }}>—</span>}
                         </td>
+                        <td className="right">
+                          {cob != null ? (
+                            <span style={{ color: cob >= 80 ? 'var(--fg)' : 'var(--warning)' }}>
+                              {formatPct(cob)}
+                            </span>
+                          ) : (
+                            <span style={{ color: 'var(--fg-faint)' }}>—</span>
+                          )}
+                        </td>
                         <td className="right">{c.ctr_pct != null ? formatPct(c.ctr_pct) : '—'}</td>
-                        <td className="right">{c.cpc != null ? formatCop(c.cpc) : '—'}</td>
                         <td className="right">{c.compras}</td>
                         <td className="right">
                           <Pill kind={STATUS_PILL[status]}>
-                            {status === 'good' && '★ escalar'}
-                            {status === 'ok' && 'mantener'}
-                            {status === 'warn' && '⚠ revisar'}
-                            {status === 'bad' && '✕ pausar'}
+                            {labelForRecomendacion(c.recomendacion, status)}
                           </Pill>
                         </td>
                       </tr>

@@ -3248,6 +3248,10 @@ export type Database = {
         Args: { p_fin: string; p_inicio: string }
         Returns: Json
       }
+      analytics_compute_weekly_snapshot_v3: {
+        Args: { p_fin: string; p_inicio: string }
+        Returns: Json
+      }
       analytics_decay_stale_insights: { Args: never; Returns: Json }
       analytics_detect_anomalies: {
         Args: { p_fin: string; p_inicio: string }
