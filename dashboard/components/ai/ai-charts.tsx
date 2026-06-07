@@ -182,10 +182,40 @@ export function AiCharts({ insights, anomalias, cohorts }: AiChartsProps) {
 // =============================================================================
 
 function InsightsCard({ insights }: { insights: InsightDatum[] }) {
+  // Default (AIR-83): cola de acción por capas de triage. 'explorar' = modo
+  // alterno con los filtros + agrupación por dominio de siempre.
+  const [mode, setMode]             = useState<ViewMode>('triage')
   const [dominioSel, setDominioSel] = useState<Set<string>>(new Set())
   const [tipoSel, setTipoSel]       = useState<Set<string>>(new Set())
   const [estadoSel, setEstadoSel]   = useState<Set<EstadoKey>>(new Set())
   const [grouped, setGrouped]       = useState<boolean>(true)
+
+  // Buckets de triage (AIR-83) · sobre TODOS los insights, sin pasar por los
+  // filtros — las capas SON la organización en este modo.
+  const { accion, contexto } = useMemo(() => {
+    const accion: InsightDatum[] = []
+    const contexto: InsightDatum[] = []
+    for (const it of insights) {
+      const rdh = it.requiere_del_humano ?? null
+      if (rdh === 'nada') continue // la vista ya los excluye; defensa extra
+      if (rdh === 'aprobar' || rdh === 'decidir_urgente') {
+        accion.push(it)
+      } else {
+        // informacion, celebrar y cualquier otro valor no-'nada' (fallback:
+        // nunca ocultar data silenciosamente)
+        contexto.push(it)
+      }
+    }
+    // aprobar primero (tiene plan → botones), luego decidir_urgente; score desc
+    accion.sort((a, b) => {
+      const oa = RDH_ACCION_ORDER[a.requiere_del_humano ?? ''] ?? 9
+      const ob = RDH_ACCION_ORDER[b.requiere_del_humano ?? ''] ?? 9
+      if (oa !== ob) return oa - ob
+      return b.score_confianza - a.score_confianza
+    })
+    contexto.sort((a, b) => b.score_confianza - a.score_confianza)
+    return { accion, contexto }
+  }, [insights])
 
   // Universos disponibles a partir de la data (no hardcoded)
   const dominios = useMemo(() => {
@@ -262,10 +292,40 @@ function InsightsCard({ insights }: { insights: InsightDatum[] }) {
 
   return (
     <Card
-      title={`${insights.length} insights vigentes · mostrando ${totalShown}${hasAnyFilter ? ' (filtrados)' : ''}`}
-      subtitle="Score de confianza > 0.6 · vigentes (no archivados por decay) · ordenados por score"
+      title={
+        mode === 'triage'
+          ? `${accion.length} requiere${accion.length === 1 ? '' : 'n'} tu acción`
+          : `${insights.length} insights vigentes · mostrando ${totalShown}${hasAnyFilter ? ' (filtrados)' : ''}`
+      }
+      subtitle={
+        mode === 'triage'
+          ? `Cola de acción · aprobar + decidir_urgente arriba · ${contexto.length} en contexto`
+          : 'Score de confianza > 0.6 · vigentes (no archivados por decay) · ordenados por score'
+      }
       source="analytics.view_dashboard_insights_activos"
     >
+      {/* SELECTOR DE MODO (AIR-83) */}
+      <div
+        style={{
+          display: 'flex',
+          gap: 6,
+          padding: '6px 0 12px',
+          borderBottom: '1px solid var(--border-subtle)',
+          marginBottom: 8,
+        }}
+      >
+        <ModeChip active={mode === 'triage'} onClick={() => setMode('triage')}>
+          Cola de acción
+        </ModeChip>
+        <ModeChip active={mode === 'explorar'} onClick={() => setMode('explorar')}>
+          Explorar
+        </ModeChip>
+      </div>
+
+      {mode === 'triage' ? (
+        <TriageView accion={accion} contexto={contexto} />
+      ) : (
+      <>
       {/* TOOLBAR DE FILTROS */}
       <div
         style={{
@@ -357,7 +417,183 @@ function InsightsCard({ insights }: { insights: InsightDatum[] }) {
           flatSorted.map((it) => <InsightRow key={it.id} insight={it} />)
         )}
       </div>
+      </>
+      )}
     </Card>
+  )
+}
+
+// =============================================================================
+// AIR-83 · Vista por capas de triage (default)
+// =============================================================================
+
+type ViewMode = 'triage' | 'explorar'
+
+// aprobar primero (el agente ya tiene un plan), luego decidir_urgente
+const RDH_ACCION_ORDER: Record<string, number> = { aprobar: 0, decidir_urgente: 1 }
+
+function ModeChip({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      style={{
+        fontSize: 10,
+        fontFamily: 'var(--font-mono-stack)',
+        textTransform: 'uppercase',
+        letterSpacing: '0.04em',
+        padding: '4px 12px',
+        borderRadius: 999,
+        border: `1px solid ${active ? 'var(--accent)' : 'var(--border-subtle)'}`,
+        background: active ? 'color-mix(in oklab, var(--accent) 14%, transparent)' : 'transparent',
+        color: active ? 'var(--accent)' : 'var(--fg-muted)',
+        cursor: 'pointer',
+        transition: 'all 80ms ease',
+      }}
+    >
+      {children}
+    </button>
+  )
+}
+
+function LayerHeader({
+  label,
+  count,
+  accent,
+}: {
+  label: string
+  count: number
+  accent: string
+}) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        padding: '6px 0',
+      }}
+    >
+      <span style={{ width: 6, height: 6, borderRadius: 999, background: accent }} />
+      <span
+        style={{
+          fontSize: 11,
+          fontWeight: 700,
+          letterSpacing: '0.06em',
+          textTransform: 'uppercase',
+          fontFamily: 'var(--font-mono-stack)',
+          color: 'var(--fg)',
+        }}
+      >
+        {label}
+      </span>
+      <span style={{ fontSize: 11, color: 'var(--fg-faint)', fontFamily: 'var(--font-mono-stack)' }}>
+        · {count}
+      </span>
+    </div>
+  )
+}
+
+function TriageView({
+  accion,
+  contexto,
+}: {
+  accion: InsightDatum[]
+  contexto: InsightDatum[]
+}) {
+  // Capa 2 colapsada por defecto: el foco es la cola de acción
+  const [contextoOpen, setContextoOpen] = useState(false)
+
+  return (
+    <>
+      {/* CAPA 1 · Requieren tu acción (expandida) */}
+      <LayerHeader label="Requieren tu acción" count={accion.length} accent="var(--accent)" />
+      {accion.length === 0 ? (
+        <div
+          style={{
+            padding: '20px 0',
+            textAlign: 'center',
+            color: 'var(--success)',
+            fontSize: 12,
+            fontFamily: 'var(--font-mono-stack)',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 8,
+          }}
+        >
+          <Icon name="check" size={20} />
+          Nada pendiente de decisión — al día ✓
+        </div>
+      ) : (
+        <>
+          <ColumnHeader />
+          <div style={{ marginTop: 4 }}>
+            {accion.map((it) => (
+              <InsightRow key={it.id} insight={it} />
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* CAPA 2 · Contexto (colapsada por defecto) */}
+      <div style={{ marginTop: 14 }}>
+        <button
+          type="button"
+          onClick={() => setContextoOpen((v) => !v)}
+          aria-expanded={contextoOpen}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            width: '100%',
+            padding: '8px 0',
+            background: 'transparent',
+            border: 'none',
+            borderTop: '1px solid var(--border-subtle)',
+            textAlign: 'left',
+            cursor: 'pointer',
+            fontSize: 11,
+            fontFamily: 'var(--font-mono-stack)',
+            textTransform: 'uppercase',
+            letterSpacing: '0.06em',
+            color: 'var(--fg-subtle)',
+          }}
+        >
+          <span style={{ fontSize: 10, color: 'var(--fg-faint)', width: 10 }}>
+            {contextoOpen ? '▼' : '▶'}
+          </span>
+          {contextoOpen ? 'Ocultar contexto' : 'Ver contexto'} ({contexto.length})
+        </button>
+        {contextoOpen && (
+          contexto.length === 0 ? (
+            <Empty text="Sin contexto." />
+          ) : (
+            <>
+              <ColumnHeader />
+              <div style={{ marginTop: 4 }}>
+                {contexto.map((it) => (
+                  <InsightRow
+                    key={it.id}
+                    insight={it}
+                    accent={it.requiere_del_humano === 'celebrar' ? 'positive' : undefined}
+                  />
+                ))}
+              </div>
+            </>
+          )
+        )}
+      </div>
+    </>
   )
 }
 
@@ -513,7 +749,13 @@ function GroupSection({
 // InsightRow · ahora con checkbox de acción tomada
 // =============================================================================
 
-function InsightRow({ insight }: { insight: InsightDatum }) {
+function InsightRow({
+  insight,
+  accent,
+}: {
+  insight: InsightDatum
+  accent?: 'positive'
+}) {
   const dominioColor = DOMINIO_COLOR[insight.dominio] || 'var(--fg-subtle)'
   const tipoKind = TIPO_KIND[insight.tipo ?? 'patron'] || 'muted'
   const isActionable = !!insight.accion_sugerida
@@ -527,6 +769,11 @@ function InsightRow({ insight }: { insight: InsightDatum }) {
         alignItems: 'flex-start',
         padding: '10px 0',
         borderBottom: '1px solid var(--border-subtle)',
+        // Acento positivo sutil para 'celebrar' (sin desplazar el grid)
+        background:
+          accent === 'positive'
+            ? 'color-mix(in oklab, var(--success) 5%, transparent)'
+            : undefined,
       }}
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
