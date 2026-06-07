@@ -188,6 +188,40 @@ export const getInsightsActivos = unstable_cache(
   { tags: ['insights'], revalidate: CACHE_FALLBACK_SECONDS }
 )
 
+/**
+ * Cola agrupada por condición (AIR-85). Una fila por condición (representante),
+ * con veces_en_grupo / ids_grupo / rango de aparición. Reemplaza a
+ * getInsightsActivos como fuente de la cola; la vista sin agrupar sigue
+ * existiendo para expandir un grupo (ver getInsightsPorIds).
+ */
+export const getColaAgrupada = unstable_cache(
+  async () => {
+    const { data, error } = await supabase
+      .from('view_dashboard_cola_agrupada')
+      .select('*')
+    if (error) throw error
+    return data ?? []
+  },
+  ['cola_agrupada'],
+  { tags: ['insights'], revalidate: CACHE_FALLBACK_SECONDS }
+)
+
+/**
+ * Filas individuales de un grupo (para expandir el mini-timeline). Lee la vista
+ * sin agrupar filtrando por los ids del grupo. No cacheada: se llama on-demand
+ * desde un route handler cuando el usuario expande una tarjeta.
+ */
+export async function getInsightsPorIds(ids: string[]) {
+  if (!ids.length) return []
+  const { data, error } = await supabase
+    .from('view_dashboard_insights_activos')
+    .select('*')
+    .in('id', ids)
+    .order('ultima_confirmacion', { ascending: false })
+  if (error) throw error
+  return data ?? []
+}
+
 export const getAnomalias = unstable_cache(
   async () => {
     const { data, error } = await supabase
