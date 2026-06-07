@@ -39,6 +39,7 @@ export default async function AiPage() {
     delta_pct: parseNumber(i.delta_pct),
     accion_tomada_at: i.accion_tomada_at ?? null,
     accion_tomada_por: i.accion_tomada_por ?? null,
+    requiere_del_humano: i.requiere_del_humano ?? null,
   }))
 
   const anomalias: AnomaliaDatum[] = (anomaliasRaw || []).map((a) => ({

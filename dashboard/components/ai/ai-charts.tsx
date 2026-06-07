@@ -1,6 +1,7 @@
 'use client'
 
 import { useMemo, useState, useTransition } from 'react'
+import { useRouter } from 'next/navigation'
 import { Card, Pill, TT } from '@/components/ui'
 import { Icon } from '@/components/icon'
 import { BarHorizontal } from '@/components/charts'
@@ -21,6 +22,7 @@ export interface InsightDatum {
   delta_pct: number | null
   accion_tomada_at?: string | null
   accion_tomada_por?: string | null
+  requiere_del_humano?: string | null
 }
 
 export interface AnomaliaDatum {
@@ -568,6 +570,11 @@ function InsightRow({ insight }: { insight: InsightDatum }) {
             → {insight.accion_sugerida}
           </div>
         )}
+        {insight.requiere_del_humano === 'aprobar' && (
+          <div style={{ marginTop: 8 }}>
+            <BotonesAprobacion insightId={insight.id} />
+          </div>
+        )}
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'stretch' }}>
@@ -667,6 +674,102 @@ function ActionCheckbox({ insightId, tomada }: { insightId: string; tomada: bool
         }}
       />
     </label>
+  )
+}
+
+// =============================================================================
+// BotonesAprobacion · slice HITL (AIR-82)
+// Solo se renderiza en insights con requiere_del_humano === 'aprobar'.
+// POST /api/propuestas/aprobar → RPC analytics_aprobar_propuesta (SECURITY
+// DEFINER). En éxito el insight sale de la cola (pasa a 'informacion' o 'nada').
+// =============================================================================
+
+function BotonesAprobacion({ insightId }: { insightId: string }) {
+  const router = useRouter()
+  const [pending, startTransition] = useTransition()
+  const [resultado, setResultado] = useState<string | null>(null)
+
+  const decidir = (aprobado: boolean) => {
+    setResultado(null)
+    startTransition(async () => {
+      try {
+        const res = await fetch('/api/propuestas/aprobar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ insightId, aprobado }),
+        })
+        const data = await res.json()
+        if (data?.ok) {
+          setResultado(aprobado ? 'Aprobado ✓' : 'Rechazado')
+          router.refresh() // re-fetch RSC → sale de la cola
+        } else {
+          setResultado(`No se pudo: ${data?.estado ?? data?.error ?? 'error'}`)
+        }
+      } catch {
+        setResultado('Error de red')
+      }
+    })
+  }
+
+  if (resultado) {
+    return (
+      <span
+        style={{
+          fontSize: 11,
+          fontFamily: 'var(--font-mono-stack)',
+          color: 'var(--fg-subtle)',
+        }}
+      >
+        {resultado}
+      </span>
+    )
+  }
+
+  return (
+    <div style={{ display: 'flex', gap: 8 }}>
+      <button
+        type="button"
+        onClick={() => decidir(true)}
+        disabled={pending}
+        style={{
+          fontSize: 10,
+          fontFamily: 'var(--font-mono-stack)',
+          textTransform: 'uppercase',
+          letterSpacing: '0.04em',
+          padding: '4px 12px',
+          borderRadius: 999,
+          border: '1px solid var(--success)',
+          background: 'color-mix(in oklab, var(--success) 14%, transparent)',
+          color: 'var(--success)',
+          cursor: pending ? 'wait' : 'pointer',
+          opacity: pending ? 0.6 : 1,
+          transition: 'all 80ms ease',
+        }}
+      >
+        {pending ? '...' : 'Aprobar'}
+      </button>
+      <button
+        type="button"
+        onClick={() => decidir(false)}
+        disabled={pending}
+        style={{
+          fontSize: 10,
+          fontFamily: 'var(--font-mono-stack)',
+          textTransform: 'uppercase',
+          letterSpacing: '0.04em',
+          padding: '4px 12px',
+          borderRadius: 999,
+          border: '1px solid var(--border-subtle)',
+          background: 'transparent',
+          color: 'var(--fg-muted)',
+          cursor: pending ? 'wait' : 'pointer',
+          opacity: pending ? 0.6 : 1,
+          transition: 'all 80ms ease',
+        }}
+      >
+        Rechazar
+      </button>
+    </div>
   )
 }
 
