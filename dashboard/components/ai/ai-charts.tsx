@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState, useTransition } from 'react'
+import { useEffect, useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { Card, Pill, TT } from '@/components/ui'
 import { Icon } from '@/components/icon'
@@ -23,6 +23,10 @@ export interface InsightDatum {
   accion_tomada_at?: string | null
   accion_tomada_por?: string | null
   requiere_del_humano?: string | null
+  // Modelo de estados (AIR-84)
+  ttl_accion?: string | null
+  estado_accion?: string | null
+  snooze_hasta?: string | null
 }
 
 export interface AnomaliaDatum {
@@ -80,6 +84,16 @@ const ESTADO_LABEL: Record<EstadoKey, string> = {
   accionable: 'Accionables',
   tomada:     'Acción tomada',
   pendiente:  'Pendientes',
+}
+
+// Chip de estado_accion (AIR-84) · color por estado; 'en curso' destaca
+type EstadoAccion = 'pendiente' | 'en_curso' | 'hecho' | 'descartado' | 'pospuesto'
+const ESTADO_CHIP: Record<EstadoAccion, { label: string; color: string; emphasis?: boolean }> = {
+  pendiente:  { label: 'Pendiente',  color: 'var(--fg-muted)' },
+  en_curso:   { label: 'En curso',   color: 'var(--accent)', emphasis: true },
+  hecho:      { label: 'Hecho',      color: 'var(--success)' },
+  descartado: { label: 'Descartado', color: 'var(--fg-faint)' },
+  pospuesto:  { label: 'Pospuesto',  color: 'var(--warning)' },
 }
 
 export function AiCharts({ insights, anomalias, cohorts }: AiChartsProps) {
@@ -178,46 +192,177 @@ export function AiCharts({ insights, anomalias, cohorts }: AiChartsProps) {
 }
 
 // =============================================================================
-// InsightsCard · toolbar de filtros + agrupación + checkbox loop back
+// Buckets del modelo de estados (AIR-84)
 // =============================================================================
 
-function InsightsCard({ insights }: { insights: InsightDatum[] }) {
-  // Default (AIR-83): cola de acción por capas de triage. 'explorar' = modo
-  // alterno con los filtros + agrupación por dominio de siempre.
+// aprobar primero (el agente ya tiene un plan), luego decidir_urgente
+const RDH_ACCION_ORDER: Record<string, number> = { aprobar: 0, decidir_urgente: 1 }
+
+interface Buckets {
+  cola: InsightDatum[]
+  pospuestos: InsightDatum[]
+  historial: InsightDatum[]
+  contexto: InsightDatum[]
+}
+
+/**
+ * Reparte los insights en exactamente un bucket cada uno (sin duplicados),
+ * respetando la lógica de AIR-84:
+ *   - Historial (terminal): estado_accion IN ('hecho','descartado')
+ *   - Cola de acción: requiere_del_humano IN ('aprobar','decidir_urgente') Y
+ *       (estado IN ('pendiente','en_curso') O (estado='pospuesto' Y snooze<=now))
+ *   - Pospuestos: estado='pospuesto' Y snooze>now
+ *   - Contexto: requiere_del_humano IN ('informacion','celebrar') (capa AIR-83)
+ */
+function bucketize(insights: InsightDatum[]): Buckets {
+  const now = Date.now()
+  const cola: InsightDatum[] = []
+  const pospuestos: InsightDatum[] = []
+  const historial: InsightDatum[] = []
+  const contexto: InsightDatum[] = []
+
+  for (const it of insights) {
+    const rdh = it.requiere_del_humano ?? null
+    if (rdh === 'nada') continue // la vista ya los excluye; defensa extra
+    const estado = (it.estado_accion ?? 'pendiente') as EstadoAccion
+
+    if (estado === 'hecho' || estado === 'descartado') {
+      historial.push(it)
+      continue
+    }
+
+    if (rdh === 'aprobar' || rdh === 'decidir_urgente') {
+      if (estado === 'pospuesto') {
+        const due = it.snooze_hasta ? Date.parse(it.snooze_hasta) <= now : true
+        if (due) cola.push(it)
+        else pospuestos.push(it)
+      } else {
+        // pendiente | en_curso (y fallback de estados desconocidos)
+        cola.push(it)
+      }
+      continue
+    }
+
+    // informacion, celebrar y cualquier otro valor no-'nada' → contexto
+    contexto.push(it)
+  }
+
+  cola.sort((a, b) => {
+    const oa = RDH_ACCION_ORDER[a.requiere_del_humano ?? ''] ?? 9
+    const ob = RDH_ACCION_ORDER[b.requiere_del_humano ?? ''] ?? 9
+    if (oa !== ob) return oa - ob
+    if (b.veces_confirmado !== a.veces_confirmado) return b.veces_confirmado - a.veces_confirmado
+    return b.score_confianza - a.score_confianza
+  })
+  historial.sort(
+    (a, b) => (Date.parse(b.accion_tomada_at ?? '') || 0) - (Date.parse(a.accion_tomada_at ?? '') || 0)
+  )
+  pospuestos.sort(
+    (a, b) => (Date.parse(a.snooze_hasta ?? '') || 0) - (Date.parse(b.snooze_hasta ?? '') || 0)
+  )
+  contexto.sort((a, b) => b.score_confianza - a.score_confianza)
+
+  return { cola, pospuestos, historial, contexto }
+}
+
+// =============================================================================
+// InsightsCard · cola de acción (modelo de estados) + modo Explorar (legacy)
+// =============================================================================
+
+type ViewMode = 'triage' | 'explorar'
+type EstadoResult = { ok: boolean; error?: string }
+
+function InsightsCard({ insights: initialInsights }: { insights: InsightDatum[] }) {
+  // Estado local: arranca de los datos del servidor y se actualiza de forma
+  // optimista al accionar (sin recargar). Si el RSC vuelve a traer datos
+  // (revalidate / refresh), el efecto re-sincroniza con la verdad del servidor.
+  const [insights, setInsights] = useState<InsightDatum[]>(initialInsights)
+  useEffect(() => setInsights(initialInsights), [initialInsights])
+
+  // Default (AIR-83): cola de acción. 'explorar' = modo alterno legacy.
   const [mode, setMode]             = useState<ViewMode>('triage')
   const [dominioSel, setDominioSel] = useState<Set<string>>(new Set())
   const [tipoSel, setTipoSel]       = useState<Set<string>>(new Set())
   const [estadoSel, setEstadoSel]   = useState<Set<EstadoKey>>(new Set())
   const [grouped, setGrouped]       = useState<boolean>(true)
 
-  // Buckets de triage (AIR-83) · sobre TODOS los insights, sin pasar por los
-  // filtros — las capas SON la organización en este modo.
-  const { accion, contexto } = useMemo(() => {
-    const accion: InsightDatum[] = []
-    const contexto: InsightDatum[] = []
-    for (const it of insights) {
-      const rdh = it.requiere_del_humano ?? null
-      if (rdh === 'nada') continue // la vista ya los excluye; defensa extra
-      if (rdh === 'aprobar' || rdh === 'decidir_urgente') {
-        accion.push(it)
-      } else {
-        // informacion, celebrar y cualquier otro valor no-'nada' (fallback:
-        // nunca ocultar data silenciosamente)
-        contexto.push(it)
-      }
-    }
-    // aprobar primero (tiene plan → botones), luego decidir_urgente; score desc
-    accion.sort((a, b) => {
-      const oa = RDH_ACCION_ORDER[a.requiere_del_humano ?? ''] ?? 9
-      const ob = RDH_ACCION_ORDER[b.requiere_del_humano ?? ''] ?? 9
-      if (oa !== ob) return oa - ob
-      return b.score_confianza - a.score_confianza
-    })
-    contexto.sort((a, b) => b.score_confianza - a.score_confianza)
-    return { accion, contexto }
-  }, [insights])
+  const { cola, pospuestos, historial, contexto } = useMemo(
+    () => bucketize(insights),
+    [insights]
+  )
 
-  // Universos disponibles a partir de la data (no hardcoded)
+  // Aplica un patch optimista a un insight por id.
+  const patchInsight = (id: string, patch: Partial<InsightDatum>) => {
+    setInsights((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)))
+  }
+
+  // Aprobar/rechazar propuesta (requiere_del_humano='aprobar').
+  const onAprobar = async (id: string, aprobado: boolean): Promise<EstadoResult> => {
+    const prev = insights.find((i) => i.id === id)
+    patchInsight(id, {
+      estado_accion: aprobado ? 'en_curso' : 'descartado',
+      accion_tomada_at: aprobado ? prev?.accion_tomada_at ?? null : new Date().toISOString(),
+    })
+    try {
+      const res = await fetch('/api/propuestas/aprobar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ insightId: id, aprobado }),
+      })
+      const data = await res.json()
+      if (!data?.ok) throw new Error(data?.estado ?? data?.error ?? 'error')
+      return { ok: true }
+    } catch (e) {
+      if (prev) {
+        patchInsight(id, {
+          estado_accion: prev.estado_accion,
+          accion_tomada_at: prev.accion_tomada_at ?? null,
+        })
+      }
+      return { ok: false, error: e instanceof Error ? e.message : 'error' }
+    }
+  }
+
+  // Transiciones de estado (requiere_del_humano='decidir_urgente' o ya en curso).
+  const onEstado = async (
+    id: string,
+    estado: EstadoAccion,
+    opts?: { notas?: string; snoozeHasta?: string }
+  ): Promise<EstadoResult> => {
+    const prev = insights.find((i) => i.id === id)
+    const terminal = estado === 'hecho' || estado === 'descartado'
+    patchInsight(id, {
+      estado_accion: estado,
+      snooze_hasta: estado === 'pospuesto' ? opts?.snoozeHasta ?? null : prev?.snooze_hasta ?? null,
+      accion_tomada_at: terminal ? new Date().toISOString() : prev?.accion_tomada_at ?? null,
+    })
+    try {
+      const res = await fetch('/api/propuestas/estado', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          insightId: id,
+          estado,
+          notas: opts?.notas,
+          snoozeHasta: opts?.snoozeHasta,
+        }),
+      })
+      const data = await res.json()
+      if (!data?.ok) throw new Error(data?.estado ?? data?.error ?? 'error')
+      return { ok: true }
+    } catch (e) {
+      if (prev) {
+        patchInsight(id, {
+          estado_accion: prev.estado_accion,
+          snooze_hasta: prev.snooze_hasta ?? null,
+          accion_tomada_at: prev.accion_tomada_at ?? null,
+        })
+      }
+      return { ok: false, error: e instanceof Error ? e.message : 'error' }
+    }
+  }
+
+  // ---- Modo Explorar (legacy, sin cambios) ---------------------------------
   const dominios = useMemo(() => {
     const set = new Set(insights.map((i) => i.dominio).filter(Boolean))
     return DOMINIO_ORDER.filter((d) => set.has(d)).concat(
@@ -266,7 +411,6 @@ function InsightsCard({ insights }: { insights: InsightDatum[] }) {
     setEstadoSel(new Set())
   }
 
-  // Agrupado por dominio
   const grouped_data = useMemo(() => {
     const buckets = new Map<string, InsightDatum[]>()
     for (const it of filtered) {
@@ -294,7 +438,7 @@ function InsightsCard({ insights }: { insights: InsightDatum[] }) {
     <Card
       title={
         mode === 'triage'
-          ? `${accion.length} requiere${accion.length === 1 ? '' : 'n'} tu acción`
+          ? `${cola.length} requiere${cola.length === 1 ? '' : 'n'} tu acción`
           : `${insights.length} insights vigentes · mostrando ${totalShown}${hasAnyFilter ? ' (filtrados)' : ''}`
       }
       subtitle={
@@ -323,7 +467,14 @@ function InsightsCard({ insights }: { insights: InsightDatum[] }) {
       </div>
 
       {mode === 'triage' ? (
-        <TriageView accion={accion} contexto={contexto} />
+        <TriageView
+          cola={cola}
+          pospuestos={pospuestos}
+          historial={historial}
+          contexto={contexto}
+          onAprobar={onAprobar}
+          onEstado={onEstado}
+        />
       ) : (
       <>
       {/* TOOLBAR DE FILTROS */}
@@ -424,13 +575,8 @@ function InsightsCard({ insights }: { insights: InsightDatum[] }) {
 }
 
 // =============================================================================
-// AIR-83 · Vista por capas de triage (default)
+// AIR-84 · Vista de buckets (default) con tarjetas accionables
 // =============================================================================
-
-type ViewMode = 'triage' | 'explorar'
-
-// aprobar primero (el agente ya tiene un plan), luego decidir_urgente
-const RDH_ACCION_ORDER: Record<string, number> = { aprobar: 0, decidir_urgente: 1 }
 
 function ModeChip({
   active,
@@ -503,21 +649,83 @@ function LayerHeader({
   )
 }
 
-function TriageView({
-  accion,
-  contexto,
+function CollapsibleSection({
+  label,
+  count,
+  open,
+  onToggle,
+  children,
 }: {
-  accion: InsightDatum[]
-  contexto: InsightDatum[]
+  label: string
+  count: number
+  open: boolean
+  onToggle: () => void
+  children: React.ReactNode
 }) {
-  // Capa 2 colapsada por defecto: el foco es la cola de acción
+  return (
+    <div style={{ marginTop: 14 }}>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          width: '100%',
+          padding: '8px 0',
+          background: 'transparent',
+          border: 'none',
+          borderTop: '1px solid var(--border-subtle)',
+          textAlign: 'left',
+          cursor: 'pointer',
+          fontSize: 11,
+          fontFamily: 'var(--font-mono-stack)',
+          textTransform: 'uppercase',
+          letterSpacing: '0.06em',
+          color: 'var(--fg-subtle)',
+        }}
+      >
+        <span style={{ fontSize: 10, color: 'var(--fg-faint)', width: 10 }}>
+          {open ? '▼' : '▶'}
+        </span>
+        {open ? `Ocultar ${label}` : `Ver ${label}`} ({count})
+      </button>
+      {open && children}
+    </div>
+  )
+}
+
+type Bucket = 'cola' | 'pospuestos' | 'historial' | 'contexto'
+
+function TriageView({
+  cola,
+  pospuestos,
+  historial,
+  contexto,
+  onAprobar,
+  onEstado,
+}: {
+  cola: InsightDatum[]
+  pospuestos: InsightDatum[]
+  historial: InsightDatum[]
+  contexto: InsightDatum[]
+  onAprobar: (id: string, aprobado: boolean) => Promise<EstadoResult>
+  onEstado: (
+    id: string,
+    estado: EstadoAccion,
+    opts?: { notas?: string; snoozeHasta?: string }
+  ) => Promise<EstadoResult>
+}) {
   const [contextoOpen, setContextoOpen] = useState(false)
+  const [pospuestosOpen, setPospuestosOpen] = useState(false)
+  const [historialOpen, setHistorialOpen] = useState(false)
 
   return (
     <>
-      {/* CAPA 1 · Requieren tu acción (expandida) */}
-      <LayerHeader label="Requieren tu acción" count={accion.length} accent="var(--accent)" />
-      {accion.length === 0 ? (
+      {/* CAPA 1 · Cola de acción (expandida) */}
+      <LayerHeader label="Requieren tu acción" count={cola.length} accent="var(--accent)" />
+      {cola.length === 0 ? (
         <div
           style={{
             padding: '20px 0',
@@ -535,67 +743,439 @@ function TriageView({
           Nada pendiente de decisión — al día ✓
         </div>
       ) : (
-        <>
-          <ColumnHeader />
-          <div style={{ marginTop: 4 }}>
-            {accion.map((it) => (
-              <InsightRow key={it.id} insight={it} />
-            ))}
-          </div>
-        </>
+        <div style={{ marginTop: 4 }}>
+          {cola.map((it) => (
+            <ActionCard
+              key={it.id}
+              insight={it}
+              bucket="cola"
+              onAprobar={onAprobar}
+              onEstado={onEstado}
+            />
+          ))}
+        </div>
       )}
 
-      {/* CAPA 2 · Contexto (colapsada por defecto) */}
-      <div style={{ marginTop: 14 }}>
-        <button
-          type="button"
-          onClick={() => setContextoOpen((v) => !v)}
-          aria-expanded={contextoOpen}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            width: '100%',
-            padding: '8px 0',
-            background: 'transparent',
-            border: 'none',
-            borderTop: '1px solid var(--border-subtle)',
-            textAlign: 'left',
-            cursor: 'pointer',
-            fontSize: 11,
-            fontFamily: 'var(--font-mono-stack)',
-            textTransform: 'uppercase',
-            letterSpacing: '0.06em',
-            color: 'var(--fg-subtle)',
-          }}
+      {/* CAPA · Pospuestos (vuelven solos al vencer snooze) */}
+      {pospuestos.length > 0 && (
+        <CollapsibleSection
+          label="pospuestos"
+          count={pospuestos.length}
+          open={pospuestosOpen}
+          onToggle={() => setPospuestosOpen((v) => !v)}
         >
-          <span style={{ fontSize: 10, color: 'var(--fg-faint)', width: 10 }}>
-            {contextoOpen ? '▼' : '▶'}
-          </span>
-          {contextoOpen ? 'Ocultar contexto' : 'Ver contexto'} ({contexto.length})
-        </button>
-        {contextoOpen && (
-          contexto.length === 0 ? (
-            <Empty text="Sin contexto." />
-          ) : (
-            <>
-              <ColumnHeader />
-              <div style={{ marginTop: 4 }}>
-                {contexto.map((it) => (
-                  <InsightRow
-                    key={it.id}
-                    insight={it}
-                    accent={it.requiere_del_humano === 'celebrar' ? 'positive' : undefined}
-                  />
-                ))}
-              </div>
-            </>
-          )
+          <div style={{ marginTop: 4 }}>
+            {pospuestos.map((it) => (
+              <ActionCard
+                key={it.id}
+                insight={it}
+                bucket="pospuestos"
+                onAprobar={onAprobar}
+                onEstado={onEstado}
+              />
+            ))}
+          </div>
+        </CollapsibleSection>
+      )}
+
+      {/* CAPA · Historial (hecho / descartado) */}
+      {historial.length > 0 && (
+        <CollapsibleSection
+          label="historial"
+          count={historial.length}
+          open={historialOpen}
+          onToggle={() => setHistorialOpen((v) => !v)}
+        >
+          <div style={{ marginTop: 4 }}>
+            {historial.map((it) => (
+              <ActionCard
+                key={it.id}
+                insight={it}
+                bucket="historial"
+                onAprobar={onAprobar}
+                onEstado={onEstado}
+              />
+            ))}
+          </div>
+        </CollapsibleSection>
+      )}
+
+      {/* CAPA · Contexto (informacion / celebrar) */}
+      <CollapsibleSection
+        label="contexto"
+        count={contexto.length}
+        open={contextoOpen}
+        onToggle={() => setContextoOpen((v) => !v)}
+      >
+        {contexto.length === 0 ? (
+          <Empty text="Sin contexto." />
+        ) : (
+          <div style={{ marginTop: 4 }}>
+            {contexto.map((it) => (
+              <ActionCard
+                key={it.id}
+                insight={it}
+                bucket="contexto"
+                onAprobar={onAprobar}
+                onEstado={onEstado}
+              />
+            ))}
+          </div>
         )}
-      </div>
+      </CollapsibleSection>
     </>
   )
 }
+
+// =============================================================================
+// ActionCard · tarjeta del modelo de estados (AIR-84)
+//   principal (bold)  = accion_sugerida (fallback: titulo)
+//   secundaria (muted)= titulo
+//   badges            = tipo · confirmado N× (>1) · vence ttl_accion (si hay)
+//   chip              = estado_accion
+//   botones           = solo en bucket 'cola'
+// =============================================================================
+
+const SNOOZE_DEFAULT_DAYS = 7
+
+function defaultSnoozeDate(): string {
+  const d = new Date()
+  d.setDate(d.getDate() + SNOOZE_DEFAULT_DAYS)
+  return d.toISOString().slice(0, 10) // YYYY-MM-DD
+}
+
+function ActionCard({
+  insight,
+  bucket,
+  onAprobar,
+  onEstado,
+}: {
+  insight: InsightDatum
+  bucket: Bucket
+  onAprobar: (id: string, aprobado: boolean) => Promise<EstadoResult>
+  onEstado: (
+    id: string,
+    estado: EstadoAccion,
+    opts?: { notas?: string; snoozeHasta?: string }
+  ) => Promise<EstadoResult>
+}) {
+  const [pending, startTransition] = useTransition()
+  const [error, setError] = useState<string | null>(null)
+
+  const dominioColor = DOMINIO_COLOR[insight.dominio] || 'var(--fg-subtle)'
+  const tipoKind = TIPO_KIND[insight.tipo ?? 'patron'] || 'muted'
+  const estado = (insight.estado_accion ?? 'pendiente') as EstadoAccion
+  const chip = ESTADO_CHIP[estado] ?? ESTADO_CHIP.pendiente
+  const rdh = insight.requiere_del_humano ?? null
+  const ttl = typeof insight.ttl_accion === 'string' && insight.ttl_accion.trim()
+    ? insight.ttl_accion.trim()
+    : null
+
+  const accion = insight.accion_sugerida?.trim() || null
+  const principal = accion ?? insight.titulo
+  const secondary = accion ? insight.titulo : null
+
+  const run = (fn: () => Promise<EstadoResult>) => {
+    setError(null)
+    startTransition(async () => {
+      const r = await fn()
+      if (!r.ok) setError(r.error ?? 'error')
+    })
+  }
+
+  const handleDescartar = () => {
+    const motivo = window.prompt('Motivo para descartar (opcional):', '')
+    if (motivo === null) return // cancelado
+    run(() => onEstado(insight.id, 'descartado', { notas: motivo || undefined }))
+  }
+
+  const handlePosponer = () => {
+    const val = window.prompt(
+      '¿Hasta qué fecha posponer? (YYYY-MM-DD)',
+      defaultSnoozeDate()
+    )
+    if (val === null) return // cancelado
+    const parsed = new Date(`${val}T12:00:00`)
+    if (isNaN(parsed.getTime())) {
+      setError('Fecha inválida')
+      return
+    }
+    run(() => onEstado(insight.id, 'pospuesto', { snoozeHasta: parsed.toISOString() }))
+  }
+
+  const showAprobar = rdh === 'aprobar' && estado === 'pendiente'
+
+  return (
+    <div
+      style={{
+        padding: '12px 14px',
+        marginBottom: 8,
+        borderRadius: 8,
+        border: '1px solid var(--border-subtle)',
+        borderLeft: `3px solid ${chip.emphasis ? 'var(--accent)' : dominioColor}`,
+        background:
+          bucket === 'contexto' && rdh === 'celebrar'
+            ? 'color-mix(in oklab, var(--success) 5%, var(--bg-elev-1))'
+            : 'var(--bg-elev-1)',
+        opacity: estado === 'descartado' ? 0.7 : 1,
+      }}
+    >
+      {/* Fila de badges + chip de estado */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          flexWrap: 'wrap',
+          marginBottom: 6,
+        }}
+      >
+        <span
+          style={{
+            fontSize: 9.5,
+            fontWeight: 600,
+            letterSpacing: '0.08em',
+            textTransform: 'uppercase',
+            fontFamily: 'var(--font-mono-stack)',
+            color: dominioColor,
+          }}
+        >
+          {insight.dominio}
+        </span>
+        {insight.tipo && <Pill kind={tipoKind}>{insight.tipo}</Pill>}
+        {insight.veces_confirmado > 1 && (
+          <span style={badgeStyle('success')}>✓ confirmado {insight.veces_confirmado}×</span>
+        )}
+        {ttl && <span style={badgeStyle('muted')}>⏳ vence {ttl}</span>}
+        <span style={{ marginLeft: 'auto' }}>
+          <EstadoChip estado={estado} />
+        </span>
+      </div>
+
+      {/* Línea principal = la acción */}
+      <div
+        style={{
+          fontSize: 13.5,
+          fontWeight: 600,
+          color: 'var(--fg)',
+          lineHeight: 1.4,
+          textWrap: 'pretty',
+        }}
+      >
+        {principal}
+      </div>
+
+      {/* Línea secundaria = la observación (titulo) */}
+      {secondary && (
+        <div
+          style={{
+            marginTop: 3,
+            fontSize: 11,
+            color: 'var(--fg-subtle)',
+            lineHeight: 1.4,
+            textWrap: 'pretty',
+          }}
+        >
+          {secondary}
+        </div>
+      )}
+
+      {/* Score + meta */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          marginTop: 8,
+        }}
+      >
+        <div
+          style={{
+            flex: 1,
+            background: 'var(--bg-elev-2)',
+            borderRadius: 2,
+            height: 4,
+            overflow: 'hidden',
+            maxWidth: 120,
+          }}
+        >
+          <div
+            style={{
+              height: '100%',
+              width: `${insight.score_confianza * 100}%`,
+              background: dominioColor,
+              borderRadius: 2,
+            }}
+          />
+        </div>
+        <span
+          style={{
+            fontSize: 10,
+            fontFamily: 'var(--font-mono-stack)',
+            color: 'var(--fg-subtle)',
+          }}
+        >
+          score {insight.score_confianza.toFixed(2)}
+        </span>
+        {bucket === 'pospuestos' && insight.snooze_hasta && (
+          <span
+            style={{
+              fontSize: 10,
+              fontFamily: 'var(--font-mono-stack)',
+              color: 'var(--warning)',
+              marginLeft: 'auto',
+            }}
+          >
+            vuelve {insight.snooze_hasta.slice(0, 10)}
+          </span>
+        )}
+        {bucket === 'historial' && insight.accion_tomada_at && (
+          <span
+            style={{
+              fontSize: 10,
+              fontFamily: 'var(--font-mono-stack)',
+              color: 'var(--fg-faint)',
+              marginLeft: 'auto',
+            }}
+          >
+            {formatRelative(insight.accion_tomada_at)}
+            {insight.accion_tomada_por && ` · ${shortEmail(insight.accion_tomada_por)}`}
+          </span>
+        )}
+      </div>
+
+      {/* Botones por bucket */}
+      <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        {bucket === 'cola' && showAprobar && (
+          <>
+            <ActionBtn variant="success" disabled={pending} onClick={() => run(() => onAprobar(insight.id, true))}>
+              Aprobar
+            </ActionBtn>
+            <ActionBtn variant="neutral" disabled={pending} onClick={() => run(() => onAprobar(insight.id, false))}>
+              Rechazar
+            </ActionBtn>
+          </>
+        )}
+
+        {bucket === 'cola' && !showAprobar && (
+          <>
+            {estado !== 'en_curso' && (
+              <ActionBtn variant="accent" disabled={pending} onClick={() => run(() => onEstado(insight.id, 'en_curso'))}>
+                Empezar
+              </ActionBtn>
+            )}
+            <ActionBtn variant="success" disabled={pending} onClick={() => run(() => onEstado(insight.id, 'hecho'))}>
+              Hecho
+            </ActionBtn>
+            <ActionBtn variant="neutral" disabled={pending} onClick={handleDescartar}>
+              Descartar
+            </ActionBtn>
+            <ActionBtn variant="neutral" disabled={pending} onClick={handlePosponer}>
+              Posponer
+            </ActionBtn>
+          </>
+        )}
+
+        {bucket === 'pospuestos' && (
+          <ActionBtn variant="accent" disabled={pending} onClick={() => run(() => onEstado(insight.id, 'pendiente'))}>
+            Reactivar ahora
+          </ActionBtn>
+        )}
+
+        {bucket === 'historial' && (
+          <ActionBtn variant="neutral" disabled={pending} onClick={() => run(() => onEstado(insight.id, 'pendiente'))}>
+            Reabrir
+          </ActionBtn>
+        )}
+
+        {pending && (
+          <span style={{ fontSize: 10, fontFamily: 'var(--font-mono-stack)', color: 'var(--fg-faint)' }}>
+            …
+          </span>
+        )}
+        {error && (
+          <span style={{ fontSize: 10, fontFamily: 'var(--font-mono-stack)', color: 'var(--danger)' }}>
+            {error}
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function EstadoChip({ estado }: { estado: EstadoAccion }) {
+  const chip = ESTADO_CHIP[estado] ?? ESTADO_CHIP.pendiente
+  return (
+    <span
+      style={{
+        fontSize: 9.5,
+        fontWeight: 700,
+        letterSpacing: '0.06em',
+        textTransform: 'uppercase',
+        fontFamily: 'var(--font-mono-stack)',
+        padding: '2px 8px',
+        borderRadius: 999,
+        color: chip.color,
+        border: `1px solid ${chip.color}`,
+        background: chip.emphasis
+          ? `color-mix(in oklab, ${chip.color} 16%, transparent)`
+          : `color-mix(in oklab, ${chip.color} 8%, transparent)`,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {chip.label}
+    </span>
+  )
+}
+
+function ActionBtn({
+  children,
+  onClick,
+  disabled,
+  variant,
+}: {
+  children: React.ReactNode
+  onClick: () => void
+  disabled?: boolean
+  variant: 'success' | 'accent' | 'neutral'
+}) {
+  const accent =
+    variant === 'success' ? 'var(--success)' :
+    variant === 'accent'  ? 'var(--accent)'  :
+    'var(--border-subtle)'
+  const fg =
+    variant === 'neutral' ? 'var(--fg-muted)' : accent
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        fontSize: 10,
+        fontFamily: 'var(--font-mono-stack)',
+        textTransform: 'uppercase',
+        letterSpacing: '0.04em',
+        padding: '4px 12px',
+        borderRadius: 999,
+        border: `1px solid ${accent}`,
+        background:
+          variant === 'neutral'
+            ? 'transparent'
+            : `color-mix(in oklab, ${accent} 14%, transparent)`,
+        color: fg,
+        cursor: disabled ? 'wait' : 'pointer',
+        opacity: disabled ? 0.6 : 1,
+        transition: 'all 80ms ease',
+      }}
+    >
+      {children}
+    </button>
+  )
+}
+
+// =============================================================================
+// Modo Explorar (legacy AIR-83) · filtros + agrupación + checkbox loop back
+// =============================================================================
 
 function FilterRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -745,10 +1325,6 @@ function GroupSection({
   )
 }
 
-// =============================================================================
-// InsightRow · ahora con checkbox de acción tomada
-// =============================================================================
-
 function InsightRow({
   insight,
   accent,
@@ -769,7 +1345,6 @@ function InsightRow({
         alignItems: 'flex-start',
         padding: '10px 0',
         borderBottom: '1px solid var(--border-subtle)',
-        // Acento positivo sutil para 'celebrar' (sin desplazar el grid)
         background:
           accent === 'positive'
             ? 'color-mix(in oklab, var(--success) 5%, transparent)'
@@ -854,7 +1429,6 @@ function InsightRow({
         </div>
       </div>
 
-      {/* Acción checkbox · solo si hay accion_sugerida */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: 2 }}>
         {isActionable ? (
           <ActionCheckbox
@@ -925,10 +1499,7 @@ function ActionCheckbox({ insightId, tomada }: { insightId: string; tomada: bool
 }
 
 // =============================================================================
-// BotonesAprobacion · slice HITL (AIR-82)
-// Solo se renderiza en insights con requiere_del_humano === 'aprobar'.
-// POST /api/propuestas/aprobar → RPC analytics_aprobar_propuesta (SECURITY
-// DEFINER). En éxito el insight sale de la cola (pasa a 'informacion' o 'nada').
+// BotonesAprobacion · slice HITL (AIR-82) · usado en modo Explorar
 // =============================================================================
 
 function BotonesAprobacion({ insightId }: { insightId: string }) {
@@ -1020,7 +1591,7 @@ function BotonesAprobacion({ insightId }: { insightId: string }) {
   )
 }
 
-function badgeStyle(kind: 'success' | 'accent'): React.CSSProperties {
+function badgeStyle(kind: 'success' | 'accent' | 'muted'): React.CSSProperties {
   const color =
     kind === 'success' ? 'var(--success)' :
     kind === 'accent'  ? 'var(--accent)'  :
