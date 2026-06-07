@@ -182,6 +182,9 @@ type ViewInsightsActivos = ReadOnlyView<{
   accion_tomada_por: string | null
   accion_notas: string | null
   requiere_del_humano: string | null
+  ttl_accion: string | null
+  estado_accion: string | null
+  snooze_hasta: string | null
 }>
 
 type ViewAnomalias = ReadOnlyView<{

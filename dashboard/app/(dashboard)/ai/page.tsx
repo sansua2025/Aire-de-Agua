@@ -40,6 +40,9 @@ export default async function AiPage() {
     accion_tomada_at: i.accion_tomada_at ?? null,
     accion_tomada_por: i.accion_tomada_por ?? null,
     requiere_del_humano: i.requiere_del_humano ?? null,
+    ttl_accion: i.ttl_accion ?? null,
+    estado_accion: i.estado_accion ?? null,
+    snooze_hasta: i.snooze_hasta ?? null,
   }))
 
   const anomalias: AnomaliaDatum[] = (anomaliasRaw || []).map((a) => ({
