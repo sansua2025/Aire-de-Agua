@@ -6,7 +6,7 @@ import {
   type CohortDatum,
 } from '@/components/ai/ai-charts'
 import {
-  getInsightsActivos,
+  getColaAgrupada,
   getAnomalias,
   getCustomerPanel,
 } from '@/lib/data/queries'
@@ -20,7 +20,7 @@ function parseNumber(v: unknown): number | null {
 
 export default async function AiPage() {
   const [insightsRaw, anomaliasRaw, cohortsRaw] = await Promise.all([
-    getInsightsActivos().catch(() => []),
+    getColaAgrupada().catch(() => []),
     getAnomalias().catch(() => []),
     getCustomerPanel().catch(() => []),
   ])
@@ -43,6 +43,11 @@ export default async function AiPage() {
     ttl_accion: i.ttl_accion ?? null,
     estado_accion: i.estado_accion ?? null,
     snooze_hasta: i.snooze_hasta ?? null,
+    // Agrupación (AIR-85)
+    veces_en_grupo: parseNumber(i.veces_en_grupo) ?? 1,
+    primera_aparicion: i.primera_aparicion ?? null,
+    ultima_aparicion: i.ultima_aparicion ?? null,
+    ids_grupo: i.ids_grupo ?? [i.id],
   }))
 
   const anomalias: AnomaliaDatum[] = (anomaliasRaw || []).map((a) => ({

@@ -6,19 +6,23 @@ import { getAdminClient } from '@/lib/supabase/admin'
 /**
  * POST /api/propuestas/estado
  *
- * Modelo de estados (AIR-84): transiciones del ciclo de vida de un insight que
- * el Cerebro marcó como `requiere_del_humano = 'decidir_urgente'` (también sirve
- * para mover propuestas ya aprobadas que están `en_curso`).
+ * Modelo de estados (AIR-84) + cola agrupada (AIR-85): transiciones del ciclo de
+ * vida de un insight (o de todo un grupo de condición) que el Cerebro marcó como
+ * `requiere_del_humano = 'decidir_urgente'` (también sirve para mover propuestas
+ * ya aprobadas que están `en_curso`).
+ *
+ * Body: `{ ids?: string[], insightId?: string, estado, notas?, snoozeHasta? }`.
+ *   - `ids` (preferido, AIR-85): marca TODAS las filas del grupo vía el RPC batch
+ *     `analytics_marcar_estado_insights(p_ids uuid[], ...)` — sin stragglers.
+ *   - `insightId` (compat): una sola fila vía `analytics_marcar_estado_insight`.
  *
  * Hermano de POST /api/propuestas/aprobar — mismo patrón de cliente
  * (`getAdminClient()`, service-role, schema public), misma auth y mismo manejo
  * de error y revalidación de cache.
  *
  * Escritura:
- *   - RPC `public.analytics_marcar_estado_insight` (SECURITY DEFINER, GRANT a
- *     dashboard_reader). Idempotente: id inexistente → `{ ok:false,
- *     estado:'no_existe' }`, estado inválido → `{ ok:false,
- *     estado:'estado_invalido' }`, sin mutación.
+ *   - RPCs SECURITY DEFINER (GRANT a dashboard_reader). Idempotentes: id
+ *     inexistente → `no_existe`, estado inválido → `estado_invalido`.
  *   - `p_decidido_por = email` del decisor para trazabilidad.
  *
  * Cache:
@@ -36,6 +40,7 @@ export async function POST(req: NextRequest) {
   }
 
   let body: {
+    ids?: unknown
     insightId?: unknown
     estado?: unknown
     notas?: unknown
@@ -47,12 +52,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: 'Body inválido' }, { status: 400 })
   }
 
-  const { insightId, estado, notas, snoozeHasta } = body
+  const { ids, insightId, estado, notas, snoozeHasta } = body
 
-  // Validación mínima (mismo contrato que el RPC: uuid + estado del enum)
-  if (typeof insightId !== 'string' || !insightId) {
+  // Acepta `ids` (grupo, AIR-85) o `insightId` (una fila, compat).
+  const idList: string[] =
+    Array.isArray(ids) && ids.length > 0
+      ? ids.filter((x): x is string => typeof x === 'string' && !!x)
+      : typeof insightId === 'string' && insightId
+        ? [insightId]
+        : []
+
+  if (idList.length === 0) {
     return NextResponse.json(
-      { ok: false, error: 'insightId (string) es obligatorio' },
+      { ok: false, error: 'ids (string[]) o insightId (string) es obligatorio' },
       { status: 400 }
     )
   }
@@ -76,15 +88,27 @@ export async function POST(req: NextRequest) {
   try {
     const admin = getAdminClient()
     // RPC sin tipos generados — params con prefijo p_ (contrato SQL, ya en prod).
-    const { data, error } = await admin
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .rpc('analytics_marcar_estado_insight' as any, {
-        p_insight_id: insightId,
-        p_estado: estado,
-        p_notas: typeof notas === 'string' ? notas : null,
-        p_snooze_hasta: typeof snoozeHasta === 'string' ? snoozeHasta : null,
-        p_decidido_por: email,
-      })
+    // Grupo (>1 id) → RPC batch; una sola fila → RPC singular.
+    const isBatch = idList.length > 1
+    const { data, error } = isBatch
+      ? await admin
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          .rpc('analytics_marcar_estado_insights' as any, {
+            p_ids: idList,
+            p_estado: estado,
+            p_notas: typeof notas === 'string' ? notas : null,
+            p_snooze_hasta: typeof snoozeHasta === 'string' ? snoozeHasta : null,
+            p_decidido_por: email,
+          })
+      : await admin
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          .rpc('analytics_marcar_estado_insight' as any, {
+            p_insight_id: idList[0],
+            p_estado: estado,
+            p_notas: typeof notas === 'string' ? notas : null,
+            p_snooze_hasta: typeof snoozeHasta === 'string' ? snoozeHasta : null,
+            p_decidido_por: email,
+          })
 
     if (error) {
       console.error('[estado] RPC error', error)

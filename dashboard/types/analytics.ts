@@ -187,6 +187,44 @@ type ViewInsightsActivos = ReadOnlyView<{
   snooze_hasta: string | null
 }>
 
+/**
+ * Vista agrupada por condición (AIR-85, mig 056). Una fila por
+ * `COALESCE(insight_key, id)` = el representante (emisión más reciente). Trae
+ * las mismas columnas que view_dashboard_insights_activos + las de agrupación.
+ */
+type ViewColaAgrupada = ReadOnlyView<{
+  id: string
+  dominio: string | null
+  tipo: string | null
+  titulo: string | null
+  descripcion: string | null
+  metrica_clave: string | null
+  valor_observado: number | null
+  valor_referencia: number | null
+  delta_pct: number | null
+  score_confianza: number | null
+  veces_confirmado: number | null
+  ultima_confirmacion: string | null
+  accion_sugerida: string | null
+  accion_tomada: boolean | null
+  periodo_inicio: string | null
+  periodo_fin: string | null
+  created_at: string | null
+  accion_tomada_at: string | null
+  accion_tomada_por: string | null
+  accion_notas: string | null
+  requiere_del_humano: string | null
+  ttl_accion: string | null
+  estado_accion: string | null
+  snooze_hasta: string | null
+  insight_key: string | null
+  grupo_key: string | null
+  veces_en_grupo: number | null
+  primera_aparicion: string | null
+  ultima_aparicion: string | null
+  ids_grupo: string[] | null
+}>
+
 type ViewAnomalias = ReadOnlyView<{
   id: string
   dominio: string | null
@@ -306,6 +344,7 @@ export type AnalyticsDatabase = {
       view_dashboard_channels_mix: ViewChannelsMix
       view_dashboard_creative_learnings: ViewCreativeLearnings
       view_dashboard_insights_activos: ViewInsightsActivos
+      view_dashboard_cola_agrupada: ViewColaAgrupada
       view_dashboard_anomalias: ViewAnomalias
       view_dashboard_top_skus: ViewTopSkus
       view_dashboard_inventory_health: ViewInventoryHealth

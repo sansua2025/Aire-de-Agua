@@ -27,6 +27,11 @@ export interface InsightDatum {
   ttl_accion?: string | null
   estado_accion?: string | null
   snooze_hasta?: string | null
+  // Cola agrupada (AIR-85)
+  veces_en_grupo?: number | null
+  primera_aparicion?: string | null
+  ultima_aparicion?: string | null
+  ids_grupo?: string[] | null
 }
 
 export interface AnomaliaDatum {
@@ -337,11 +342,13 @@ function InsightsCard({ insights: initialInsights }: { insights: InsightDatum[] 
       accion_tomada_at: terminal ? new Date().toISOString() : prev?.accion_tomada_at ?? null,
     })
     try {
+      // AIR-85: marca todas las filas del grupo (ids_grupo) vía el RPC batch.
+      const ids = prev?.ids_grupo?.length ? prev.ids_grupo : [id]
       const res = await fetch('/api/propuestas/estado', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          insightId: id,
+          ids,
           estado,
           notas: opts?.notas,
           snoozeHasta: opts?.snoozeHasta,
@@ -443,10 +450,10 @@ function InsightsCard({ insights: initialInsights }: { insights: InsightDatum[] 
       }
       subtitle={
         mode === 'triage'
-          ? `Cola de acción · aprobar + decidir_urgente arriba · ${contexto.length} en contexto`
+          ? `Cola de acción · condiciones recurrentes agrupadas · ${contexto.length} en contexto`
           : 'Score de confianza > 0.6 · vigentes (no archivados por decay) · ordenados por score'
       }
-      source="analytics.view_dashboard_insights_activos"
+      source="analytics.view_dashboard_cola_agrupada"
     >
       {/* SELECTOR DE MODO (AIR-83) */}
       <div
@@ -844,6 +851,31 @@ function defaultSnoozeDate(): string {
   return d.toISOString().slice(0, 10) // YYYY-MM-DD
 }
 
+// Fila individual del grupo expandido (AIR-85), subset de la vista sin agrupar.
+interface TimelineRow {
+  id: string
+  titulo: string | null
+  ultima_confirmacion?: string | null
+  created_at?: string | null
+  periodo_fin?: string | null
+}
+
+// Fecha corta es-CO ("20 abr") a partir de un ISO (date o timestamptz).
+function fmtFecha(iso: string): string {
+  const d = new Date(`${iso.slice(0, 10)}T12:00:00`)
+  if (isNaN(d.getTime())) return iso.slice(0, 10)
+  return d.toLocaleDateString('es-CO', { day: 'numeric', month: 'short' })
+}
+
+// Rango de aparición de un grupo: "20 abr → 1 jun" o "desde 20 abr".
+function formatRango(primera: string | null, ultima: string | null): string | null {
+  if (!primera && !ultima) return null
+  const p = primera ? fmtFecha(primera) : null
+  const u = ultima ? fmtFecha(ultima) : null
+  if (p && u && p !== u) return `${p} → ${u}`
+  return `desde ${p ?? u}`
+}
+
 function ActionCard({
   insight,
   bucket,
@@ -862,6 +894,12 @@ function ActionCard({
   const [pending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
 
+  // Expandir grupo (AIR-85): mini-timeline de las filas individuales.
+  const [expanded, setExpanded] = useState(false)
+  const [rows, setRows] = useState<TimelineRow[] | null>(null)
+  const [loadingRows, setLoadingRows] = useState(false)
+  const [rowsError, setRowsError] = useState<string | null>(null)
+
   const dominioColor = DOMINIO_COLOR[insight.dominio] || 'var(--fg-subtle)'
   const tipoKind = TIPO_KIND[insight.tipo ?? 'patron'] || 'muted'
   const estado = (insight.estado_accion ?? 'pendiente') as EstadoAccion
@@ -874,6 +912,31 @@ function ActionCard({
   const accion = insight.accion_sugerida?.trim() || null
   const principal = accion ?? insight.titulo
   const secondary = accion ? insight.titulo : null
+
+  const grupo = insight.veces_en_grupo ?? 1
+  const isGroup = grupo > 1
+  const rango = formatRango(insight.primera_aparicion ?? null, insight.ultima_aparicion ?? null)
+
+  const toggleExpand = () => {
+    const next = !expanded
+    setExpanded(next)
+    if (next && rows === null && !loadingRows) {
+      setLoadingRows(true)
+      setRowsError(null)
+      fetch('/api/insights/grupo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: insight.ids_grupo ?? [insight.id] }),
+      })
+        .then((r) => r.json())
+        .then((d) => {
+          if (d?.ok) setRows((d.rows ?? []) as TimelineRow[])
+          else setRowsError(d?.error ?? 'error')
+        })
+        .catch(() => setRowsError('Error de red'))
+        .finally(() => setLoadingRows(false))
+    }
+  }
 
   const run = (fn: () => Promise<EstadoResult>) => {
     setError(null)
@@ -943,6 +1006,24 @@ function ActionCard({
           {insight.dominio}
         </span>
         {insight.tipo && <Pill kind={tipoKind}>{insight.tipo}</Pill>}
+        {isGroup && (
+          <span
+            title={`${grupo} observaciones de esta condición`}
+            style={{
+              fontSize: 10,
+              fontWeight: 700,
+              fontFamily: 'var(--font-mono-stack)',
+              color: 'var(--danger)',
+              border: '1px solid var(--danger)',
+              background: 'color-mix(in oklab, var(--danger) 12%, transparent)',
+              borderRadius: 999,
+              padding: '1px 7px',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {grupo}×
+          </span>
+        )}
         {insight.veces_confirmado > 1 && (
           <span style={badgeStyle('success')}>✓ confirmado {insight.veces_confirmado}×</span>
         )}
@@ -977,6 +1058,20 @@ function ActionCard({
           }}
         >
           {secondary}
+        </div>
+      )}
+
+      {/* Rango de aparición (AIR-85) */}
+      {rango && (
+        <div
+          style={{
+            marginTop: 4,
+            fontSize: 10,
+            fontFamily: 'var(--font-mono-stack)',
+            color: 'var(--fg-faint)',
+          }}
+        >
+          {rango}
         </div>
       )}
 
@@ -1043,6 +1138,86 @@ function ActionCard({
           </span>
         )}
       </div>
+
+      {/* Expandir grupo (AIR-85) · mini-timeline de las observaciones */}
+      {isGroup && (
+        <div style={{ marginTop: 8 }}>
+          <button
+            type="button"
+            onClick={toggleExpand}
+            aria-expanded={expanded}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              background: 'transparent',
+              border: 'none',
+              padding: 0,
+              cursor: 'pointer',
+              fontSize: 10,
+              fontFamily: 'var(--font-mono-stack)',
+              textTransform: 'uppercase',
+              letterSpacing: '0.04em',
+              color: 'var(--fg-subtle)',
+            }}
+          >
+            <span style={{ fontSize: 9, color: 'var(--fg-faint)', width: 8 }}>
+              {expanded ? '▼' : '▶'}
+            </span>
+            {expanded ? 'Ocultar observaciones' : `Ver ${grupo} observaciones`}
+          </button>
+
+          {expanded && (
+            <div
+              style={{
+                marginTop: 6,
+                borderLeft: '2px solid var(--border-subtle)',
+                paddingLeft: 10,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 6,
+              }}
+            >
+              {loadingRows && (
+                <span style={{ fontSize: 10, fontFamily: 'var(--font-mono-stack)', color: 'var(--fg-faint)' }}>
+                  cargando…
+                </span>
+              )}
+              {rowsError && (
+                <span style={{ fontSize: 10, fontFamily: 'var(--font-mono-stack)', color: 'var(--danger)' }}>
+                  {rowsError}
+                </span>
+              )}
+              {rows?.map((r) => {
+                const fecha = r.ultima_confirmacion ?? r.created_at ?? r.periodo_fin ?? null
+                return (
+                  <div key={r.id} style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
+                    <span
+                      style={{
+                        flexShrink: 0,
+                        fontSize: 9.5,
+                        fontFamily: 'var(--font-mono-stack)',
+                        color: 'var(--fg-faint)',
+                        minWidth: 52,
+                      }}
+                    >
+                      {fecha ? fmtFecha(fecha) : '—'}
+                    </span>
+                    <span style={{ fontSize: 11, color: 'var(--fg-subtle)', lineHeight: 1.35, textWrap: 'pretty' }}>
+                      {r.titulo ?? '—'}
+                    </span>
+                  </div>
+                )
+              })}
+              {rows && rows.length === 0 && !loadingRows && (
+                <span style={{ fontSize: 10, fontFamily: 'var(--font-mono-stack)', color: 'var(--fg-faint)' }}>
+                  Sin observaciones individuales.
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Botones por bucket */}
       <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
