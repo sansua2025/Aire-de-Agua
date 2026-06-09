@@ -144,3 +144,18 @@ Para cambiar comportamiento, editar la migración correspondiente y aplicar `CRE
 - [ ] Dashboard Looker accesible para stakeholders no técnicos (E5-E pendiente)
 - [x] Email semanal legible llega al inbox
 - [ ] `view_system_health` muestra cobertura_loop_pct >80% (requiere 28d operando + acciones marcadas)
+
+## Delta del prompt — `insight_key` (AIR-76)
+
+A partir de AIR-76, cada insight emitido por el Weekly Analysis incluye dos campos nuevos en su JSON:
+
+- **`insight_key`** — slug determinístico que identifica la *condición* observada, estable entre semanas (ej. `klaviyo_canal_apagado`, `cvr_web_critico`, `roas_real_paid`). Lo emite el LLM directamente y de forma determinística: NO depende de embeddings. (La rama semántica de `analytics.upsert_insight` es código muerto en la práctica, porque 0 insights tienen `embedding`; el match efectivo sigue siendo por título.)
+- **`requiere_del_humano`** — proveniente de E5-I / [AIR-75](https://linear.app/airedeagua/issue/AIR-75).
+
+**Modelo append-only.** Se escribe una fila por detección por período. NO hay UPDATE-sobre-match ni `vigente=false`. `insight_key` NO mergea ni desactiva filas: solo etiqueta cada observación con el patrón al que pertenece, de modo que E5-K ([AIR-77](https://linear.app/airedeagua/issue/AIR-77)) pueda agrupar observaciones del mismo patrón y medir su madurez en `strategic_learnings`.
+
+**Reuso de claves entre semanas.** `get_memoria_activa()` ahora devuelve `insight_key` por insight (migración `057`). En la corrida siguiente, el LLM ve en memoria las claves ya usadas y reutiliza la misma para el mismo patrón. Verificado: `klaviyo_canal_apagado` se reusó en la corrida del 8-jun-2026.
+
+**Backfill histórico.** Las 72 filas previas recibieron `insight_key` asignada por título (las 7 de "Klaviyo apagado" comparten `klaviyo_canal_apagado`). Es backfill de clave únicamente — no hubo merge ni delete de filas.
+
+> Nota de despliegue: las migraciones `055_insight_key.sql` y `057_get_memoria_activa_insight_key.sql` ya fueron aplicadas a PROD manualmente. Los archivos en `supabase/migrations/` son el respaldo versionado fiel (idempotentes, no se re-ejecutan).
