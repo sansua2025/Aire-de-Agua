@@ -159,3 +159,43 @@ A partir de AIR-76, cada insight emitido por el Weekly Analysis incluye dos camp
 **Backfill histórico.** Las 72 filas previas recibieron `insight_key` asignada por título (las 7 de "Klaviyo apagado" comparten `klaviyo_canal_apagado`). Es backfill de clave únicamente — no hubo merge ni delete de filas.
 
 > Nota de despliegue: las migraciones `055_insight_key.sql` y `057_get_memoria_activa_insight_key.sql` ya fueron aplicadas a PROD manualmente. Los archivos en `supabase/migrations/` son el respaldo versionado fiel (idempotentes, no se re-ejecutan).
+
+## E5-K · Knowledge Consolidation (`strategic_learnings`)
+
+[AIR-77](https://linear.app/airedeagua/issue/AIR-77) introduce la **2ª capa de conocimiento**, intermedia entre las señales semanales y el ADN curado de marca:
+
+```
+insights (señal semanal, append-only)
+   → strategic_learnings (patrón estable, candidato → curado)
+      → brand_knowledge (ADN de marca vectorizado, promovido)
+```
+
+Un `strategic_learning` representa un patrón que se repitió en varias semanas. Una vez que Claude le redacta la `sintesis` y la `accion_recomendada`, y un humano lo aprueba (HITL), puede promoverse a `brand_knowledge` (vía `brand_knowledge_id`).
+
+### Tabla `public.strategic_learnings` (migración `058`)
+
+Campos relevantes: `titulo`, `sintesis` (NULLABLE — la rellena n8n+Claude, no la función), `insight_key`, `evidencia_ids` (uuid[] de los insights agrupados), `dominio`, `semanas_activo`, `primera_observacion`/`ultima_observacion`, `accion_recomendada`/`accion_ejecutada`/`resultado_accion`, `estado`, `brand_knowledge_id`, `embedding vector(1536)`.
+
+- **`score_estabilidad` es GENERATED STORED** — Postgres lo calcula (`semanas_activo / semanas_transcurridas`). NUNCA incluir en INSERT/UPDATE.
+- **`estado`** ∈ `candidato, en_revision, aprobado, promovido, rechazado, deprecado`.
+- RLS activo, patrón insights/decisiones: `anon`/`public` revocados; `authenticated` solo SELECT; `service_role` (n8n) escribe.
+
+### Función `consolidar_strategic_learnings()` → jsonb
+
+Agrupa `insights` `WHERE vigente = true AND insight_key IS NOT NULL AND requiere_del_humano <> 'nada'` por `insight_key`, con **umbral ≥ 2 observaciones**. Por grupo:
+
+- `semanas_activo = count(*)`, `primera/ultima_observacion = min(periodo_inicio)/max(periodo_fin)`, `evidencia_ids = array_agg(id)`.
+- `dominio` y `titulo` = los del insight **más reciente** del grupo (mayor `periodo_fin`, desempate por `ultima_confirmacion`/`created_at`).
+- UPSERT contra el índice único parcial por `insight_key`. En UPDATE **no toca** `sintesis`/`accion_recomendada`/`embedding`/`estado`/`razon_rechazo` (preserva el trabajo de Claude/HITL).
+- Devuelve `{ candidatos_creados, candidatos_actualizados }`.
+
+### Cadencia (workflow n8n — issue aparte)
+
+Mensual: **primer lunes del mes**, después del weekly analysis. El workflow llama a `consolidar_strategic_learnings()`, luego Claude redacta `sintesis`/`accion_recomendada` y genera `embedding` para los candidatos sin curar, y registra la corrida en `ai_analysis_log` con `tipo = 'knowledge_consolidation'` (valor añadido al CHECK en `058`).
+
+### Decisiones tomadas
+
+- **Re-candidatura permitida** vía índice ÚNICO PARCIAL `uq_strategic_learnings_active_key` sobre `insight_key` `WHERE estado NOT IN ('rechazado','deprecado')`. Un patrón rechazado/deprecado puede volver a generar candidato si reaparece.
+- **dominio del learning = observación más reciente** (mayor `periodo_fin`).
+- **`marca_id` diferido a [AIR-79](https://linear.app/airedeagua/issue/AIR-79)** — la tabla deja un `TODO(AIR-79)` para cuando exista `brand_config`.
+- `score_estabilidad` es **GENERATED STORED** — calculado por la DB, nunca por los flujos.
