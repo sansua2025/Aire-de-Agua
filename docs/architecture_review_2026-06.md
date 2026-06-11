@@ -142,22 +142,26 @@ Se decidió NO recrear el proyecto de Linear desde cero (se perdería el histori
 
 ## 7. Plan de oportunidades (espejo de los issues de Linear)
 
-| Prioridad | Acción | Sección | Esfuerzo |
-|---|---|---|---|
-| P0 | REVOKE EXECUTE en 17 RPCs + default privileges (migración) | §1.1 | ~1h |
-| P0 | 18 vistas → `security_invoker` o revoke (migración) | §1.2 | ~2h |
-| P0 | HMAC en webhook E2B | §1.4 | ~1h |
-| P0 | Resolver pixel `value=0` antes de optimizar pauta | §5 / AIR-71 | manual |
-| P1 | Exportar 4 Loops E5 + E1 + proceso de sync n8n↔repo | §3.3 | ~3h |
-| P1 | Renumerar 6 migraciones duplicadas | §2.1 | ~1h |
-| P1 | Error workflow global n8n + quitar `neverError` + backoff E3B | §3.1 | ~4h |
-| P1 | CI dashboard (tsc + ESLint + tipos generados, eliminar `as any`) | §4 | ~4h |
-| P2 | `signo_predicho` en insights + `close_insight_loop` v2 | §2.2 | ~3h |
-| P2 | Poblar o podar rama de embeddings en `upsert_insight` | §2.3 | ~2h |
-| P2 | Endurecer sanitización E5K, extender patrón `<data>` | §3.4 | ~3h |
-| P2 | Deduplicar `Transform Ads Data` E3A | §3.2 | ~2h |
-| P2 | `search_path` en las 34 funciones restantes | §1.5 | ~2h |
-| P2 | Higiene de índices (11 FKs sin índice, ~30 índices sin uso) | §2.4 | ~2h |
+Cada acción tiene su issue en Linear con la spec completa para agentes (contexto, rutas, criterios de aceptación). El issue es la fuente primaria de trabajo; este documento es la referencia ampliada.
+
+| Issue | Prioridad | Acción | Sección | Esfuerzo |
+|---|---|---|---|---|
+| AIR-86 | P0 | REVOKE EXECUTE en 17 RPCs + default privileges (migración) | §1.1 | ~1h |
+| AIR-87 | P0 | 18 vistas → `security_invoker` o revoke (migración) | §1.2 | ~2h |
+| AIR-88 | P0 | HMAC en webhook E2B | §1.4 | ~1h |
+| AIR-71 | P0 | Resolver pixel `value=0` antes de optimizar pauta (bloquea AIR-65) | §5 | manual |
+| AIR-89 | P1 | Exportar 4 Loops E5 + E1 + proceso de sync n8n↔repo | §3.3 | ~3h |
+| AIR-90 | P1 | Renumerar 6 migraciones duplicadas | §2.1 | ~1h |
+| AIR-91 | P1 | Error workflow global n8n + quitar `neverError` + backoff E3B | §3.1 | ~4h |
+| AIR-92 | P1 | CI dashboard (tsc + ESLint + tipos generados, eliminar `as any`) | §4 | ~4h |
+| AIR-97 | P2 | `signo_predicho` en insights + `close_insight_loop` v2 (proyecto Cerebro Accionable) | §2.2 | ~3h |
+| AIR-98 | P2 | Poblar o podar rama de embeddings en `upsert_insight` (proyecto Cerebro Accionable) | §2.3 | ~2h |
+| AIR-94 | P2 | Endurecer sanitización E5K, extender patrón `<data>` | §3.4 | ~3h |
+| AIR-95 | P2 | Deduplicar `Transform Ads Data` E3A | §3.2 | ~2h |
+| AIR-93 | P2 | `search_path` en las 34 funciones restantes | §1.5 | ~2h |
+| AIR-96 | P3 | Higiene de índices (11 FKs sin índice, ~30 índices sin uso) | §2.4 | ~2h |
+
+Salvo AIR-97/98 (proyecto Cerebro Accionable), todos viven en el proyecto **Plataforma — Sensores, Datos y Seguridad**.
 
 ## 8. Fortalezas a preservar
 
