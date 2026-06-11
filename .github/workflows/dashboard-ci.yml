@@ -1,0 +1,38 @@
+name: Dashboard CI
+
+on:
+  pull_request:
+    paths:
+      - 'dashboard/**'
+
+jobs:
+  ci:
+    name: tsc + eslint
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install dependencies
+        # npm ci requiere package-lock sincronizado; npm install como fallback
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Type-check
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npx eslint .

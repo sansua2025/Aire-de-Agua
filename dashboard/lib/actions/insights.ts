@@ -34,8 +34,7 @@ export async function toggleAccionTomada(input: {
     const admin = getAdminClient()
     // RPC sin tipos generados — payload sigue el contrato del SQL (mig 047)
     const { error } = await admin
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .rpc('marcar_accion_tomada' as any, {
+      .rpc('marcar_accion_tomada', {
         p_insight_id: input.insightId,
         p_tomada: input.tomada,
         p_por: email,
