@@ -6,10 +6,8 @@ model: opus
 color: purple
 memory: project
 mcpServers:
-  # TODO humano: cambiar a 'supabase-ro' cuando .mcp.json tenga el server
-  # read-only (ver docs/agentes/AUTONOMIA.md §Setup). Mientras tanto,
-  # execute_sql queda bloqueado arriba para impedir escrituras.
-  - supabase
+  # supabase-ro: read_only=true en .mcp.json; execute_sql además bloqueado en disallowedTools.
+  - supabase-ro
 hooks:
   PreToolUse:
     - matcher: "Bash"
