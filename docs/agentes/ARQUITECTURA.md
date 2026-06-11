@@ -229,14 +229,16 @@ flowchart LR
 
 ---
 
-## 9. Gaps conocidos (estado 2026-06-11)
+## 9. Gaps — estado (actualizado en esta rama)
 
-Pendientes identificados en la revisión de arquitectura (branch `claude/agent-architecture-review-5mhfoz`):
+| # | Gap | Estado |
+|---|-----|--------|
+| 1 | CI inexistente | ✅ Resuelto — `.github/workflows/ci.yml` (checks `data-rules` + `dashboard`) |
+| 2 | Veredicto sin anclar | ✅ Resuelto — `merge-gate.sh` v2 exige `sha: <headRefOid>` + último veredicto + autor opcional (`GATE_REVIEWER_LOGIN`) |
+| 3 | Reviewer podía escribir vía `execute_sql` | ✅ Mitigado — `disallowedTools` lo bloquea; falta paso manual `supabase-ro` (ver `AUTONOMIA.md` §6.3) |
+| 4 | Branch protection en `main` | ⏳ Manual — comando listo en `AUTONOMIA.md` §6.2 |
+| 5 | Drift n8n ↔ repo | 📋 Diseñado — señal del Sentinela (`AUTONOMIA.md` §3) |
+| 6 | Trigger Linear→dispatch | ✅ Resuelto — `scripts/agent/fleet-poll.sh` + cron (`AUTONOMIA.md` §4) |
+| 7 | Carril `human-gate` formal | ✅ Resuelto — escalera de autonomía: analyst decide → orchestrator etiqueta → gate condición 0 |
 
-1. **CI inexistente** — `merge-gate.sh` exige "CI verde" pero no hay `.github/workflows/`. Prioridad 1.
-2. **Veredicto sin anclar** — el gate greppea comentarios sin verificar autor ni commit SHA (APPROVE viejo pasa; REQUEST_CHANGES viejo bloquea para siempre).
-3. **Reviewer puede escribir vía `execute_sql`** — falta modo read-only del MCP de Supabase.
-4. **Branch protection en `main`** — backstop documentado; confirmar activado.
-5. **Drift n8n ↔ repo** — workflows vivos no versionados (E4F, Loop Weekly); falta export sync.
-6. **Trigger Linear→dispatch** — el label `agent-ready` aún se despacha a mano; falta webhook n8n → `dispatch-issue.sh`.
-7. **Carril `human-gate` formal** — hoy es nota en HANDOFF; debe ser label + check en el gate.
+Extras de esta rama: contador determinista de reintentos (`attempt.sh`), reglas de datos como fuente única (`check-data-rules.sh`, usada por hook + CI), regla de graduación en `retro`, guard anti prompt-injection en `issue-analyst`. Diseño completo de autonomía: `docs/agentes/AUTONOMIA.md`.

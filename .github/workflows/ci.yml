@@ -1,0 +1,45 @@
+# CI — hace real la condición 1 del merge-gate ("CI verde").
+# Dos checks que branch protection debe exigir: "data-rules" y "dashboard".
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  data-rules:
+    name: data-rules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Reglas críticas de datos sobre el diff
+        run: |
+          git fetch origin main --quiet || true
+          bash scripts/agent/check-data-rules.sh --diff origin/main
+
+  dashboard:
+    name: dashboard
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - name: Instalar dependencias
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Tests (vitest)
+        run: npm run test -- --passWithNoTests
+      # 'next build' se queda en verify/Vercel: requiere envs de Supabase.
