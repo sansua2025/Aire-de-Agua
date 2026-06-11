@@ -1,0 +1,86 @@
+{
+  "id": "pjJT4JKv27IE4aTx",
+  "name": "E2 - Webhook Shopify Products",
+  "active": true,
+  "description": "Recibe webhook de Shopify products/create y products/update, sanitiza datos y sincroniza a Supabase.",
+  "settings": { "executionOrder": "v1", "availableInMCP": true, "binaryMode": "separate" },
+  "nodes": [
+    {
+      "parameters": { "authentication": "accessToken", "topic": "products/create" },
+      "id": "ffcb95a9-13d5-4bbf-bbe5-61850194335b",
+      "name": "Product Created",
+      "type": "n8n-nodes-base.shopifyTrigger",
+      "typeVersion": 1,
+      "position": [0, 208],
+      "webhookId": "b9d141cc-6439-4f9a-b5fb-25aa8808cf99",
+      "credentials": { "shopifyOAuth2Api": { "id": "PLACEHOLDER", "name": "Shopify AdeA" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const p = $input.first().json;\nconst sanitize = (str) => str ? str.replace(/[\\x00-\\x1F]/g, \"\").substring(0, 5000) : null;\nconst product = {\n  shopify_product_id: String(p.id), handle: p.handle,\n  titulo: sanitize(p.title), descripcion: sanitize(p.body_html),\n  tipo: sanitize(p.product_type) || null, tags: sanitize(p.tags),\n  estado: p.status, shopify_created_at: p.created_at, shopify_updated_at: p.updated_at,\n  variants: (p.variants || []).map(v => ({\n    shopify_variant_id: String(v.id),\n    shopify_inventory_item_id: v.inventory_item_id ? String(v.inventory_item_id) : null,\n    sku: v.sku || null, titulo: sanitize(v.title),\n    talla: v.option1 || null, color: v.option2 || null,\n    precio: String(parseFloat(v.price) || 0),\n    precio_comparacion: v.compare_at_price ? String(parseFloat(v.compare_at_price)) : null,\n    peso_gramos: v.grams ? String(v.grams) : null,\n    codigo_barras: v.barcode || null, shopify_updated_at: v.updated_at\n  }))\n};\nreturn [{ json: { products_data: [product] } }];"
+      },
+      "id": "bd4ba07a-1f7e-46d1-bc44-98e780e8f0a6",
+      "name": "Sanitize Product Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [400, 352]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/rpc/backfill_products",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ products_data: $json.products_data }) }}",
+        "options": {}
+      },
+      "id": "6bf8b012-3f20-428e-b213-f9bb1d43af54",
+      "name": "Upsert Product RPC",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [704, 352],
+      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+    },
+    {
+      "parameters": { "authentication": "accessToken", "topic": "products/update" },
+      "id": "1ae0314a-5609-4135-9d76-49ca6d20a08c",
+      "name": "Product Updated",
+      "type": "n8n-nodes-base.shopifyTrigger",
+      "typeVersion": 1,
+      "position": [0, 512],
+      "webhookId": "e989f9bf-cae1-47e6-be5e-fbc7f66af5f2",
+      "credentials": { "shopifyOAuth2Api": { "id": "PLACEHOLDER", "name": "Shopify AdeA" } }
+    },
+    {
+      "parameters": {
+        "workflowId": { "__rl": true, "value": "8Og2ICgiKKHz2Fu4", "mode": "list", "cachedResultName": "Aire de Agua — E4A - Embeddings Pipeline" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": { "shopify_product_id": "={{ $('Sanitize Product Data').first().json.products_data[0].shopify_product_id }}" },
+          "matchingColumns": ["shopify_product_id"],
+          "schema": [{ "id": "shopify_product_id", "displayName": "shopify_product_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string", "removed": false }],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": { "waitForSubWorkflow": false }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [976, 352],
+      "id": "b808caa8-9fa2-4a31-b5f5-733137628729",
+      "name": "Call 'E4A - Embeddings Pipeline'"
+    }
+  ],
+  "connections": {
+    "Product Created": { "main": [[{ "node": "Sanitize Product Data", "type": "main", "index": 0 }]] },
+    "Sanitize Product Data": { "main": [[{ "node": "Upsert Product RPC", "type": "main", "index": 0 }]] },
+    "Product Updated": { "main": [[{ "node": "Sanitize Product Data", "type": "main", "index": 0 }]] },
+    "Upsert Product RPC": { "main": [[{ "node": "Call 'E4A - Embeddings Pipeline'", "type": "main", "index": 0 }]] }
+  },
+  "tags": [],
+  "meta": { "aiBuilderAssisted": true }
+}

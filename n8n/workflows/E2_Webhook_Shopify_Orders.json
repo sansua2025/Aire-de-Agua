@@ -1,0 +1,66 @@
+{
+  "id": "TChWc5Jc6R8JUUyZ",
+  "name": "E2 - Webhook Shopify Orders",
+  "active": true,
+  "description": "Recibe webhook de Shopify orders/create y orders/updated, sanitiza datos, sincroniza orden y campos de pago a Supabase. La atribucion UTM se maneja desde el WF E5A via shopify_customer_journeys.",
+  "settings": { "executionOrder": "v1", "availableInMCP": true, "binaryMode": "separate" },
+  "nodes": [
+    {
+      "id": "e38326b1-8cb3-43ac-b5b5-daf7c5ad9295",
+      "name": "Order Created",
+      "type": "n8n-nodes-base.shopifyTrigger",
+      "typeVersion": 1,
+      "position": [0, 208],
+      "parameters": { "authentication": "accessToken", "topic": "orders/create" },
+      "webhookId": "cb092af0-21a9-47ce-88a9-77aaebdb07fd",
+      "credentials": { "shopifyOAuth2Api": { "id": "PLACEHOLDER", "name": "Shopify AdeA" } }
+    },
+    {
+      "id": "e1a351db-3630-465c-9235-0e265aa08493",
+      "name": "Sanitize Order Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [400, 352],
+      "parameters": {
+        "jsCode": "const ord = $input.first().json;\nconst sanitize = (str) => str ? str.replace(/[\\x00-\\x1F]/g, \"\").substring(0, 5000) : null;\n\nif (ord.note) ord.note = sanitize(ord.note);\nif (ord.email) ord.email = sanitize(ord.email);\n\nif (ord.customer) {\n  ord.customer.first_name = sanitize(ord.customer.first_name);\n  ord.customer.last_name = sanitize(ord.customer.last_name);\n  ord.customer.email = sanitize(ord.customer.email);\n  ord.customer.phone = sanitize(ord.customer.phone);\n  if (ord.customer.default_address) {\n    ord.customer.default_address.city = sanitize(ord.customer.default_address.city);\n    ord.customer.default_address.province = sanitize(ord.customer.default_address.province);\n  }\n}\n\nif (ord.line_items) {\n  for (const li of ord.line_items) {\n    li.title = sanitize(li.title);\n    li.variant_title = sanitize(li.variant_title);\n    li.sku = sanitize(li.sku);\n  }\n}\n\nreturn [{ json: ord }];"
+      }
+    },
+    {
+      "id": "c20a25da-2932-4a62-88a5-efa7a2840c07",
+      "name": "Upsert Order RPC",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [704, 352],
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/rpc/backfill_orders",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ orders_data: [$json] }) }}",
+        "options": {}
+      },
+      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+    },
+    {
+      "id": "4a23f2de-ca3f-4250-9b2c-25a56be57367",
+      "name": "Order Updated",
+      "type": "n8n-nodes-base.shopifyTrigger",
+      "typeVersion": 1,
+      "position": [0, 512],
+      "parameters": { "authentication": "accessToken", "topic": "orders/updated" },
+      "webhookId": "91d85111-7682-4b48-a7a2-841d40dc08c2",
+      "credentials": { "shopifyOAuth2Api": { "id": "PLACEHOLDER", "name": "Shopify AdeA" } }
+    }
+  ],
+  "connections": {
+    "Order Created": { "main": [[{ "node": "Sanitize Order Data", "type": "main", "index": 0 }]] },
+    "Sanitize Order Data": { "main": [[{ "node": "Upsert Order RPC", "type": "main", "index": 0 }]] },
+    "Order Updated": { "main": [[{ "node": "Sanitize Order Data", "type": "main", "index": 0 }]] }
+  },
+  "tags": [],
+  "meta": { "aiBuilderAssisted": true }
+}

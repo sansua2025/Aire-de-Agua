@@ -1,0 +1,55 @@
+{
+  "id": "o5VYzfH53UY78Gyd",
+  "name": "E4E-A - Product Images Sync",
+  "active": true,
+  "description": "AIR-48. Sincroniza imagenes de productos activos de Shopify a product_images. Trigger manual + schedule diario 6am COT. Upsert por shopify_image_id (UNIQUE), procesado=false default para que E4E-B procese.",
+  "settings": { "executionOrder": "v1", "availableInMCP": true, "binaryMode": "separate", "timeSavedMode": "fixed", "callerPolicy": "workflowsFromSameOwner" },
+  "nodes": [
+    { "parameters": {}, "id": "8d83c5db-8314-4182-96ac-3d4e92a11485", "name": "Run Bulk Sync", "type": "n8n-nodes-base.manualTrigger", "typeVersion": 1, "position": [-240, 80] },
+    {
+      "parameters": { "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/productos", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendQuery": true, "queryParameters": { "parameters": [{ "name": "select", "value": "id,shopify_product_id,titulo" }, { "name": "estado", "value": "eq.active" }, { "name": "shopify_product_id", "value": "not.is.null" }] }, "options": {} },
+      "id": "b0c2bb73-62fb-41eb-a9d5-80680147ebab", "name": "Fetch Productos Activos", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [0, 192], "alwaysOutputData": true,
+      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+    },
+    {
+      "parameters": { "jsCode": "const first = $input.first()?.json;\nlet rows = [];\nif (Array.isArray(first)) rows = first;\nelse if (Array.isArray(first?.body)) rows = first.body;\nelse rows = $input.all().map(i => i.json);\nreturn rows.filter(p => p && p.id && p.shopify_product_id).map(p => ({ json: { producto_id: p.id, shopify_product_id: String(p.shopify_product_id), titulo: p.titulo || null }}));" },
+      "id": "bd465648-286b-4e6e-b493-958c2b0091e0", "name": "Build Image Requests", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [240, 192]
+    },
+    {
+      "parameters": { "url": "=https://749941.myshopify.com/admin/api/2024-01/products/{{ $json.shopify_product_id }}/images.json", "authentication": "predefinedCredentialType", "nodeCredentialType": "shopifyAccessTokenApi", "options": { "batching": { "batch": { "batchSize": 5 } }, "response": { "response": { "neverError": true } }, "timeout": 30000 } },
+      "id": "af246568-57c4-4f1d-80fd-ffdde6527723", "name": "Fetch Shopify Images", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [480, 192],
+      "credentials": { "shopifyAccessTokenApi": { "id": "PLACEHOLDER", "name": "Shopify AdeA" } }
+    },
+    {
+      "parameters": { "jsCode": "const items = $input.all();\nconst sources = $('Build Image Requests').all();\nconst out = [];\nfor (let i = 0; i < items.length; i++) {\n  const r = items[i].json;\n  const src = sources[i];\n  const producto_id = src && src.json && src.json.producto_id;\n  const shopify_product_id = src && src.json && src.json.shopify_product_id;\n  if (!producto_id) continue;\n  const images = (r && Array.isArray(r.images)) ? r.images : [];\n  for (const img of images) {\n    if (!img || !img.id || !img.src) continue;\n    out.push({ json: {\n      producto_id,\n      shopify_image_id: String(img.id),\n      shopify_product_id,\n      url: img.src,\n      posicion: typeof img.position === 'number' ? img.position : 1,\n      alt: img.alt || null,\n      width: typeof img.width === 'number' ? img.width : null,\n      height: typeof img.height === 'number' ? img.height : null\n    }});\n  }\n}\nreturn out;" },
+      "id": "114eab74-b9c3-4b79-add2-45692d8a887b", "name": "Flatten Images", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [720, 192]
+    },
+    {
+      "parameters": { "jsCode": "const items = $input.all().map(i => i.json);\nif (items.length === 0) return [];\nconst seen = new Map();\nfor (const it of items) {\n  const key = it.shopify_image_id;\n  if (!seen.has(key)) seen.set(key, it);\n}\nconst unique = Array.from(seen.values());\nreturn [{ json: { batch: unique, count: unique.length, deduped: items.length - unique.length }}];" },
+      "id": "49c31237-a293-4904-a136-4dc991e5bc21", "name": "Build Upsert Batch", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [960, 192]
+    },
+    {
+      "parameters": { "method": "POST", "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/product_images", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendQuery": true, "queryParameters": { "parameters": [{ "name": "on_conflict", "value": "shopify_image_id" }] }, "sendHeaders": true, "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "Prefer", "value": "resolution=merge-duplicates,return=minimal" }] }, "sendBody": true, "specifyBody": "json", "jsonBody": "={{ JSON.stringify($json.batch) }}", "options": {} },
+      "id": "9d05ebb8-f65e-489d-8030-0be1afa5f09d", "name": "Upsert Product Images", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [1200, 192],
+      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+    },
+    {
+      "parameters": { "method": "POST", "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendHeaders": true, "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "Prefer", "value": "return=minimal" }] }, "sendBody": true, "specifyBody": "json", "jsonBody": "={{ JSON.stringify({ evento: \"sync_product_images\", entidad: \"product_images\", estado: \"ok\", entidad_id: String($(\"Build Upsert Batch\").first().json.count) + \" imagenes (\" + String($(\"Build Upsert Batch\").first().json.deduped) + \" duplicadas filtradas)\" }) }}", "options": {} },
+      "id": "983e3092-8900-4396-ac9f-243b87f64e8d", "name": "Log Sync Complete", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [1440, 192],
+      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+    },
+    { "parameters": { "rule": { "interval": [{ "triggerAtHour": 11 }] } }, "id": "789506b9-0bec-4cf8-a8c3-f94489a26171", "name": "Schedule Diario 6am COT", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.3, "position": [-240, 304] }
+  ],
+  "connections": {
+    "Run Bulk Sync": { "main": [[{ "node": "Fetch Productos Activos", "type": "main", "index": 0 }]] },
+    "Fetch Productos Activos": { "main": [[{ "node": "Build Image Requests", "type": "main", "index": 0 }]] },
+    "Build Image Requests": { "main": [[{ "node": "Fetch Shopify Images", "type": "main", "index": 0 }]] },
+    "Fetch Shopify Images": { "main": [[{ "node": "Flatten Images", "type": "main", "index": 0 }]] },
+    "Flatten Images": { "main": [[{ "node": "Build Upsert Batch", "type": "main", "index": 0 }]] },
+    "Build Upsert Batch": { "main": [[{ "node": "Upsert Product Images", "type": "main", "index": 0 }]] },
+    "Upsert Product Images": { "main": [[{ "node": "Log Sync Complete", "type": "main", "index": 0 }]] },
+    "Schedule Diario 6am COT": { "main": [[{ "node": "Fetch Productos Activos", "type": "main", "index": 0 }]] }
+  },
+  "tags": [],
+  "meta": { "aiBuilderAssisted": true }
+}

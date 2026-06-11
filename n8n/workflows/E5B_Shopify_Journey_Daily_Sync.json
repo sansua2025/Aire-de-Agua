@@ -1,0 +1,472 @@
+{
+  "id": "IfMV3I62PPIO6WpB",
+  "name": "E5B - Shopify Journey Daily Sync",
+  "active": true,
+  "description": "Cron diario 7am COT. Sincroniza journeys de Shopify a Supabase para órdenes web sin journey o con ready=false. Usa batches de 10 con wait 2s para respetar rate limit.",
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 12 * * *"
+            }
+          ]
+        }
+      },
+      "id": "cee22d55-8fcd-47f3-a352-c1a7a36f41a4",
+      "name": "Cron 7am COT",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/rpc/get_orders_pending_journey",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{}",
+        "options": {}
+      },
+      "id": "f0f44960-8d54-43f7-adee-de2b99c7637f",
+      "name": "Get Pending Orders",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        240,
+        400
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Supabase AdeA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst items = $input.all();\nif (!items || items.length === 0 || !items[0].json) {\n  return [{ json: { has_pending: false, count: 0 } }];\n}\nconst first = items[0].json;\nif (first.code || first.message) {\n  return [{ json: { has_pending: false, count: 0, error: first } }];\n}\nreturn [{ json: { has_pending: true, count: items.length, orders: items.map(i => i.json) } }];\n"
+      },
+      "id": "104e6e8b-7d5f-47da-a4dd-a63ae7e1e7ca",
+      "name": "Check Has Pending",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.has_pending }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "e0ef50f8-7a4c-4961-bf67-af3d047ebfe6",
+      "name": "Has Pending?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        720,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst data = $input.first().json;\nconst orders = data.orders || [];\nreturn orders.map(o => ({ json: o }));\n"
+      },
+      "id": "fe743979-86dc-4262-a93a-3490884828fd",
+      "name": "Expand Orders",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 10,
+        "options": {}
+      },
+      "id": "5a78c812-ab6a-41b5-a2ca-b0d4ce138f4e",
+      "name": "Loop Batches of 10",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1200,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst items = $input.all();\nconst orderIds = items.map(i => i.json.shopify_order_id);\nconst fragments = orderIds.map((id, idx) => {\n  const gid = `gid://shopify/Order/${id}`;\n  return `o${idx}: order(id: \"${gid}\") {\n    id name\n    customerJourneySummary {\n      ready customerOrderIndex daysToConversion\n      momentsCount { count precision }\n      firstVisit {\n        occurredAt sourceType landingPage referrerUrl\n        utmParameters { source medium campaign content term }\n        marketingEvent { id }\n      }\n      lastVisit {\n        occurredAt sourceType landingPage referrerUrl\n        utmParameters { source medium campaign content term }\n      }\n      moments(first: 50) {\n        edges { node { ... on CustomerVisit { id occurredAt sourceType landingPage referrerUrl utmParameters { source medium campaign content term } } } }\n      }\n    }\n  }`;\n}).join(\"\\n\");\nreturn [{ json: { query: `query BatchJourneys {\\n${fragments}\\n}`, batch_size: orderIds.length } }];\n"
+      },
+      "id": "e59d08f3-e4f1-4306-b842-56d03197c1de",
+      "name": "Build GraphQL Query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://749941.myshopify.com/admin/api/2025-10/graphql.json",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "shopifyAccessTokenApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: $json.query }) }}",
+        "options": {}
+      },
+      "id": "8d4d4ed6-1993-4ce8-b860-8ae6e9669b45",
+      "name": "Fetch Journeys GraphQL",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1680,
+        304
+      ],
+      "credentials": {
+        "shopifyAccessTokenApi": {
+          "id": "PLACEHOLDER",
+          "name": "Shopify AdeA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst resp = $input.first().json;\nif (resp.errors) return [{ json: { journeys_data: [], batch_failed: true } }];\nconst data = resp.data || {};\nconst journeys = [];\nfor (const key of Object.keys(data)) {\n  const order = data[key];\n  if (!order) continue;\n  const idMatch = order.id.match(/Order\\/(\\d+)/);\n  const shopify_order_id = idMatch ? idMatch[1] : null;\n  if (!shopify_order_id) continue;\n  const j = order.customerJourneySummary;\n  if (!j) { journeys.push({ shopify_order_id, ready: false, moments: [] }); continue; }\n  const fv = j.firstVisit;\n  const lv = j.lastVisit;\n  const moments = (j.moments?.edges || []).map(e => e.node);\n  journeys.push({\n    shopify_order_id,\n    customer_order_index: j.customerOrderIndex,\n    days_to_conversion: j.daysToConversion,\n    moments_count: j.momentsCount?.count,\n    moments_precision: j.momentsCount?.precision,\n    ready: j.ready === true,\n    first_visit_at: fv?.occurredAt || null,\n    first_visit_source: fv?.utmParameters?.source || null,\n    first_visit_medium: fv?.utmParameters?.medium || null,\n    first_visit_campaign: fv?.utmParameters?.campaign || null,\n    first_visit_content: fv?.utmParameters?.content || null,\n    first_visit_term: fv?.utmParameters?.term || null,\n    first_visit_landing: fv?.landingPage || null,\n    first_visit_referrer: fv?.referrerUrl || null,\n    first_visit_source_type: fv?.sourceType || null,\n    first_visit_marketing_event_id: fv?.marketingEvent?.id || null,\n    last_visit_at: lv?.occurredAt || null,\n    last_visit_source: lv?.utmParameters?.source || null,\n    last_visit_medium: lv?.utmParameters?.medium || null,\n    last_visit_campaign: lv?.utmParameters?.campaign || null,\n    last_visit_content: lv?.utmParameters?.content || null,\n    last_visit_term: lv?.utmParameters?.term || null,\n    last_visit_landing: lv?.landingPage || null,\n    last_visit_referrer: lv?.referrerUrl || null,\n    last_visit_source_type: lv?.sourceType || null,\n    raw_payload: j,\n    moments: moments.map(m => ({\n      shopify_visit_id: m.id,\n      occurred_at: m.occurredAt,\n      utm_source: m.utmParameters?.source || null,\n      utm_medium: m.utmParameters?.medium || null,\n      utm_campaign: m.utmParameters?.campaign || null,\n      utm_content: m.utmParameters?.content || null,\n      utm_term: m.utmParameters?.term || null,\n      landing_page: m.landingPage || null,\n      referrer_url: m.referrerUrl || null,\n      source_type: m.sourceType || null,\n      marketing_event_id: null\n    }))\n  });\n}\nreturn [{ json: { journeys_data: journeys, batch_failed: false } }];\n"
+      },
+      "id": "c30540d4-6143-4334-a9ec-91a3645b38d2",
+      "name": "Transform to RPC Format",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/rpc/upsert_shopify_journey",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ journeys_data: $json.journeys_data }) }}",
+        "options": {}
+      },
+      "id": "cd4ff30f-b10a-49f2-91c1-0e9ce57d13fd",
+      "name": "Call Upsert RPC",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2160,
+        304
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Supabase AdeA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 2
+      },
+      "id": "97497773-16aa-4c96-8aef-336261d3bc00",
+      "name": "Wait 2s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2400,
+        304
+      ],
+      "webhookId": "2e18e649-767c-4d20-957e-06abedb8a06d"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"evento\":\"e5b_journey_daily_sync\",\"entidad\":\"shopify_customer_journeys\",\"estado\":\"ok\"}",
+        "options": {}
+      },
+      "id": "0850c011-50ff-4e59-a786-6e61eabbabff",
+      "name": "Log Sync Complete",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1440,
+        512
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Supabase AdeA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"evento\":\"e5b_journey_daily_sync\",\"entidad\":\"shopify_customer_journeys\",\"estado\":\"ok\",\"error_mensaje\":\"sin_pendientes\"}",
+        "options": {}
+      },
+      "id": "5a5cb4fe-9d46-4f8e-9d88-a3eb75d00df2",
+      "name": "Log No Pending",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        960,
+        608
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Supabase AdeA"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Cron 7am COT": {
+      "main": [
+        [
+          {
+            "node": "Get Pending Orders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Pending Orders": {
+      "main": [
+        [
+          {
+            "node": "Check Has Pending",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Has Pending": {
+      "main": [
+        [
+          {
+            "node": "Has Pending?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Pending?": {
+      "main": [
+        [
+          {
+            "node": "Expand Orders",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log No Pending",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expand Orders": {
+      "main": [
+        [
+          {
+            "node": "Loop Batches of 10",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Batches of 10": {
+      "main": [
+        [
+          {
+            "node": "Log Sync Complete",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build GraphQL Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build GraphQL Query": {
+      "main": [
+        [
+          {
+            "node": "Fetch Journeys GraphQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Journeys GraphQL": {
+      "main": [
+        [
+          {
+            "node": "Transform to RPC Format",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transform to RPC Format": {
+      "main": [
+        [
+          {
+            "node": "Call Upsert RPC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Upsert RPC": {
+      "main": [
+        [
+          {
+            "node": "Wait 2s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 2s": {
+      "main": [
+        [
+          {
+            "node": "Loop Batches of 10",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "tags": [],
+  "meta": {
+    "aiBuilderAssisted": true
+  }
+}
