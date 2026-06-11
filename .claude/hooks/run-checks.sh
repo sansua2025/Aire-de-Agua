@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # PostToolUse (Edit|Write) — "red squigglies": feedback en el momento del edit.
-# Formatea (best-effort) y corre los chequeos deterministas de reglas de datos
-# sobre el archivo editado; si encuentra algo, lo devuelve a Claude (exit 2).
-# El typecheck pesado (tsc --noEmit) lo hace 'verify', no este hook, para no
-# frenar cada edición.
+# Formatea (best-effort), corre ESLint y delega las reglas de datos a la
+# FUENTE ÚNICA scripts/agent/check-data-rules.sh (la misma que corre el CI).
+# El typecheck pesado (tsc --noEmit) lo hace 'verify', no este hook.
 
 set -uo pipefail
 INPUT="$(cat)"
@@ -24,7 +23,7 @@ case "$FILE" in
     command -v npx >/dev/null 2>&1 && [ -f dashboard/package.json ] && (cd dashboard && npx --no-install prettier --write "$FILE" >/dev/null 2>&1) || true ;;
 esac
 
-# ESLint sobre el archivo editado (feedback inmediato; no-op si aún no está instalado)
+# ESLint sobre el archivo editado (feedback inmediato; no-op si no está instalado)
 case "$FILE" in
   *.ts|*.tsx)
     if command -v npx >/dev/null 2>&1 && [ -f dashboard/package.json ] && printf '%s' "$FILE" | grep -q '/dashboard/'; then
@@ -33,23 +32,11 @@ case "$FILE" in
     fi ;;
 esac
 
-# Reglas críticas de datos (determinista, barato)
+# Reglas críticas de datos — fuente única (también corre en CI como check 'data-rules')
 case "$FILE" in
   *.sql|*.ts|*.tsx)
-    grep -niE 'valor_compras' "$FILE" >/dev/null 2>&1 && add "Regla de datos: 'valor_compras' es revenue de Meta (0 por bug de pixel). Usa 'roas_real' / v_meta_ads_roas_real."
-    if grep -niE 'ordered_at' "$FILE" >/dev/null 2>&1 && ! grep -qiE "America/Bogota" "$FILE"; then
-      add "Regla de datos: 'ordered_at' sin AT TIME ZONE 'America/Bogota' (y filtra estado_pago='paid')."
-    fi
-    if grep -qiE 'venta_items' "$FILE" && grep -qiE '\bproductos\b' "$FILE" && ! grep -qiE 'variantes' "$FILE"; then
-      add "Regla de datos: join venta_items↔productos sin 'variantes'. Camino correcto: venta_items → variantes → productos."
-    fi ;;
-esac
-
-# Migración: avisa si no parece reversible
-case "$FILE" in
-  supabase/migrations/*.sql)
-    grep -qiE '\b(create|alter|add)\b' "$FILE" 2>/dev/null && ! grep -qiE 'down|rollback|drop|revert' "$FILE" 2>/dev/null \
-      && add "Migración: parece sin reversa. Considera incluir el rollback o documentarlo." ;;
+    DR="$(bash "${CLAUDE_PROJECT_DIR:-.}/scripts/agent/check-data-rules.sh" --file "$FILE" 2>/dev/null | grep -E '^(FAIL|WARN)' || true)"
+    [ -n "$DR" ] && add "Reglas de datos:\n$DR" ;;
 esac
 
 if [ -n "$ISSUES" ]; then
