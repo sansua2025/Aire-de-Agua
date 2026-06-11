@@ -96,3 +96,10 @@ Este sistema es especialmente vulnerable a prompt injection porque datos externo
 ### General
 11. **sync_log como auditoría** — Toda operación registrada. Si algo se compromete, hay trazabilidad completa
 12. **RLS en Supabase** — Activar Row Level Security en tablas sensibles cuando se exponga al frontend (dashboard)
+
+## Flota de agentes (desarrollo autónomo)
+Entorno en `.claude/agents/` + `scripts/agent/` para desarrollar issues de Linear (team AIR) → PR → auto-merge. Detalle en `docs/agentes/README.md`.
+- Arranque: `claude --agent orchestrator` (o `--bg` + `claude agents` para flota).
+- Ramas: `claude/linear-air-<n>-<slug>`. Worktrees permanentes: `scripts/agent/worktrees-pool.sh`.
+- Gate de merge: `scripts/agent/merge-gate.sh` (CI verde + `VEREDICTO: APPROVE` + `data-rules: ok`).
+- MCP usados: `claude_ai_Supabase`, `claude_ai_n8n`, `claude_ai_Linear`. GitHub/Vercel/tsc por CLI.

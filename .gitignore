@@ -29,7 +29,10 @@ logs/
 Thumbs.db
 
 # Claude Code local settings
-.claude/
+.claude/*
+!.claude/agents/
+!.claude/hooks/
+!.claude/settings.json
 
 # Datos con PII potencial o respuestas de API
 docs/Errores/*.json
