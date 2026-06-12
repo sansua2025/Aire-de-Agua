@@ -42,6 +42,9 @@
         272,
         304
       ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "shopifyAccessTokenApi": {
           "id": "rrxe9HTxfm6k99Vw",
@@ -60,7 +63,8 @@
       "position": [
         528,
         304
-      ]
+      ],
+      "onError": "stopWorkflow"
     },
     {
       "parameters": {
@@ -90,6 +94,9 @@
         784,
         304
       ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "httpHeaderAuth": {
           "id": "R1gvcFqRbgctuPP5",
@@ -99,7 +106,7 @@
     },
     {
       "parameters": {
-        "url": "https://749941.myshopify.com/admin/api/2024-01/orders.json?limit=25&status=any&created_at_min=2023-09-01T00:00:00-05:00",
+        "url": "https://749941.myshopify.com/admin/api/2024-01/orders.json?limit=250&status=any&created_at_min=2023-09-01T00:00:00-05:00",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "shopifyAccessTokenApi",
         "options": {
@@ -120,6 +127,10 @@
         304
       ],
       "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "stopWorkflow",
       "credentials": {
         "shopifyAccessTokenApi": {
           "id": "rrxe9HTxfm6k99Vw",
@@ -129,7 +140,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const response = $input.first().json;\nconst orders = response.body?.orders || [];\nconst linkHeader = response.headers?.link || \"\";\nconst nextMatch = linkHeader.match(/<([^>]+)>;\\s*rel=\"next\"/);\nconst nextUrl = nextMatch ? nextMatch[1] : \"\";\n// La atribucion UTM se maneja desde E5A (shopify_customer_journeys), no aqui\nreturn [{ json: { orders_data: orders, count: orders.length, next_url: nextUrl, has_more: nextUrl !== \"\" } }];"
+        "jsCode": "const response = $input.first().json;\n// Validacion defensiva: un 429/5xx transitorio puede devolver body vacio o sin orders.\n// Si no llega un array body.orders, lanzamos error para detener RUIDOSAMENTE la paginacion\n// en vez de interpretar la respuesta corrupta como \"fin de paginas\".\nif (!response.body || !Array.isArray(response.body.orders)) {\n  throw new Error(`Respuesta de Shopify sin body.orders como array (posible 429/5xx). status=${response.statusCode ?? \"?\"}`);\n}\nconst orders = response.body.orders;\nconst linkHeader = response.headers?.link || \"\";\nconst nextMatch = linkHeader.match(/<([^>]+)>;\\s*rel=\"next\"/);\nconst nextUrl = nextMatch ? nextMatch[1] : \"\";\n// La atribucion UTM se maneja desde E5A (shopify_customer_journeys), no aqui\nreturn [{ json: { orders_data: orders, count: orders.length, next_url: nextUrl, has_more: nextUrl !== \"\" } }];"
       },
       "id": "740f88f6-a546-4918-89f6-dc032e290330",
       "name": "Extract Orders and Next URL",
@@ -138,7 +149,8 @@
       "position": [
         1312,
         304
-      ]
+      ],
+      "onError": "stopWorkflow"
     },
     {
       "parameters": {
@@ -168,6 +180,10 @@
         1568,
         304
       ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "stopWorkflow",
       "credentials": {
         "httpHeaderAuth": {
           "id": "R1gvcFqRbgctuPP5",
@@ -244,6 +260,10 @@
         2080,
         208
       ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "stopWorkflow",
       "credentials": {
         "shopifyAccessTokenApi": {
           "id": "44DIND6qYi0XOLGH",
@@ -283,6 +303,9 @@
         2080,
         400
       ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "httpHeaderAuth": {
           "id": "R1gvcFqRbgctuPP5",
