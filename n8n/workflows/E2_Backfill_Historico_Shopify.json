@@ -27,9 +27,9 @@
           "pagination": {
             "pagination": {
               "paginationMode": "responseContainsNextURL",
-              "nextURL": "={{ $response.headers.link ? $response.headers.link.match(/<([^>]+)>; rel=\"next\"/)?.[1] : \"\" }}",
+              "nextURL": "={{ (($response.headers && $response.headers.link) || \"\").match(/<([^>]+)>; rel=\"next\"/) ? (($response.headers.link).match(/<([^>]+)>; rel=\"next\"/))[1] : \"\" }}",
               "paginationCompleteWhen": "other",
-              "completeExpression": "={{ !$response.headers.link || !$response.headers.link.includes(\"next\") }}",
+              "completeExpression": "={{ !($response.headers && $response.headers.link) || !$response.headers.link.includes(\"next\") }}",
               "requestInterval": 600
             }
           }
@@ -40,6 +40,9 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [272, 304],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": { "shopifyAccessTokenApi": { "id": "PLACEHOLDER", "name": "Shopify AdeA" } }
     },
     {
@@ -50,7 +53,8 @@
       "name": "Prepare Products JSON",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [528, 304]
+      "position": [528, 304],
+      "onError": "stopWorkflow"
     },
     {
       "parameters": {
@@ -70,6 +74,9 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [784, 304],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
     },
     {
@@ -85,17 +92,22 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [1040, 304],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "stopWorkflow",
       "credentials": { "shopifyAccessTokenApi": { "id": "PLACEHOLDER", "name": "Shopify AdeA" } }
     },
     {
       "parameters": {
-        "jsCode": "const response = $input.first().json;\nconst orders = response.body?.orders || [];\nconst linkHeader = response.headers?.link || \"\";\nconst nextMatch = linkHeader.match(/<([^>]+)>;\\s*rel=\"next\"/);\nconst nextUrl = nextMatch ? nextMatch[1] : \"\";\nreturn [{ json: { orders_data: orders, count: orders.length, next_url: nextUrl, has_more: nextUrl !== \"\" } }];"
+        "jsCode": "const response = $input.first() && $input.first().json;\nif (!response || typeof response !== \"object\") {\n  throw new Error(\"Backfill orders: payload de respuesta vacio o no es objeto. Se detiene el backfill para no saltar ordenes en silencio.\");\n}\nconst body = response.body;\nif (body === undefined || body === null) {\n  throw new Error(\"Backfill orders: response.body ausente (esperado fullResponse). Se detiene el backfill.\");\n}\nif (!Array.isArray(body.orders)) {\n  throw new Error(\"Backfill orders: response.body.orders no es un array. Posible payload anomalo de Shopify. Se detiene el backfill.\");\n}\nconst orders = body.orders;\nconst linkHeader = (response.headers && response.headers.link) || \"\";\nconst nextMatch = linkHeader.match(/<([^>]+)>;\\s*rel=\"next\"/);\nconst nextUrl = nextMatch ? nextMatch[1] : \"\";\nreturn [{ json: { orders_data: orders, count: orders.length, next_url: nextUrl, has_more: nextUrl !== \"\" } }];"
       },
       "id": "740f88f6-a546-4918-89f6-dc032e290330",
       "name": "Extract Orders and Next URL",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1312, 304]
+      "position": [1312, 304],
+      "onError": "stopWorkflow"
     },
     {
       "parameters": {
@@ -115,6 +127,10 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [1568, 304],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "stopWorkflow",
       "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
     },
     {
@@ -152,6 +168,10 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [2080, 208],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "stopWorkflow",
       "credentials": { "shopifyAccessTokenApi": { "id": "PLACEHOLDER", "name": "Shopify AdeA" } }
     },
     {
@@ -172,6 +192,9 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [2080, 400],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
     }
   ],
