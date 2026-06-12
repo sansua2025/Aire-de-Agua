@@ -103,3 +103,10 @@ Entorno en `.claude/agents/` + `scripts/agent/` para desarrollar issues de Linea
 - Ramas: `claude/linear-air-<n>-<slug>`. Worktrees permanentes: `scripts/agent/worktrees-pool.sh`.
 - Gate de merge: `scripts/agent/merge-gate.sh` (CI verde + `VEREDICTO: APPROVE` + `data-rules: ok`).
 - MCP usados: `claude_ai_Supabase`, `claude_ai_n8n`, `claude_ai_Linear`. GitHub/Vercel/tsc por CLI.
+
+## Convención de migraciones (AIR-90)
+
+- **Numeración secuencial estricta.** Antes de crear una migración, verifica el último número: `ls supabase/migrations/ | grep -oE '^[0-9]+' | sort -n | tail -1`.
+- **Un número por migración.** Nunca reutilices un número ya usado.
+- **Sufijo `b`** (p.ej. `058b_...`) solo para un *hotfix* de una migración existente del mismo número (ya aplicada), no para migraciones nuevas independientes.
+- Los archivos de `supabase/migrations/` son **respaldo fiel de lo aplicado en PROD** — al renombrar, solo `git mv`, nunca edites el SQL.
