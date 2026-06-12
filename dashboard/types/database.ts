@@ -3236,6 +3236,15 @@ export type Database = {
       }
     }
     Functions: {
+      analytics_aprobar_propuesta: {
+        Args: {
+          p_insight_id: string
+          p_aprobado: boolean
+          p_notas?: string | null
+          p_decidido_por?: string | null
+        }
+        Returns: Json
+      }
       analytics_close_insight_loop: {
         Args: { p_insight_id: string }
         Returns: Json
@@ -3259,6 +3268,26 @@ export type Database = {
       }
       analytics_recompute_creative_learnings: {
         Args: { p_lookback_days?: number }
+        Returns: Json
+      }
+      analytics_marcar_estado_insight: {
+        Args: {
+          p_insight_id: string
+          p_estado: string
+          p_notas?: string | null
+          p_snooze_hasta?: string | null
+          p_decidido_por?: string | null
+        }
+        Returns: Json
+      }
+      analytics_marcar_estado_insights: {
+        Args: {
+          p_ids: string[]
+          p_estado: string
+          p_notas?: string | null
+          p_snooze_hasta?: string | null
+          p_decidido_por?: string | null
+        }
         Returns: Json
       }
       analytics_upsert_insight: { Args: { p_insight: Json }; Returns: Json }
@@ -3368,6 +3397,15 @@ export type Database = {
           matched: boolean
           producto_id: string
         }[]
+      }
+      marcar_accion_tomada: {
+        Args: {
+          p_insight_id: string
+          p_tomada: boolean
+          p_por?: string | null
+          p_notas?: string | null
+        }
+        Returns: Json
       }
       retry_huerfanos_pendientes: {
         Args: { p_grace_period_minutes?: number; p_max_retries?: number }
