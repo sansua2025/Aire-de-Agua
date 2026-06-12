@@ -1,0 +1,120 @@
+{
+  "name": "Error Handler Global",
+  "description": "AIR-91. Workflow de manejo de errores centralizado. Se dispara via Error Trigger cuando cualquier workflow (que tenga settings.errorWorkflow apuntando a este) falla. Registra el error en sync_log (evento=workflow_error) y notifica a Slack si SLACK_WEBHOOK_URL esta configurada. El mensaje de error se sanitiza (strip de control chars + truncado) antes de persistir/enviar para evitar prompt-injection y payloads basura.",
+  "nodes": [
+    {
+      "id": "eh-error-trigger-0001",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [0, 300],
+      "parameters": {}
+    },
+    {
+      "id": "eh-build-body-0001",
+      "name": "Build Error Body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// AIR-91 - arma y sanitiza el cuerpo del error desde el Error Trigger.\n// Estructura del Error Trigger: { workflow:{id,name}, execution:{id,url,error,lastNodeExecuted,mode}, ... }\nconst j = $json || {};\nconst wf = j.workflow || {};\nconst ex = j.execution || {};\nconst err = ex.error || j.error || {};\n\n// Nombre del ultimo nodo que se ejecuto (el que probablemente fallo).\nconst lastNode = ex.lastNodeExecuted || (err.node && err.node.name) || (typeof err.node === 'string' ? err.node : '') || 'unknown';\n\n// Sanitiza: quita control chars (incl. \\x7F), colapsa espacios y trunca.\nfunction sanitize(s, max) {\n  if (s == null) return '';\n  let out = String(s).replace(/[\\u0000-\\u001F\\u007F]/g, ' ').replace(/\\s+/g, ' ').trim();\n  if (out.length > max) out = out.substring(0, max);\n  return out;\n}\n\nconst rawMessage = err.message || err.description || (typeof err === 'string' ? err : '') || 'sin mensaje de error';\nconst mensaje = sanitize(rawMessage, 1500);\nconst workflowName = sanitize(wf.name || 'desconocido', 200);\nconst executionId = sanitize(ex.id || j.id || '', 64);\nconst nodoFallido = sanitize(lastNode, 200);\n\n// error_mensaje en sync_log es texto: guardamos un JSON serializado legible.\nconst errorMensaje = sanitize(JSON.stringify({\n  workflow: workflowName,\n  execution_id: executionId,\n  node: nodoFallido,\n  message: mensaje\n}), 2000);\n\n// Slack URL desde env (puede estar vacia -> no se notifica).\nlet slackUrl = '';\ntry { slackUrl = ($env && $env.SLACK_WEBHOOK_URL) ? String($env.SLACK_WEBHOOK_URL).trim() : ''; } catch (e) { slackUrl = ''; }\nconst hasSlack = /^https?:\\/\\//i.test(slackUrl);\n\nconst slackText = sanitize('n8n workflow error :rotating_light:\\nWorkflow: ' + workflowName + '\\nNodo: ' + nodoFallido + '\\nExecution: ' + executionId + '\\nError: ' + mensaje, 1900);\n\nreturn [{ json: {\n  workflow_name: workflowName,\n  execution_id: executionId,\n  nodo_fallido: nodoFallido,\n  mensaje: mensaje,\n  error_mensaje: errorMensaje,\n  slack_url: slackUrl,\n  has_slack: hasSlack,\n  slack_text: slackText\n}}];"
+      }
+    },
+    {
+      "id": "eh-log-syncerr-0001",
+      "name": "Log Error to sync_log",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [480, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ evento: \"workflow_error\", entidad: $json.workflow_name, entidad_id: $json.execution_id, estado: \"error\", error_mensaje: $json.error_mensaje }) }}",
+        "options": {}
+      },
+      "onError": "continueRegularOutput",
+      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+    },
+    {
+      "id": "eh-if-slack-0001",
+      "name": "If Slack Configured",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [720, 300],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-has-slack",
+              "leftValue": "={{ $json.has_slack }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "eh-notify-slack-0001",
+      "name": "Notify Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [960, 208],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.slack_url }}",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $json.slack_text }) }}",
+        "options": {}
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [[{ "node": "Build Error Body", "type": "main", "index": 0 }]]
+    },
+    "Build Error Body": {
+      "main": [[{ "node": "Log Error to sync_log", "type": "main", "index": 0 }]]
+    },
+    "Log Error to sync_log": {
+      "main": [[{ "node": "If Slack Configured", "type": "main", "index": 0 }]]
+    },
+    "If Slack Configured": {
+      "main": [
+        [{ "node": "Notify Slack", "type": "main", "index": 0 }],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
