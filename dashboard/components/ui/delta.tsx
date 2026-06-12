@@ -13,6 +13,8 @@ interface DeltaProps {
   className?: string
 }
 
+// v2: el delta es una PILL con fondo tint. La clase semántica .delta
+// (up=success tint, down=danger tint, neutral=muted) define el color/fondo.
 const SENTIMENT_CLASS = {
   good: 'up',
   bad: 'down',
@@ -28,7 +30,7 @@ export function Delta({
   className = '',
 }: DeltaProps) {
   if (value == null || isNaN(value)) {
-    return <span className={`kpi-delta neutral${className ? ' ' + className : ''}`}>—</span>
+    return <span className={`delta neutral${className ? ' ' + className : ''}`}>—</span>
   }
 
   const sentiment = deltaSentiment(value, goodDirection)
@@ -52,10 +54,10 @@ export function Delta({
   }
 
   return (
-    <span className={`kpi-delta ${sentimentCls}${className ? ' ' + className : ''}`}>
-      {!hideIcon && <Icon name={iconName} size={11} className="kpi-delta-icon" />}
+    <span className={`delta ${sentimentCls}${className ? ' ' + className : ''}`}>
+      {!hideIcon && <Icon name={iconName} size={11} />}
       <span>{formatted}</span>
-      {note && <span className="kpi-delta-note">{note}</span>}
+      {note && <span className="delta-note">{note}</span>}
     </span>
   )
 }

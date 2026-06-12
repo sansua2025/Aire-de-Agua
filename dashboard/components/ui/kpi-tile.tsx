@@ -1,5 +1,3 @@
-'use client'
-
 import { ReactNode } from 'react'
 import { Icon } from '../icon'
 import { Delta } from './delta'
@@ -8,23 +6,29 @@ interface KpiTileProps {
   label: string
   value: string | number
   unit?: string
+  /** El icono de la métrica ya no se muestra (v2 sentence-case limpio), se conserva la prop por compat */
   icon?: Parameters<typeof Icon>[0]['name']
   deltaValue?: number | null
   deltaFormat?: 'pct' | 'pp' | 'abs' | 'x'
   goodDirection?: 'up' | 'down' | 'neutral'
   deltaNote?: string
-  /** Slot para sparkline (Sub-fase 2C) */
+  /** Slot para sparkline */
   sparkline?: ReactNode
   onClick?: () => void
   active?: boolean
   className?: string
 }
 
+/**
+ * KpiTile v2 — value 28px sin mono, label sentence-case, chevron en hover,
+ * foot con delta (pill) + sparkline. Server Component por defecto; si recibe
+ * onClick (drill), se vuelve interactivo (botón). El onClick debe venir de un
+ * client boundary.
+ */
 export function KpiTile({
   label,
   value,
   unit,
-  icon,
   deltaValue,
   deltaFormat = 'pct',
   goodDirection = 'up',
@@ -41,19 +45,23 @@ export function KpiTile({
     <Tag
       type={interactive ? 'button' : undefined}
       onClick={onClick}
-      className={`kpi${active ? ' active' : ''}${className ? ' ' + className : ''}`}
+      className={`kpi${interactive ? ' kpi-interactive' : ''}${active ? ' active' : ''}${className ? ' ' + className : ''}`}
     >
-      <div className="kpi-head">
-        <span className="kpi-label">{label}</span>
-        {icon && <Icon name={icon} size={14} className="kpi-icon" />}
-      </div>
+      <span className="kpi-label">
+        {label}
+        {interactive && (
+          <span className="kpi-chev">
+            <Icon name="chevRight" size={14} />
+          </span>
+        )}
+      </span>
 
-      <div className="kpi-value">
+      <span className="kpi-value">
         {value}
         {unit && <span className="unit">{unit}</span>}
-      </div>
+      </span>
 
-      <div className="kpi-foot">
+      <span className="kpi-foot">
         {deltaValue != null ? (
           <Delta
             value={deltaValue}
@@ -62,10 +70,10 @@ export function KpiTile({
             note={deltaNote}
           />
         ) : (
-          <span className="kpi-delta neutral">—</span>
+          <span className="delta neutral">—</span>
         )}
-        {sparkline && <div className="kpi-spark">{sparkline}</div>}
-      </div>
+        {sparkline && <span className="kpi-spark">{sparkline}</span>}
+      </span>
     </Tag>
   )
 }
