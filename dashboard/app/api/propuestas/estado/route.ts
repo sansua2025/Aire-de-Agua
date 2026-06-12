@@ -92,8 +92,7 @@ export async function POST(req: NextRequest) {
     const isBatch = idList.length > 1
     const { data, error } = isBatch
       ? await admin
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          .rpc('analytics_marcar_estado_insights' as any, {
+          .rpc('analytics_marcar_estado_insights', {
             p_ids: idList,
             p_estado: estado,
             p_notas: typeof notas === 'string' ? notas : null,
@@ -101,8 +100,7 @@ export async function POST(req: NextRequest) {
             p_decidido_por: email,
           })
       : await admin
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          .rpc('analytics_marcar_estado_insight' as any, {
+          .rpc('analytics_marcar_estado_insight', {
             p_insight_id: idList[0],
             p_estado: estado,
             p_notas: typeof notas === 'string' ? notas : null,
