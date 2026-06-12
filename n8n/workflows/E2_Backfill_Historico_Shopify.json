@@ -138,9 +138,9 @@
         "conditions": {
           "options": { "caseSensitive": true, "leftValue": "", "version": 2, "typeValidation": "strict" },
           "combinator": "and",
-          "conditions": [{ "id": "cond-1", "leftValue": "={{ $(\"Extract Orders and Next URL\").item.json.has_more }}", "rightValue": "true", "operator": { "type": "string", "operation": "equals" } }]
+          "conditions": [{ "id": "cond-1", "leftValue": "={{ $(\"Extract Orders and Next URL\").item.json.next_url }}", "rightValue": "", "operator": { "type": "string", "operation": "notEmpty", "singleValue": true } }]
         },
-        "options": {}
+        "options": { "looseTypeValidation": true }
       },
       "id": "17a1e2d1-a40a-416e-ab52-6a370cd06680",
       "name": "More Pages",
