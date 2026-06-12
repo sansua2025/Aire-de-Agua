@@ -21,6 +21,16 @@ jobs:
           git fetch origin main --quiet || true
           bash scripts/agent/check-data-rules.sh --diff origin/main
 
+  n8n-sync:
+    name: n8n-sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # AIR-95 — guard de duplicación vigilada: el bloque de mapeo de
+      # "Transform Ads Data" debe ser idéntico en Backfill y Daily_Sync.
+      - name: Transform Ads Data en sync (Backfill ↔ Daily)
+        run: bash scripts/check-transform-ads-sync.sh
+
   dashboard:
     name: dashboard
     runs-on: ubuntu-latest
