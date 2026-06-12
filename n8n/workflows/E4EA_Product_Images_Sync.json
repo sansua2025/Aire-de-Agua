@@ -16,7 +16,8 @@
       "id": "bd465648-286b-4e6e-b493-958c2b0091e0", "name": "Build Image Requests", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [240, 192]
     },
     {
-      "parameters": { "url": "=https://749941.myshopify.com/admin/api/2024-01/products/{{ $json.shopify_product_id }}/images.json", "authentication": "predefinedCredentialType", "nodeCredentialType": "shopifyAccessTokenApi", "options": { "batching": { "batch": { "batchSize": 5 } }, "response": { "response": { "neverError": true } }, "timeout": 30000 } },
+      "parameters": { "url": "=https://749941.myshopify.com/admin/api/2024-01/products/{{ $json.shopify_product_id }}/images.json", "authentication": "predefinedCredentialType", "nodeCredentialType": "shopifyAccessTokenApi", "options": { "batching": { "batch": { "batchSize": 5 } }, "timeout": 30000 } },
+      "onError": "continueRegularOutput",
       "id": "af246568-57c4-4f1d-80fd-ffdde6527723", "name": "Fetch Shopify Images", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [480, 192],
       "credentials": { "shopifyAccessTokenApi": { "id": "PLACEHOLDER", "name": "Shopify AdeA" } }
     },
