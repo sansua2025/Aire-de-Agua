@@ -1,0 +1,550 @@
+{
+  "updatedAt": "2026-06-12T01:11:02.422Z",
+  "createdAt": "2026-06-12T01:11:02.422Z",
+  "id": "Aul2pyDbdIECaBhY",
+  "name": "Sentinela v1",
+  "description": "AIR-99 · Cada 6h convierte 3 senales (n8n exec fallidas, sync_log sin filas hoy, drift n8n/repo) en issues de Linear team AIR con label agent-ready y dedupe por titulo.",
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "id": "2c624ea7-934d-4dcd-82a0-bad00e302665",
+      "name": "Cron cada 6h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        192
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "be4ad709-5292-402b-9788-5a4bf7d30c02",
+      "name": "Linear - Contexto (label + abiertos)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        224,
+        192
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.linear.app/graphql",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "{\"query\":\"query Sentinela($teamId: String!) { issueLabels(filter: { name: { eq: \\\"agent-ready\\\" }, team: { id: { eq: $teamId } } }, first: 1) { nodes { id name } } issues(filter: { team: { id: { eq: $teamId } }, state: { type: { nin: [\\\"completed\\\", \\\"canceled\\\"] } } }, first: 250) { nodes { id identifier title } } }\",\"variables\":{\"teamId\":\"5d10e240-7669-454b-b0d6-a90370c01db2\"}}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Linear AdeA"
+        }
+      }
+    },
+    {
+      "id": "50490629-6893-4e75-84f0-9a9ebd72e469",
+      "name": "n8n - Ejecuciones fallidas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://airedeagua.app.n8n.cloud/api/v1/executions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "status",
+              "value": "error"
+            },
+            {
+              "name": "limit",
+              "value": "100"
+            },
+            {
+              "name": "includeData",
+              "value": "false"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "n8n API"
+        }
+      }
+    },
+    {
+      "id": "9a30c79b-2022-40d1-93b0-e6162e1fd340",
+      "name": "Agrupar fallos >=2",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "function sanitize(s) {\n  if (s == null) return '';\n  let t = String(s);\n  t = t.replace(/[\\r\\n\\t]+/g, ' ');\n  t = t.replace(/[`<>{}|\\\\$]/g, '');\n  t = t.replace(/\\b(ignore|disregard|system|assistant|prompt|instruction)\\b/gi, '_');\n  t = t.replace(/\\s+/g, ' ').trim();\n  if (t.length > 140) t = t.slice(0, 140) + String.fromCharCode(8230);\n  return t;\n}\nconst rows = $input.first().json.data || [];\nconst byWf = {};\nfor (const r of rows) {\n  const name = (r.workflowData && r.workflowData.name) || r.workflowId || 'desconocido';\n  if (!byWf[name]) byWf[name] = { count: 0, lastErr: null, lastAt: null };\n  byWf[name].count += 1;\n  const at = r.stoppedAt || r.startedAt || null;\n  if (!byWf[name].lastAt || (at && at > byWf[name].lastAt)) {\n    byWf[name].lastAt = at;\n    byWf[name].lastErr = (r.data && r.data.resultData && r.data.resultData.error && r.data.resultData.error.message) || '';\n  }\n}\nconst out = [];\nfor (const name of Object.keys(byWf)) {\n  const g = byWf[name];\n  if (g.count < 2) continue;\n  const safeName = sanitize(name);\n  const safeErr = sanitize(g.lastErr) || \"sin mensaje\";\n  const titulo = safeName + \" falló \" + g.count + \" veces: \" + safeErr;\n  out.push({ json: {\n    senal: 'n8n_exec_fail',\n    fuente: safeName,\n    titulo: titulo.slice(0, 200),\n    descripcion: 'Senal automatica (Sentinela v1): el workflow n8n **' + safeName + '** registro ' + g.count + ' ejecuciones con estado error en las ultimas 100 ejecuciones.\\n\\nUltimo error (sanitizado): ' + safeErr + '\\n\\nNivel de autonomia: pr-only (maximo).',\n  } });\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "9f36ac7d-cacb-45e1-b979-c1594218ca45",
+      "name": "Unir candidatos",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        896,
+        176
+      ],
+      "parameters": {
+        "mode": "append",
+        "numberInputs": 3
+      }
+    },
+    {
+      "id": "2c2e92fd-d1e5-4dfe-af84-d57b659ce744",
+      "name": "Supabase - sync_log 7d",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        448,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "select",
+              "value": "entidad,evento,created_at"
+            },
+            {
+              "name": "created_at",
+              "value": "=gte.{{ $now.minus({ days: 7 }).toISODate() }}"
+            },
+            {
+              "name": "order",
+              "value": "created_at.desc"
+            },
+            {
+              "name": "limit",
+              "value": "5000"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Supabase AdeA"
+        }
+      }
+    },
+    {
+      "id": "1f738c0e-d91a-4241-96c3-66a4391b068c",
+      "name": "Fuentes sin correr hoy (COT)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        192
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "function sanitize(s) {\n  if (s == null) return '';\n  let t = String(s).replace(/[\\r\\n\\t]+/g, ' ').replace(/[`<>{}|\\\\$]/g, '');\n  return t.replace(/\\s+/g, ' ').trim().slice(0, 120);\n}\nconst rows = $input.all().map(function (i) { return i.json; });\nconst hoyCOT = $now.setZone('America/Bogota').toISODate();\nconst seenToday = new Set();\nconst lastSeen = {};\nfor (const r of rows) {\n  const fuente = (r.entidad || '') + '|' + (r.evento || '');\n  const diaCOT = r.created_at ? DateTime.fromISO(r.created_at, { zone: 'utc' }).setZone('America/Bogota').toISODate() : null;\n  if (diaCOT === hoyCOT) seenToday.add(fuente);\n  if (!lastSeen[fuente] || (r.created_at && r.created_at > lastSeen[fuente].created_at)) {\n    lastSeen[fuente] = { entidad: r.entidad, evento: r.evento, created_at: r.created_at, dia: diaCOT };\n  }\n}\nconst out = [];\nfor (const fuente of Object.keys(lastSeen)) {\n  if (seenToday.has(fuente)) continue;\n  const info = lastSeen[fuente];\n  const dias = info.dia ? Math.round((DateTime.fromISO(hoyCOT).toMillis() - DateTime.fromISO(info.dia).toMillis()) / 86400000) : null;\n  if (dias != null && dias > 5) continue;\n  const safeEnt = sanitize(info.entidad);\n  const safeEv = sanitize(info.evento);\n  const etiqueta = safeEnt + (safeEv ? \" / \" + safeEv : \"\");\n  out.push({ json: {\n    senal: 'sync_gap',\n    fuente: etiqueta,\n    titulo: (\"Sync \" + etiqueta + \" no corrió hoy\").slice(0, 200),\n    descripcion: 'Senal automatica (Sentinela v1): la fuente **' + etiqueta + '** no registro filas en sync_log para hoy (' + hoyCOT + ', zona America/Bogota). Ultima corrida: ' + (info.created_at || 'n/d') + '.\\n\\nNivel de autonomia: pr-only (maximo).',\n  } });\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "50a1890b-0cb8-4573-b630-9258973aee0b",
+      "name": "n8n - Workflows actuales",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        448,
+        384
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://airedeagua.app.n8n.cloud/api/v1/workflows",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "limit",
+              "value": "250"
+            },
+            {
+              "name": "excludePinnedData",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "n8n API"
+        }
+      }
+    },
+    {
+      "id": "775617e1-f2f1-4a85-894c-322d9d373828",
+      "name": "Drift n8n vs repo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        384
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "function sanitize(s) {\n  if (s == null) return '';\n  let t = String(s).replace(/[\\r\\n\\t]+/g, ' ').replace(/[`<>{}|\\\\$]/g, '');\n  return t.replace(/\\s+/g, ' ').trim().slice(0, 120);\n}\nfunction normName(name) {\n  return String(name || '').trim().replace(/[^a-zA-Z0-9_\\- ]/g, '').replace(/[\\s-]+/g, '_');\n}\nconst BASELINE = $vars && $vars.SENTINELA_BASELINE ? JSON.parse($vars.SENTINELA_BASELINE) : null;\nconst list = $input.first().json.data || [];\nconst liveNames = list.filter(function (w) { return w.active; }).map(function (w) { return normName(w.name); });\nconst out = [];\nif (!BASELINE) {\n  return out;\n}\nconst baseSet = new Set(BASELINE);\nfor (const n of liveNames) {\n  if (!baseSet.has(n)) {\n    const safe = sanitize(n);\n    out.push({ json: {\n      senal: 'drift',\n      fuente: safe,\n      titulo: (\"Workflow \" + safe + \" divergió del JSON versionado\").slice(0, 200),\n      descripcion: 'Senal automatica (Sentinela v1): el workflow activo **' + safe + '** existe en n8n pero no aparece en el baseline versionado (n8n/workflows/). Drift de GitOps: exporta y commitea, o desactiva el workflow.\\n\\nNivel de autonomia: pr-only.',\n    } });\n  }\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "254071d9-0057-4ea7-a97f-7aa86173dee5",
+      "name": "Dedupe vs Linear",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        192
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const ctx = $(\"Linear - Contexto (label + abiertos)\").first().json;\nconst gql = (ctx && ctx.data) || {};\nconst labelId = (gql.issueLabels && gql.issueLabels.nodes && gql.issueLabels.nodes[0] && gql.issueLabels.nodes[0].id) || null;\nconst abiertos = (gql.issues && gql.issues.nodes) || [];\nconst titulosAbiertos = new Set(abiertos.map(function (i) { return String(i.title || \"\").trim().toLowerCase(); }));\nconst candidatos = $input.all().map(function (i) { return i.json; });\nconst vistos = new Set();\nconst out = [];\nfor (const c of candidatos) {\n  const t = String(c.titulo || '').trim();\n  if (!t) continue;\n  const key = t.toLowerCase();\n  if (titulosAbiertos.has(key)) continue;\n  if (vistos.has(key)) continue;\n  vistos.add(key);\n  out.push({ json: {\n    titulo: t,\n    descripcion: c.descripcion || '',\n    senal: c.senal || '',\n    fuente: c.fuente || '',\n    labelId: labelId,\n  } });\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "eaddf9ec-b4f8-4b96-8ef9-acd6ee20384a",
+      "name": "¿Hay candidatos nuevos?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1344,
+        192
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.titulo }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "6092bbd7-a9e8-475e-95c3-93a64c72ee70",
+      "name": "Linear - Crear issue",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1792,
+        192
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.linear.app/graphql",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: \"mutation Crear($input: IssueCreateInput!) { issueCreate(input: $input) { success issue { id identifier url } } }\", variables: { input: Object.assign({ teamId: \"5d10e240-7669-454b-b0d6-a90370c01db2\", title: $json.titulo, description: $json.descripcion }, $json.labelId ? { labelIds: [$json.labelId] } : {}) } }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Linear AdeA"
+        }
+      }
+    },
+    {
+      "id": "dd9e5395-2911-47ae-9d30-6215e0560852",
+      "name": "Loop crear issues",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1568,
+        192
+      ],
+      "parameters": {
+        "batchSize": 1
+      }
+    }
+  ],
+  "connections": {
+    "Cron cada 6h": {
+      "main": [
+        [
+          {
+            "node": "Linear - Contexto (label + abiertos)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Linear - Contexto (label + abiertos)": {
+      "main": [
+        [
+          {
+            "node": "n8n - Ejecuciones fallidas",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Supabase - sync_log 7d",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "n8n - Workflows actuales",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "n8n - Ejecuciones fallidas": {
+      "main": [
+        [
+          {
+            "node": "Agrupar fallos >=2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agrupar fallos >=2": {
+      "main": [
+        [
+          {
+            "node": "Unir candidatos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unir candidatos": {
+      "main": [
+        [
+          {
+            "node": "Dedupe vs Linear",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase - sync_log 7d": {
+      "main": [
+        [
+          {
+            "node": "Fuentes sin correr hoy (COT)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fuentes sin correr hoy (COT)": {
+      "main": [
+        [
+          {
+            "node": "Unir candidatos",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "n8n - Workflows actuales": {
+      "main": [
+        [
+          {
+            "node": "Drift n8n vs repo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drift n8n vs repo": {
+      "main": [
+        [
+          {
+            "node": "Unir candidatos",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Dedupe vs Linear": {
+      "main": [
+        [
+          {
+            "node": "¿Hay candidatos nuevos?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Hay candidatos nuevos?": {
+      "main": [
+        [
+          {
+            "node": "Loop crear issues",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Linear - Crear issue": {
+      "main": [
+        [
+          {
+            "node": "Loop crear issues",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop crear issues": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Linear - Crear issue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "nodeGroups": [],
+  "pinData": null,
+  "versionId": "6b5c83c9-aaf0-467d-8587-5f880461273f",
+  "activeVersionId": null,
+  "versionCounter": 1,
+  "triggerCount": 0,
+  "sourceWorkflowId": null,
+  "shared": [
+    {
+      "updatedAt": "2026-06-12T01:11:02.425Z",
+      "createdAt": "2026-06-12T01:11:02.425Z",
+      "role": "workflow:owner",
+      "workflowId": "Aul2pyDbdIECaBhY",
+      "projectId": "uiXOs3g6BuwAm2sL",
+      "project": {
+        "updatedAt": "2025-03-29T17:00:48.623Z",
+        "createdAt": "2025-03-29T17:00:46.325Z",
+        "id": "uiXOs3g6BuwAm2sL",
+        "name": "SANTIAGO SUAREZ <ssuarezmesa@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "customTelemetryTags": [],
+        "creatorId": "1e64094f-212f-4cc2-9168-db2e0c8adbf6"
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": null
+}
