@@ -120,7 +120,7 @@
     {
       "parameters": {
         "conditions": {
-          "options": { "caseSensitive": true, "leftValue": "" },
+          "options": { "caseSensitive": true, "leftValue": "", "version": 2, "typeValidation": "strict" },
           "combinator": "and",
           "conditions": [{ "id": "cond-1", "leftValue": "={{ $(\"Extract Orders and Next URL\").item.json.has_more }}", "rightValue": "true", "operator": { "type": "string", "operation": "equals" } }]
         },
