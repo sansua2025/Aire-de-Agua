@@ -1,0 +1,44 @@
+{
+  "id": "RDp3C304UGnJmIOs",
+  "name": "E2 - Webhook Shopify Inventory",
+  "active": true,
+  "description": "Recibe webhook de Shopify inventory_levels/update, actualiza stock en Supabase.",
+  "settings": { "executionOrder": "v1", "availableInMCP": true, "binaryMode": "separate" },
+  "nodes": [
+    {
+      "parameters": { "authentication": "accessToken", "topic": "inventory_levels/update" },
+      "id": "632e1e65-73c9-4ac8-8785-803b41ca2647",
+      "name": "Inventory Level Updated",
+      "type": "n8n-nodes-base.shopifyTrigger",
+      "typeVersion": 1,
+      "position": [0, 304],
+      "webhookId": "833e2f3d-8ab1-49f2-a40e-836aaa0f2310",
+      "credentials": { "shopifyOAuth2Api": { "id": "PLACEHOLDER", "name": "Shopify AdeA" } }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/rpc/upsert_inventory_level",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ level_data: { inventory_item_id: String($json.inventory_item_id), location_id: String($json.location_id), available: $json.available || 0 } }) }}",
+        "options": {}
+      },
+      "id": "c9dcb5d4-c82a-4f2e-8e5d-6798fcc54169",
+      "name": "Upsert Inventory RPC",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [304, 304],
+      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+    }
+  ],
+  "connections": {
+    "Inventory Level Updated": { "main": [[{ "node": "Upsert Inventory RPC", "type": "main", "index": 0 }]] }
+  },
+  "tags": [],
+  "meta": { "aiBuilderAssisted": true }
+}

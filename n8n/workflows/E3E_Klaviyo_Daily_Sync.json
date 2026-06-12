@@ -1,0 +1,329 @@
+{
+  "id": "F9pncjlVfCmBTHab",
+  "name": "E3E - Klaviyo Daily Sync",
+  "active": true,
+  "description": "Ingesta diaria Klaviyo a Supabase. Cron 8am COT. 3 ramas: campaigns (rolling 7d), profiles (updated 1d), flow_daily (yesterday — Welcome+Abandoned Cart). Conversion metric: Placed Order (ThumxF).",
+  "settings": { "executionOrder": "v1", "availableInMCP": true, "binaryMode": "separate" },
+  "nodes": [
+    {
+      "id": "e87ab6b3-0829-4fe6-8770-90037c306700",
+      "name": "Cron 8am COT",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [0, 600],
+      "parameters": { "rule": { "interval": [{ "field": "cronExpression", "expression": "0 8 * * *" }] } }
+    },
+    {
+      "id": "3c09376f-3f02-409e-9b88-758716fc4fd7",
+      "name": "Set Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [240, 600],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            { "id": "a1", "name": "yesterdayISO", "value": "={{ $now.minus(1, \"day\").toFormat(\"yyyy-MM-dd\") }}", "type": "string" },
+            { "id": "a2", "name": "yesterdayStart", "value": "={{ $now.minus(1, \"day\").startOf(\"day\").toUTC().toISO() }}", "type": "string" },
+            { "id": "a3", "name": "yesterdayEnd", "value": "={{ $now.minus(1, \"day\").endOf(\"day\").toUTC().toISO() }}", "type": "string" },
+            { "id": "a4", "name": "campaignsSinceISO", "value": "={{ $now.minus(7, \"days\").toUTC().toISO() }}", "type": "string" },
+            { "id": "a5", "name": "profilesSinceISO", "value": "={{ $now.minus(1, \"day\").toUTC().toISO() }}", "type": "string" }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "5f2aec11-c0c9-45ec-b805-44740c1c6ecb",
+      "name": "Get Sent Campaigns",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [480, 200],
+      "parameters": {
+        "method": "GET",
+        "url": "https://a.klaviyo.com/api/campaigns",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Accept", "value": "application/vnd.api+json" }, { "name": "revision", "value": "2024-10-15" }] },
+        "sendQuery": true,
+        "queryParameters": { "parameters": [{ "name": "filter", "value": "=and(equals(messages.channel,\"email\"),equals(status,\"Sent\"),greater-than(updated_at,{{ $(\"Set Config\").first().json.campaignsSinceISO }}))" }, { "name": "fields[campaign]", "value": "name,status,send_time,audiences" }, { "name": "include", "value": "campaign-messages" }, { "name": "fields[campaign-message]", "value": "definition.content.subject,definition.content.preview_text" }] },
+        "options": { "response": { "response": { "responseFormat": "json" } } }
+      },
+      "alwaysOutputData": true,
+      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Klaviyo AdeA" } }
+    },
+    {
+      "id": "30a8469a-b335-46bb-a20c-31e125d6e39c",
+      "name": "Extract Campaigns",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 200],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const resp = $input.first() && $input.first().json;\nconst campaigns = (resp && Array.isArray(resp.data)) ? resp.data : [];\nconst included  = (resp && Array.isArray(resp.included)) ? resp.included : [];\nconst msgById = {};\nincluded.forEach(m => { msgById[m.id] = m; });\nreturn campaigns.map(c => {\n  const a = c.attributes || {};\n  const aud = (a.audiences && a.audiences.included) || [];\n  const audName = (aud[0] && aud[0].name) || null;\n  const msgRefs = (c.relationships && c.relationships[\"campaign-messages\"] && c.relationships[\"campaign-messages\"].data) || [];\n  const firstMsg = msgRefs[0] && msgById[msgRefs[0].id];\n  const content = firstMsg && firstMsg.attributes && firstMsg.attributes.definition && firstMsg.attributes.definition.content;\n  return { json: {\n    campaign_id: c.id,\n    nombre: a.name || \"\",\n    asunto: (content && content.subject) || null,\n    preview_text: (content && content.preview_text) || null,\n    segmento_nombre: audName,\n    enviado_at: a.send_time || null\n  } };\n});"
+      }
+    },
+    {
+      "id": "15653e68-5662-4182-b616-08f75baad49d",
+      "name": "Loop Campaigns",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [960, 200],
+      "parameters": { "batchSize": 1 }
+    },
+    {
+      "id": "9fdf39da-8b6a-4baf-b8fe-8b3172efbbf1",
+      "name": "Get Campaign Report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [1200, 200],
+      "parameters": {
+        "method": "POST",
+        "url": "https://a.klaviyo.com/api/campaign-values-reports",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Accept", "value": "application/vnd.api+json" }, { "name": "revision", "value": "2024-10-15" }, { "name": "Content-Type", "value": "application/vnd.api+json" }] },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ data: { type: \"campaign-values-report\", attributes: { statistics: [\"recipients\",\"delivered\",\"opens_unique\",\"clicks_unique\",\"conversions\",\"unsubscribes\",\"bounced\"], conversion_metric_id: \"ThumxF\", timeframe: { key: \"last_365_days\" }, filter: \"and(equals(send_channel,\\\"email\\\"),equals(campaign_id,\\\"\" + $json.campaign_id + \"\\\"))\" } } }) }}",
+        "options": { "batching": { "batch": { "batchSize": 1, "batchInterval": 1500 } }, "response": { "response": { "responseFormat": "json" } } }
+      },
+      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Klaviyo AdeA" } }
+    },
+    {
+      "id": "44b0f775-8c6b-43b1-8f87-1fb043431911",
+      "name": "Transform Campaign",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 200],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const meta = $(\"Loop Campaigns\").item.json;\nconst reportResp = $input.first() && $input.first().json;\nconst r = reportResp && reportResp.data && reportResp.data.attributes && Array.isArray(reportResp.data.attributes.results) && reportResp.data.attributes.results[0];\nconst s = (r && r.statistics) || {};\nreturn [{ json: {\n  klaviyo_campaign_id: meta.campaign_id,\n  nombre: meta.nombre,\n  tipo: \"campaign\",\n  estado: \"Sent\",\n  asunto: meta.asunto,\n  preview_text: meta.preview_text,\n  segmento_nombre: meta.segmento_nombre,\n  enviados:     s.recipients       || 0,\n  entregados:   s.delivered        || 0,\n  abiertos:     s.opens_unique     || 0,\n  clics:        s.clicks_unique    || 0,\n  conversiones: s.conversions      || 0,\n  ingresos:     s.conversion_value || 0,\n  bajas:        s.unsubscribes     || 0,\n  enviado_at:   meta.enviado_at\n} }];"
+      }
+    },
+    {
+      "id": "0db3c3dd-7dde-4690-8daa-df543af0e5cb",
+      "name": "Upsert Campaign",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [1680, 200],
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/klaviyo_campaigns",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "Prefer", "value": "resolution=merge-duplicates,return=minimal" }] },
+        "sendQuery": true,
+        "queryParameters": { "parameters": [{ "name": "on_conflict", "value": "klaviyo_campaign_id" }] },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+    },
+    {
+      "id": "b216c548-c6e6-485d-a571-24394ca6ea86",
+      "name": "Log Campaigns",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [1920, 200],
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "Prefer", "value": "return=minimal" }] },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "{\"evento\":\"e3e_klaviyo_campaigns\",\"entidad\":\"klaviyo_campaigns\",\"estado\":\"ok\"}",
+        "options": {}
+      },
+      "executeOnce": true,
+      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+    },
+    {
+      "id": "a3454194-6976-48de-8302-fe86ae2bfa98",
+      "name": "Get Updated Profiles",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [480, 600],
+      "parameters": {
+        "method": "GET",
+        "url": "https://a.klaviyo.com/api/profiles",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Accept", "value": "application/vnd.api+json" }, { "name": "revision", "value": "2024-10-15" }] },
+        "sendQuery": true,
+        "queryParameters": { "parameters": [{ "name": "filter", "value": "=greater-than(updated,{{ $(\"Set Config\").first().json.profilesSinceISO }})" }, { "name": "fields[profile]", "value": "email,first_name,last_name" }, { "name": "additional-fields[profile]", "value": "subscriptions" }, { "name": "page[size]", "value": "100" }] },
+        "options": { "response": { "response": { "responseFormat": "json" } }, "pagination": { "pagination": { "paginationMode": "responseContainsNextURL", "nextURL": "={{ $response.body.links.next }}", "paginationCompleteWhen": "other", "completeExpression": "={{ !$response.body.links.next }}", "limitPagesFetched": true, "maxRequests": 50 } } }
+      },
+      "alwaysOutputData": true,
+      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Klaviyo AdeA" } }
+    },
+    {
+      "id": "03a1e8a3-2254-4653-927e-f4c8c004d8d4",
+      "name": "Transform Profiles",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 600],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const all = $input.all() || [];\nconst rows = [];\nall.forEach(item => {\n  const profiles = (item && item.json && Array.isArray(item.json.data)) ? item.json.data : [];\n  profiles.forEach(p => {\n    const a = p.attributes || {};\n    const subs = (a.subscriptions && a.subscriptions.email && a.subscriptions.email.marketing) || {};\n    const suscrito = subs.consent === \"SUBSCRIBED\";\n    if (!a.email) return;\n    rows.push({ klaviyo_profile_id: p.id, email: a.email, suscrito, ultimo_email_abierto: null, ultimo_clic: null });\n  });\n});\nreturn [{ json: { rows } }];"
+      }
+    },
+    {
+      "id": "7269ced5-063e-48fc-b355-b9a3bff19893",
+      "name": "Upsert Profiles",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [960, 600],
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/klaviyo_profiles",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "Prefer", "value": "resolution=merge-duplicates,return=minimal" }] },
+        "sendQuery": true,
+        "queryParameters": { "parameters": [{ "name": "on_conflict", "value": "klaviyo_profile_id" }] },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.rows || []) }}",
+        "options": {}
+      },
+      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+    },
+    {
+      "id": "11e702c3-6c70-4880-9d51-8eba55314210",
+      "name": "Log Profiles",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [1200, 600],
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "Prefer", "value": "return=minimal" }] },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "{\"evento\":\"e3e_klaviyo_profiles\",\"entidad\":\"klaviyo_profiles\",\"estado\":\"ok\"}",
+        "options": {}
+      },
+      "executeOnce": true,
+      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+    },
+    {
+      "id": "580e5065-6459-40c3-a9b8-f9dd3d4b69a9",
+      "name": "Get Flow Report Yesterday",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [480, 1000],
+      "parameters": {
+        "method": "POST",
+        "url": "https://a.klaviyo.com/api/flow-values-reports",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Accept", "value": "application/vnd.api+json" }, { "name": "revision", "value": "2024-10-15" }, { "name": "Content-Type", "value": "application/vnd.api+json" }] },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ data: { type: \"flow-values-report\", attributes: { statistics: [\"recipients\",\"delivered\",\"opens_unique\",\"clicks_unique\",\"conversions\",\"unsubscribes\",\"bounced\"], conversion_metric_id: \"ThumxF\", timeframe: { start: $(\"Set Config\").first().json.yesterdayStart, end: $(\"Set Config\").first().json.yesterdayEnd }, filter: \"equals(send_channel,\\\"email\\\")\" } } }) }}",
+        "options": { "response": { "response": { "responseFormat": "json" } } }
+      },
+      "alwaysOutputData": true,
+      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Klaviyo AdeA" } }
+    },
+    {
+      "id": "33d193d6-2b89-47c4-8bfd-3ba0e363fd70",
+      "name": "Transform Flows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 1000],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const fecha = $(\"Set Config\").first().json.yesterdayISO;\nconst resp = $input.first() && $input.first().json;\nconst flows = (resp && resp.data && resp.data.attributes && Array.isArray(resp.data.attributes.flow_aggregation)) ? resp.data.attributes.flow_aggregation : [];\nconst rows = flows.map(f => {\n  const s = f.statistics || {};\n  const det = (f.flow_details && f.flow_details.attributes) || {};\n  return {\n    fecha,\n    klaviyo_flow_id: f.flow_id,\n    nombre: det.name || \"\",\n    estado: det.status || null,\n    trigger_type: det.triggerType || null,\n    enviados:     s.recipients       || 0,\n    entregados:   s.delivered        || 0,\n    abiertos:     s.opens_unique     || 0,\n    clics:        s.clicks_unique    || 0,\n    conversiones: s.conversions      || 0,\n    ingresos:     s.conversion_value || 0,\n    bajas:        s.unsubscribes     || 0\n  };\n});\nreturn [{ json: { rows } }];"
+      }
+    },
+    {
+      "id": "25a1fb96-6a08-43b2-99c4-44eafb7d2eb1",
+      "name": "Upsert Flow Daily",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [960, 1000],
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/klaviyo_flow_daily",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "Prefer", "value": "resolution=merge-duplicates,return=minimal" }] },
+        "sendQuery": true,
+        "queryParameters": { "parameters": [{ "name": "on_conflict", "value": "fecha,klaviyo_flow_id" }] },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.rows || []) }}",
+        "options": {}
+      },
+      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+    },
+    {
+      "id": "6e64f277-a6bf-4776-95c2-553ebdfa96fb",
+      "name": "Log Flows",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [1200, 1000],
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "Prefer", "value": "return=minimal" }] },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "{\"evento\":\"e3e_klaviyo_flows\",\"entidad\":\"klaviyo_flow_daily\",\"estado\":\"ok\"}",
+        "options": {}
+      },
+      "executeOnce": true,
+      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+    }
+  ],
+  "connections": {
+    "Cron 8am COT": { "main": [[{ "node": "Set Config", "type": "main", "index": 0 }]] },
+    "Set Config": { "main": [[{ "node": "Get Sent Campaigns", "type": "main", "index": 0 }, { "node": "Get Updated Profiles", "type": "main", "index": 0 }, { "node": "Get Flow Report Yesterday", "type": "main", "index": 0 }]] },
+    "Get Sent Campaigns": { "main": [[{ "node": "Extract Campaigns", "type": "main", "index": 0 }]] },
+    "Extract Campaigns": { "main": [[{ "node": "Loop Campaigns", "type": "main", "index": 0 }]] },
+    "Loop Campaigns": { "main": [[{ "node": "Log Campaigns", "type": "main", "index": 0 }], [{ "node": "Get Campaign Report", "type": "main", "index": 0 }]] },
+    "Get Campaign Report": { "main": [[{ "node": "Transform Campaign", "type": "main", "index": 0 }]] },
+    "Transform Campaign": { "main": [[{ "node": "Upsert Campaign", "type": "main", "index": 0 }]] },
+    "Upsert Campaign": { "main": [[{ "node": "Loop Campaigns", "type": "main", "index": 0 }]] },
+    "Get Updated Profiles": { "main": [[{ "node": "Transform Profiles", "type": "main", "index": 0 }]] },
+    "Transform Profiles": { "main": [[{ "node": "Upsert Profiles", "type": "main", "index": 0 }]] },
+    "Upsert Profiles": { "main": [[{ "node": "Log Profiles", "type": "main", "index": 0 }]] },
+    "Get Flow Report Yesterday": { "main": [[{ "node": "Transform Flows", "type": "main", "index": 0 }]] },
+    "Transform Flows": { "main": [[{ "node": "Upsert Flow Daily", "type": "main", "index": 0 }]] },
+    "Upsert Flow Daily": { "main": [[{ "node": "Log Flows", "type": "main", "index": 0 }]] }
+  },
+  "tags": [],
+  "meta": { "aiBuilderAssisted": true }
+}

@@ -1,0 +1,241 @@
+{
+  "id": "9NJ9rL5opJVneBSv",
+  "name": "Loop - Health Check",
+  "active": true,
+  "description": "E5-F · Cron diario 9am COT (0 14 * * * UTC). GET v_loop_system_health → si dias_desde_weekly>8 manda alerta por email. Siempre log a ai_analysis_log.",
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 14 * * *"
+            }
+          ]
+        }
+      },
+      "id": "438b8abb-020a-4cad-b659-0a3693c4090e",
+      "name": "Cron Daily 9am COT",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        128,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/v_loop_system_health?select=*",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "1a4d6fd1-133a-432b-97cb-f0d7b96fdf58",
+      "name": "GET system_health",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        352,
+        368
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Supabase AdeA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.dias_desde_weekly }}",
+              "rightValue": 8,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "bf816270-8d3b-4aac-8824-810113265c69",
+      "name": "Loop weekly stale (>8d)?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        560,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const h = $json;\nconst subject = '⚠️ Aire de Agua · Loop weekly stale (' + h.dias_desde_weekly + ' días)';\nconst html = '<!doctype html><html><body style=\"margin:0;background:#fff5f5;padding:24px\"><h2 style=\"color:#b3261e\">Loop semanal stale</h2><p>El Loop - Weekly Analysis no ha corrido exitosamente hace <b>' + String(h.dias_desde_weekly) + '</b> días</p><p>Último weekly OK: ' + String(h.ultimo_weekly_ok || '—') + '</p><p>Insights vigentes: ' + String(h.insights_vigentes) + ' (alta confianza: ' + String(h.alta_confianza) + ')</p><p>Cobertura loop: ' + (h.cobertura_loop_pct != null ? String(h.cobertura_loop_pct) + '%' : '—') + '</p></body></html>';\nreturn [{ json: { subject: subject, html: html, dias_desde_weekly: h.dias_desde_weekly } }];"
+      },
+      "id": "988bfcae-7cf3-4d74-9d73-33cf1b438e0f",
+      "name": "Render Alert Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        784,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "marketing@airedeagua.com",
+        "subject": "={{ $json.subject }}",
+        "message": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false,
+          "senderName": "Aire de Agua · Loop Health"
+        }
+      },
+      "id": "d380728f-0c0c-4ee9-bbef-56c2f4e93632",
+      "name": "Send Alert Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1008,
+        208
+      ],
+      "webhookId": "587a1f41-8ca8-4bcb-9b0b-56afb4e97556",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "PLACEHOLDER",
+          "name": "Gmail AdeA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/ai_analysis_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ tipo: \"health_check\", estado: \"ok\", resumen: \"dias_desde_weekly=\" + ($(\"GET system_health\").first().json.dias_desde_weekly ?? \"n/a\") + \", cobertura=\" + ($(\"GET system_health\").first().json.cobertura_loop_pct ?? \"n/a\") + \"%, vigentes=\" + $(\"GET system_health\").first().json.insights_vigentes }) }}",
+        "options": {}
+      },
+      "id": "775904e6-eae8-4c18-b90c-0e825554497f",
+      "name": "INSERT log health_check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1232,
+        368
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Supabase AdeA"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Cron Daily 9am COT": {
+      "main": [
+        [
+          {
+            "node": "GET system_health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET system_health": {
+      "main": [
+        [
+          {
+            "node": "Loop weekly stale (>8d)?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop weekly stale (>8d)?": {
+      "main": [
+        [
+          {
+            "node": "Render Alert Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "INSERT log health_check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Render Alert Email": {
+      "main": [
+        [
+          {
+            "node": "Send Alert Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Alert Email": {
+      "main": [
+        [
+          {
+            "node": "INSERT log health_check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "tags": [],
+  "meta": {
+    "aiBuilderAssisted": true
+  }
+}

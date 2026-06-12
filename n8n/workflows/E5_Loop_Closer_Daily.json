@@ -1,0 +1,330 @@
+{
+  "id": "GuopyIlOL1z4FPXM",
+  "name": "Loop - Closer Daily",
+  "active": true,
+  "description": "E5-D · Cron diario 8am COT (0 13 * * * UTC). GET candidatos pending close → loop close_insight_loop por insight → email resumen + log. Si no hay candidatos, log silencioso sin email.",
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 13 * * *"
+            }
+          ]
+        }
+      },
+      "id": "879f25f9-9afd-47c6-b3c3-6c6bb575046f",
+      "name": "Cron Daily 8am COT",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        128,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/v_loop_pending_close?select=*&limit=50",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {}
+          }
+        }
+      },
+      "id": "46c02575-1e5a-48c2-9fb7-5446aec0ebcf",
+      "name": "GET pending close",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        352,
+        368
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Supabase AdeA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "e857976b-ff01-41a3-a605-52c36f63b46f",
+      "name": "Any candidates?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        560,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/rpc/analytics_close_insight_loop",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_insight_id: $json.id }) }}",
+        "options": {}
+      },
+      "id": "40bf807e-43b6-426e-9be3-57276015c1a7",
+      "name": "RPC close_insight_loop",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        784,
+        208
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Supabase AdeA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const closures = $input.all().map(function(i){return i.json;});\nconst total = closures.length;\nconst confirmados = closures.filter(function(c){return c.decision === 'confirmado';}).length;\nconst sin_cambio = closures.filter(function(c){return c.decision === 'sin_cambio';}).length;\nconst sin_datos = closures.filter(function(c){return c.decision === 'sin_datos';}).length;\nconst refutados = closures.filter(function(c){return c.decision === 'refutado';}).length;\nfunction fmtPct(n) { if (n == null) return '—'; const sign = n > 0 ? '+' : ''; return sign + Number(n).toFixed(1) + '%'; }\nconst subject = 'Aire de Agua · Loop Closer · ' + total + ' insights evaluados (' + confirmados + ' confirmados, ' + sin_cambio + ' sin cambio)';\nconst html = '<!doctype html><html><body><h2>Loop Closer · Aire de Agua</h2><p>' + total + ' evaluados · ' + confirmados + ' confirmados · ' + sin_cambio + ' sin cambio · ' + sin_datos + ' sin datos · ' + refutados + ' refutados</p></body></html>';\nreturn [{ json: { subject: subject, html: html, total_evaluados: total, confirmados: confirmados, sin_cambio: sin_cambio, sin_datos: sin_datos, refutados: refutados } }];"
+      },
+      "id": "275cb758-8ad6-4dae-a11f-3b8b5f3eb22b",
+      "name": "Render Closure Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1008,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "marketing@airedeagua.com",
+        "subject": "={{ $json.subject }}",
+        "message": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false,
+          "senderName": "Aire de Agua · Loop Closer"
+        }
+      },
+      "id": "29d62659-b547-4c60-b34c-83aff20f880c",
+      "name": "Send Closure Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1232,
+        208
+      ],
+      "webhookId": "075b3319-62e0-498b-baf4-b3f1adc4bae5",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "PLACEHOLDER",
+          "name": "Gmail AdeA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/ai_analysis_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => { const r = $(\"Render Closure Email\").first().json; return JSON.stringify({ tipo: \"loop_closer\", estado: \"ok\", insights_actualizados: r.total_evaluados, resumen: r.confirmados + \" confirmados, \" + r.sin_cambio + \" sin cambio, \" + r.sin_datos + \" sin datos, \" + r.refutados + \" refutados\" }); })() }}",
+        "options": {}
+      },
+      "id": "b9a01505-9fc6-462a-8b2b-4c1888e45b77",
+      "name": "INSERT log (closures)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1440,
+        208
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Supabase AdeA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/ai_analysis_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"tipo\":\"loop_closer\",\"estado\":\"ok\",\"insights_actualizados\":0,\"resumen\":\"sin candidatos a cierre\"}",
+        "options": {}
+      },
+      "id": "dfd1b2e1-f808-4781-99d9-424a2b240f10",
+      "name": "INSERT log (no candidates)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        784,
+        544
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Supabase AdeA"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Cron Daily 8am COT": {
+      "main": [
+        [
+          {
+            "node": "GET pending close",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET pending close": {
+      "main": [
+        [
+          {
+            "node": "Any candidates?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any candidates?": {
+      "main": [
+        [
+          {
+            "node": "RPC close_insight_loop",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "INSERT log (no candidates)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RPC close_insight_loop": {
+      "main": [
+        [
+          {
+            "node": "Render Closure Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Render Closure Email": {
+      "main": [
+        [
+          {
+            "node": "Send Closure Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Closure Email": {
+      "main": [
+        [
+          {
+            "node": "INSERT log (closures)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "tags": [],
+  "meta": {
+    "aiBuilderAssisted": true
+  }
+}

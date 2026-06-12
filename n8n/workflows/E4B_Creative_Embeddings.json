@@ -1,0 +1,50 @@
+{
+  "id": "9PPS7Sy9YnaQdUzW",
+  "name": "E4B - Creative Embeddings",
+  "active": true,
+  "description": "Vectoriza ads de Meta con texto + visual enriquecido (ad_name, adset, campaign, headline/body/cta, asset_feed arrays, targeting, descripcion visual via Claude). Bulk + diario 8:30 UTC.",
+  "settings": { "executionOrder": "v1", "availableInMCP": true, "binaryMode": "separate" },
+  "nodes": [
+    { "id": "7b6d32cb-1760-4a58-bc65-079289601950", "name": "Run Bulk Creativos", "type": "n8n-nodes-base.manualTrigger", "typeVersion": 1, "position": [0, 304], "parameters": {} },
+    { "id": "b8ce82d8-e7e0-4580-870d-214484e6111f", "name": "Schedule Diario Creativos", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.3, "position": [0, 80], "parameters": { "rule": { "interval": [{ "triggerAtHour": 8, "triggerAtMinute": 30 }] } } },
+    {
+      "id": "17dac7f3-73f3-4681-8494-eb9038772937", "name": "Fetch Ads Pendientes", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [304, 304],
+      "parameters": { "method": "GET", "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/ads_pendientes_embedding?select=ad_id,ad_name,adset_name,campaign_name,headline,body_copy,cta,objetivo,audiencia,link_description,optimization_goal,targeting_summary,asset_feed_titles,asset_feed_bodies,asset_feed_descriptions,image_url,video_id,image_hash,visual_description", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {} },
+      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+    },
+    {
+      "id": "9d8189c8-5e31-4255-9669-2fc9b368bb77", "name": "Preparar Textos Creativos", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [608, 304],
+      "parameters": {
+        "mode": "runOnceForAllItems", "language": "javaScript",
+        "jsCode": "const ads = $input.all().map(i => i.json).filter(a => a.ad_id);\nif (!ads.length) return [];\nconst sanitize = (s) => s ? String(s).replace(/[\\x00-\\x1F]/g, \" \").substring(0, 3000) : \"\";\nconst joinArr = (arr) => Array.isArray(arr) && arr.length ? arr.filter(Boolean).join(\" / \") : \"\";\nconst texts = ads.map(a => {\n  const parts = [];\n  if (a.ad_name) parts.push(sanitize(a.ad_name));\n  if (a.adset_name) parts.push(\"Adset: \" + sanitize(a.adset_name));\n  if (a.campaign_name) parts.push(\"Campaign: \" + sanitize(a.campaign_name));\n  if (a.objetivo) parts.push(\"Objetivo: \" + a.objetivo);\n  if (a.optimization_goal) parts.push(\"Optim: \" + a.optimization_goal);\n  if (a.headline) parts.push(\"Headline: \" + sanitize(a.headline));\n  if (a.body_copy) parts.push(\"Body: \" + sanitize(a.body_copy));\n  if (a.link_description) parts.push(\"Description: \" + sanitize(a.link_description));\n  if (a.cta) parts.push(\"CTA: \" + a.cta);\n  const titlesText = joinArr(a.asset_feed_titles);\n  if (titlesText) parts.push(\"Titles: \" + sanitize(titlesText));\n  const bodiesText = joinArr(a.asset_feed_bodies);\n  if (bodiesText) parts.push(\"Bodies: \" + sanitize(bodiesText));\n  const descsText = joinArr(a.asset_feed_descriptions);\n  if (descsText) parts.push(\"Descriptions: \" + sanitize(descsText));\n  if (a.targeting_summary) parts.push(\"Audiencia: \" + sanitize(a.targeting_summary));\n  if (a.visual_description) parts.push(\"Visual: \" + sanitize(a.visual_description));\n  return parts.join(\" | \");\n});\nreturn [{ json: { texts, ads } }];"
+      }
+    },
+    {
+      "id": "fbc9409e-e8d3-4ee4-aeea-582727bbb729", "name": "OpenAI Embeddings Creativos", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [912, 304],
+      "parameters": { "method": "POST", "url": "https://api.openai.com/v1/embeddings", "authentication": "predefinedCredentialType", "nodeCredentialType": "openAiApi", "sendHeaders": true, "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }] }, "sendBody": true, "contentType": "json", "specifyBody": "json", "jsonBody": "={{ JSON.stringify({ model: \"text-embedding-3-small\", input: $json.texts }) }}", "options": {} },
+      "credentials": { "openAiApi": { "id": "PLACEHOLDER", "name": "OpenAI AdeA" } }
+    },
+    {
+      "id": "a10d4d86-ae7f-4643-9989-d88247d0aff1", "name": "Separar Embeddings Creativos", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [1200, 304],
+      "parameters": {
+        "mode": "runOnceForAllItems", "language": "javaScript",
+        "jsCode": "const embs = $input.first().json.data.sort((a, b) => a.index - b.index);\nconst d = $(\"Preparar Textos Creativos\").first().json;\nreturn d.ads.map((a, i) => ({ json: {\n  ad_id: a.ad_id,\n  ad_name: a.ad_name || null,\n  campaign_name: a.campaign_name || null,\n  texto_fuente: d.texts[i],\n  embedding: embs[i].embedding,\n  modelo: \"text-embedding-3-small\",\n  objetivo: a.objetivo || null,\n  audiencia: a.audiencia || null,\n  cta: a.cta || null\n} }));"
+      }
+    },
+    {
+      "id": "94e171a1-abd1-46fe-9d6c-be4e6f5dacc6", "name": "Guardar Embedding Creativo", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [1504, 304],
+      "parameters": { "method": "POST", "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/ad_creative_embeddings?on_conflict=ad_id", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendHeaders": true, "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "Prefer", "value": "return=minimal,resolution=merge-duplicates" }] }, "sendBody": true, "contentType": "json", "specifyBody": "json", "jsonBody": "={{ JSON.stringify({ ad_id: $json.ad_id, ad_name: $json.ad_name, campaign_name: $json.campaign_name, texto_fuente: $json.texto_fuente, embedding: $json.embedding, modelo: $json.modelo, objetivo: $json.objetivo, audiencia: $json.audiencia, cta: $json.cta }) }}", "options": {} },
+      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+    }
+  ],
+  "connections": {
+    "Run Bulk Creativos": { "main": [[{ "node": "Fetch Ads Pendientes", "type": "main", "index": 0 }]] },
+    "Schedule Diario Creativos": { "main": [[{ "node": "Fetch Ads Pendientes", "type": "main", "index": 0 }]] },
+    "Fetch Ads Pendientes": { "main": [[{ "node": "Preparar Textos Creativos", "type": "main", "index": 0 }]] },
+    "Preparar Textos Creativos": { "main": [[{ "node": "OpenAI Embeddings Creativos", "type": "main", "index": 0 }]] },
+    "OpenAI Embeddings Creativos": { "main": [[{ "node": "Separar Embeddings Creativos", "type": "main", "index": 0 }]] },
+    "Separar Embeddings Creativos": { "main": [[{ "node": "Guardar Embedding Creativo", "type": "main", "index": 0 }]] }
+  },
+  "tags": [],
+  "meta": { "aiBuilderAssisted": true }
+}
