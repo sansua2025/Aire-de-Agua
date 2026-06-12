@@ -63,8 +63,7 @@ export async function POST(req: NextRequest) {
     // RPC sin tipos generados — params con prefijo p_ (contrato SQL, ya en prod).
     // p_decidido_por = email del usuario para auditoría (en vez del default).
     const { data, error } = await admin
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .rpc('analytics_aprobar_propuesta' as any, {
+      .rpc('analytics_aprobar_propuesta', {
         p_insight_id: insightId,
         p_aprobado: aprobado,
         p_notas: typeof notas === 'string' ? notas : null,
