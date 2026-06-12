@@ -1,6 +1,11 @@
 import { Card, Callout, Hero, Pill } from '@/components/ui'
 import { OverviewKpis, type OverviewKpi } from '@/components/overview/overview-kpis'
-import { OverviewVentasChart, type VentasDatum } from '@/components/overview/overview-charts'
+import {
+  OverviewVentasChart,
+  OverviewRoasChart,
+  type VentasDatum,
+  type RoasDatum,
+} from '@/components/overview/overview-charts'
 import {
   getWeeklyKpi,
   getKpiHistory,
@@ -13,11 +18,15 @@ import { formatCop, formatPct, formatNumber, formatX } from '@/lib/format'
 
 /**
  * Overview · Dashboard v2 (AIR-128) — Server Component.
- * Hero editorial protagonista + 6 KPIs con drill + secciones Rendimiento y
- * Conversión. Datos reales de las vistas analíticas. Los textos de insights y
- * anomalías vienen de Claude/datos externos: se renderizan como texto plano
- * (React escapa por defecto), nunca con dangerouslySetInnerHTML, y se sanean
- * defensivamente antes de mostrar.
+ * Hero editorial protagonista + 6 KPIs con drill + secciones Rendimiento
+ * (ventas, mix de canal, ROAS) y Conversión (embudo, hallazgos, salud). Datos
+ * reales de las vistas analíticas.
+ *
+ * Seguridad (prompt-injection): los textos de insights y anomalías vienen de
+ * Claude/datos externos y se renderizan como texto plano escapado (React escapa
+ * por defecto) tras sanitizeText — NUNCA con dangerouslySetInnerHTML. La única
+ * excepción es weekly_snapshot.resumen_ai, que ya viene saneado del pipeline E5
+ * (AIR-119/AIR-94) y se inyecta solo para preservar saltos de línea.
  */
 
 function parseNumber(v: unknown): number | null {
@@ -156,6 +165,15 @@ export default async function OverviewPage() {
     label: formatCop(parseNumber(h.ventas_total)),
     current: h.semana_inicio === weekly?.semana_inicio,
   }))
+
+  // ROAS atribuido por semana (fallback a roas_meta cuando atribuido es NULL).
+  const roasChartData: RoasDatum[] = uniqueHistory.map((h) => ({
+    w: shortLabel(h.semana_label),
+    v: parseNumber(h.roas_meta_atribuido) ?? parseNumber(h.roas_meta) ?? 0,
+  }))
+
+  // Resumen ejecutivo del Cerebro (Loop Weekly E5). Ya viene saneado del pipeline.
+  const resumenAi = (weekly?.resumen_ai || '').trim()
 
   const channels = consolidarMixCanal(weekly?.mix_canal_web).length > 0
     ? consolidarMixCanal(weekly?.mix_canal_web)
@@ -469,6 +487,53 @@ export default async function OverviewPage() {
               El Loop Weekly debe correr con PATCH para llenar el mix de canal de la semana.
             </Callout>
           )}
+        </Card>
+      </div>
+      <div className="grid grid-2" style={{ marginTop: 14 }}>
+        <Card
+          title={
+            roasAtrib != null
+              ? `ROAS atribuido ${formatX(roasAtrib)} · vs meta 2.5×`
+              : `ROAS Meta-reportado ${roasMeta != null ? formatX(roasMeta) : '—'} (atribuido pendiente)`
+          }
+          subtitle={
+            roasAtrib != null
+              ? 'Usando vista_atribucion_web · Loop Weekly v2'
+              : 'roas_meta_atribuido NULL — Loop Weekly debe correr con PATCH'
+          }
+          source="weekly_snapshot.roas_meta_atribuido"
+        >
+          <OverviewRoasChart roasChartData={roasChartData} />
+        </Card>
+        <Card
+          title="Análisis · el Cerebro"
+          subtitle="Resumen ejecutivo generado por el Loop Weekly cada lunes"
+          source="weekly_snapshot.resumen_ai"
+        >
+          <div className="ai-block" style={{ background: 'transparent', padding: 0, border: 0 }}>
+            <div className="ai-head">
+              <span className="ai-label">Resumen ejecutivo</span>
+              <span className="ai-meta">{weekly?.semana_inicio || '—'}</span>
+            </div>
+            <div className="ai-text">
+              {resumenAi ? (
+                // resumen_ai ya viene saneado del pipeline E5 (anti prompt-injection,
+                // AIR-119/AIR-94); solo convertimos saltos de línea a <br/>. NO aplicar
+                // este patrón a insights/anomalías (esos van como texto plano escapado).
+                <span dangerouslySetInnerHTML={{ __html: resumenAi.replace(/\n/g, '<br />') }} />
+              ) : (
+                <>
+                  <strong>Resumen pendiente.</strong>
+                  <br />
+                  <br />
+                  El Loop Weekly genera el resumen ejecutivo cada lunes y lo persiste en{' '}
+                  <code style={{ fontFamily: 'var(--font-mono-stack)' }}>weekly_snapshot.resumen_ai</code>.
+                  La fila más reciente ({weekly?.semana_inicio || '—'}) tiene este campo vacío —
+                  probablemente el workflow corrió pero falló en el upsert del PATCH.
+                </>
+              )}
+            </div>
+          </div>
         </Card>
       </div>
 

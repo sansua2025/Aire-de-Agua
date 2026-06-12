@@ -1,12 +1,13 @@
 'use client'
 
-import { ColumnChart } from '@/components/charts'
+import { ColumnChart, LineChart } from '@/components/charts'
 import { TT } from '@/components/ui'
 
 /**
- * OverviewCharts v2 — wrapper cliente que monta la columna de ventas semanales.
- * El ColumnChart necesita estado de hover (tooltip), por eso vive en cliente.
- * El resto del Overview (HBars, mini-funnel, callout, irows) es Server Component.
+ * OverviewCharts v2 — wrappers cliente para los charts del Overview.
+ * ColumnChart (ventas) y LineChart (ROAS) necesitan estado de hover (tooltip con
+ * funciones no serializables cruzando la frontera Server → Client), por eso viven
+ * en cliente. El resto del Overview (HBars, mini-funnel, callout, irows) es Server.
  */
 
 export interface VentasDatum {
@@ -14,6 +15,11 @@ export interface VentasDatum {
   v: number
   label: string
   current: boolean
+}
+
+export interface RoasDatum {
+  w: string
+  v: number
 }
 
 interface OverviewChartsProps {
@@ -35,6 +41,37 @@ export function OverviewVentasChart({ ventasChartData }: OverviewChartsProps) {
       accentColor="var(--accent)"
       mutedColor="var(--accent-tint-2)"
       tooltip={(d) => <TT title={`Semana ${d.w}`} rows={[{ k: 'Ventas', v: d.label }]} />}
+    />
+  )
+}
+
+interface RoasChartProps {
+  roasChartData: RoasDatum[]
+}
+
+export function OverviewRoasChart({ roasChartData }: RoasChartProps) {
+  if (roasChartData.length === 0) {
+    return <EmptyMini text="Sin historial de ROAS." />
+  }
+  return (
+    <LineChart
+      data={roasChartData}
+      valueKey="v"
+      labelKey="w"
+      area={false}
+      refValue={2.5}
+      refLabel="meta 2.5×"
+      accentColor="var(--accent)"
+      valueFmt={(v) => `${v.toFixed(1)}×`}
+      tooltip={(d) => (
+        <TT
+          title={`Semana ${d.w}`}
+          rows={[
+            { k: 'ROAS', v: `${d.v.toFixed(2)}×` },
+            { k: 'vs meta', v: d.v > 0 ? `${((d.v / 2.5 - 1) * 100).toFixed(0)}%` : '—' },
+          ]}
+        />
+      )}
     />
   )
 }
