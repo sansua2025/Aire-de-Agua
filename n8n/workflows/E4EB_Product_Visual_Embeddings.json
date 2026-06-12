@@ -17,7 +17,8 @@
     },
     {
       "id": "9fbf9006-7f15-40d6-a834-efea5780fc90", "name": "Anthropic Vision", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [420, 80],
-      "parameters": { "method": "POST", "url": "https://api.anthropic.com/v1/messages", "authentication": "predefinedCredentialType", "nodeCredentialType": "anthropicApi", "sendHeaders": true, "specifyHeaders": "keypair", "headerParameters": { "parameters": [{ "name": "anthropic-version", "value": "2023-06-01" }, { "name": "content-type", "value": "application/json" }] }, "sendBody": true, "contentType": "json", "specifyBody": "json", "jsonBody": "={{ JSON.stringify($json.request_body) }}", "options": { "batching": { "batch": { "batchSize": 2, "batchInterval": 3000 } }, "response": { "response": { "neverError": true } }, "timeout": 60000 } },
+      "parameters": { "method": "POST", "url": "https://api.anthropic.com/v1/messages", "authentication": "predefinedCredentialType", "nodeCredentialType": "anthropicApi", "sendHeaders": true, "specifyHeaders": "keypair", "headerParameters": { "parameters": [{ "name": "anthropic-version", "value": "2023-06-01" }, { "name": "content-type", "value": "application/json" }] }, "sendBody": true, "contentType": "json", "specifyBody": "json", "jsonBody": "={{ JSON.stringify($json.request_body) }}", "options": { "batching": { "batch": { "batchSize": 2, "batchInterval": 3000 } }, "timeout": 60000 } },
+      "onError": "continueRegularOutput",
       "credentials": { "anthropicApi": { "id": "PLACEHOLDER", "name": "Anthropic AdeA" } }
     },
     {

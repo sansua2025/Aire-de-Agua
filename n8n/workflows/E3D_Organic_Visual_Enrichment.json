@@ -81,10 +81,10 @@
         "jsonBody": "={{ JSON.stringify($json.request_body) }}",
         "options": {
           "batching": { "batch": { "batchSize": 2, "batchInterval": 3000 } },
-          "response": { "response": { "neverError": true } },
           "timeout": 60000
         }
-      }
+      },
+      "onError": "continueRegularOutput"
     },
     {
       "id": "382364a0-58a6-48ff-934c-cfd8c659c7aa",
