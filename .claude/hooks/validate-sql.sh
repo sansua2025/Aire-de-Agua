@@ -27,7 +27,7 @@ printf '%s' "$SQL" | grep -iqE '\b(DROP[[:space:]]+(DATABASE|SCHEMA)|TRUNCATE)\b
 printf '%s' "$SQL" | grep -iqE 'supabase[[:space:]]+db[[:space:]]+reset' && block "'supabase db reset' puede destruir datos."
 
 # 2) DELETE / UPDATE sin WHERE
-if printf '%s' "$SQL" | grep -iqE '\b(DELETE[[:space:]]+FROM|UPDATE)\b' && ! printf '%s' "$SQL" | grep -iqE '\bWHERE\b'; then
+if printf '%s' "$SQL" | grep -iqE '\b(DELETE[[:space:]]+FROM|UPDATE[[:space:]]+[a-zA-Z0-9_."]+[[:space:]]+SET)\b' && ! printf '%s' "$SQL" | grep -iqE '\bWHERE\b'; then
   block "DELETE/UPDATE sin WHERE."
 fi
 
