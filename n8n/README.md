@@ -25,9 +25,10 @@ n8n/workflows/
   E5B_*.json         — Shopify journey daily sync
   E5K_*.json         — Knowledge consolidation (mensual, inactivo)
   E5_Loop_*.json     — Loop closer diario + health check + insights decay
+  Sentinela_v1.json  — Senales del sistema → issues Linear agent-ready (AIR-99)
 ```
 
-## Inventario (30 workflows)
+## Inventario (31 workflows)
 
 | Archivo | ID n8n | Activo | Descripcion |
 |---------|--------|--------|-------------|
@@ -61,6 +62,7 @@ n8n/workflows/
 | E5_Loop_Closer_Daily | `GuopyIlOL1z4FPXM` | true | Loop closer diario 8am COT |
 | E5_Loop_Health_Check | `9NJ9rL5opJVneBSv` | true | Health check diario 9am COT |
 | E5_Loop_Insights_Decay | `4OI0n6oZ4hoVEO7L` | true | Decay insights mensual |
+| Sentinela_v1 | `Aul2pyDbdIECaBhY` | false | AIR-99: 3 senales (n8n fails + sync_log gap + drift) → issues Linear AIR con label agent-ready + dedupe por titulo |
 
 ## Actualizar un workflow
 
