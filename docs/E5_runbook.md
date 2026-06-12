@@ -35,7 +35,7 @@
 - `detect_anomalies(p_inicio, p_fin)` — z-score sobre ventana 8w (NULL si n<4)
 - `recompute_creative_learnings(p_lookback_days)` — suavizado bayesiano k=10
 - `recompute_audience_segments(p_fecha_corte)` — RFM-light: VIP/Recurrente/Nuevo/Riesgo/Dormant
-- `upsert_insight(p_insight jsonb)` — dedup ILIKE + cosine_distance(embedding) < 0.15
+- `upsert_insight(p_insight jsonb)` — dedup canónico ILIKE (dominio+tipo+LEFT(titulo,40)) + insight_key (append-only)
 - `close_insight_loop(p_insight_id uuid)` — eficacia retrospectiva 28d post-acción
 - `decay_stale_insights()` — vigente=false si sin reconfirmar >56d
 - `metric_value_in_range(metrica, inicio, fin)` — helper para close_insight_loop
@@ -122,7 +122,7 @@ Para cambiar comportamiento, editar la migración correspondiente y aplicar `CRE
 | Umbral z-score | 2.0 | `025` | Cambiar `ABS(z) >= 2.0` |
 | k Bayesiano (creative_learnings) | 10 | `026_analytics_recompute_creative_learnings.sql` | Cambiar literal `10` |
 | Lookback creative_learnings | 28 días | `026` | Parámetro `p_lookback_days` |
-| Threshold cosine dedup | 0.15 | `028_analytics_upsert_insight.sql` | Cambiar `< 0.15` |
+| ~~Threshold cosine dedup~~ | N/A | removido en `063_air98_podar_rama_semantica_upsert_insight.sql` | Rama semántica eliminada (AIR-98). Ya no aplica. |
 | Score growth function | `s + (1-s)*0.15` | `028` | Cambiar `0.15` |
 | Score decay sin_cambio | -0.05 | `033_analytics_close_insight_loop.sql` | Cambiar `- 0.05` |
 | Score boost confirmado | +0.10 | `033` | Cambiar `+ 0.10` |
@@ -149,7 +149,7 @@ Para cambiar comportamiento, editar la migración correspondiente y aplicar `CRE
 
 A partir de AIR-76, cada insight emitido por el Weekly Analysis incluye dos campos nuevos en su JSON:
 
-- **`insight_key`** — slug determinístico que identifica la *condición* observada, estable entre semanas (ej. `klaviyo_canal_apagado`, `cvr_web_critico`, `roas_real_paid`). Lo emite el LLM directamente y de forma determinística: NO depende de embeddings. (La rama semántica de `analytics.upsert_insight` es código muerto en la práctica, porque 0 insights tienen `embedding`; el match efectivo sigue siendo por título.)
+- **`insight_key`** — slug determinístico que identifica la *condición* observada, estable entre semanas (ej. `klaviyo_canal_apagado`, `cvr_web_critico`, `roas_real_paid`). Lo emite el LLM directamente y de forma determinística: NO depende de embeddings. (La rama semántica de `analytics.upsert_insight` fue removida en AIR-98, migración `063`; el dedup canónico es título ILIKE `LEFT(40)` + `insight_key`.)
 - **`requiere_del_humano`** — proveniente de E5-I / [AIR-75](https://linear.app/airedeagua/issue/AIR-75).
 
 **Modelo append-only.** Se escribe una fila por detección por período. NO hay UPDATE-sobre-match ni `vigente=false`. `insight_key` NO mergea ni desactiva filas: solo etiqueta cada observación con el patrón al que pertenece, de modo que E5-K ([AIR-77](https://linear.app/airedeagua/issue/AIR-77)) pueda agrupar observaciones del mismo patrón y medir su madurez en `strategic_learnings`.
