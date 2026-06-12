@@ -13,47 +13,51 @@ interface NavItem {
   count?: number
 }
 
-const navMain: NavItem[] = [
-  { href: '/',         icon: 'home',     label: 'Resumen ejecutivo' },
-  { href: '/producto', icon: 'shopping', label: 'Producto y Comercial' },
-  { href: '/funnel',   icon: 'funnel',   label: 'Funnel web' },
-  { href: '/paid',     icon: 'target',   label: 'Performance Paid' },
+// Sección "Analítica" — las páginas de datos por dominio
+const navAnalitica: NavItem[] = [
+  { href: '/',         icon: 'home',     label: 'Overview' },
+  { href: '/producto', icon: 'shopping', label: 'Producto' },
+  { href: '/funnel',   icon: 'funnel',   label: 'Funnel' },
+  { href: '/paid',     icon: 'target',   label: 'Paid' },
   { href: '/email',    icon: 'mail',     label: 'Email', badge: 'WIP' },
-  { href: '/ai',       icon: 'sparkles', label: 'Inteligencia AI' },
 ]
 
-const navSystem: NavItem[] = [
-  { href: '/anomalias', icon: 'alert', label: 'Anomalías' },
-  { href: '/fuentes',   icon: 'grid',  label: 'Fuentes' },
+// Sección "Inteligencia" — el Cerebro y diagnóstico
+const navInteligencia: NavItem[] = [
+  { href: '/ai',        icon: 'sparkles', label: 'el Cerebro' },
+  { href: '/anomalias', icon: 'alert',    label: 'Anomalías' },
+  { href: '/fuentes',   icon: 'grid',     label: 'Fuentes' },
 ]
 
 export function Sidebar() {
   const pathname = usePathname()
 
   return (
-    <aside className="sidebar">
-      <div className="sidebar-header">
-        <div className="sidebar-logo" aria-hidden />
-        <div className="sidebar-brand">
-          <div className="sidebar-brand-name">Aire de Agua</div>
-          <div className="sidebar-brand-sub">el Cerebro</div>
+    <nav className="sidebar" aria-label="Navegación principal">
+      <Link href="/" className="side-brand">
+        <span className="side-logo">
+          <Icon name="sparkles" size={19} />
+        </span>
+        <div>
+          <div className="side-brand-name">el Cerebro</div>
+          <div className="side-brand-sub">Aire de Agua</div>
         </div>
+      </Link>
+
+      <div className="side-nav">
+        <div className="side-section">Analítica</div>
+        {navAnalitica.map((it) => (
+          <NavLink key={it.href} item={it} active={isActive(pathname, it.href)} />
+        ))}
+
+        <div className="side-section">Inteligencia</div>
+        {navInteligencia.map((it) => (
+          <NavLink key={it.href} item={it} active={isActive(pathname, it.href)} />
+        ))}
       </div>
 
-      <nav className="sidebar-nav">
-        <div className="nav-section">Dashboard</div>
-        {navMain.map((it) => (
-          <NavLink key={it.href} item={it} active={isActive(pathname, it.href)} />
-        ))}
-
-        <div className="nav-section">Sistema</div>
-        {navSystem.map((it) => (
-          <NavLink key={it.href} item={it} active={isActive(pathname, it.href)} />
-        ))}
-      </nav>
-
       <SidebarFooter />
-    </aside>
+    </nav>
   )
 }
 
@@ -66,13 +70,15 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
   return (
     <Link
       href={item.href}
-      className={`nav-item${active ? ' active' : ''}`}
+      className={`side-item${active ? ' active' : ''}`}
       title={item.label}
     >
-      <Icon name={item.icon} size={16} className="nav-icon" />
-      <span className="nav-label">{item.label}</span>
-      {item.badge && <span className="nav-badge">{item.badge}</span>}
-      {item.count != null && <span className="nav-count">{item.count}</span>}
+      <span className="side-icon">
+        <Icon name={item.icon} size={18} />
+      </span>
+      <span>{item.label}</span>
+      {item.badge && <span className="side-badge">{item.badge}</span>}
+      {item.count != null && <span className="side-count">{item.count}</span>}
     </Link>
   )
 }
@@ -92,12 +98,12 @@ function SidebarFooter() {
   }, [])
 
   return (
-    <div className="sidebar-footer">
-      <span className="status-dot" aria-hidden />
-      <div className="sidebar-footer-text">
-        Sincronizado<br />
+    <div className="side-footer">
+      <span className="side-status-dot" aria-hidden />
+      <span>
+        Datos al día<br />
         <span suppressHydrationWarning>{now ?? '—'}</span>
-      </div>
+      </span>
     </div>
   )
 }

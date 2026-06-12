@@ -1,9 +1,9 @@
 /**
- * Sparkline — mini línea para KPI tiles.
- * 8 puntos típicos (8 semanas). Marca el último punto con un círculo.
+ * Sparkline v2 — minimal: línea 1.8px SIN relleno + punto final.
+ * 8 puntos típicos (8 semanas).
  *
  * Uso:
- *   <Sparkline data={[54,70,80,88,72,60,55,86]} color="var(--accent)" />
+ *   <Sparkline data={[54,70,80,88,72,60,55,86]} color="var(--fg-3)" />
  */
 
 interface SparklineProps {
@@ -18,8 +18,8 @@ interface SparklineProps {
 
 export function Sparkline({
   data,
-  width = 64,
-  height = 22,
+  width = 68,
+  height = 26,
   color,
   showLast = true,
   autoColor = false,
@@ -28,49 +28,46 @@ export function Sparkline({
 
   const min = Math.min(...data)
   const max = Math.max(...data)
-  const range = max - min || 1
-  const stepX = width / (data.length - 1 || 1)
+  const span = max - min || 1
 
-  const points = data.map((v, i) => {
-    const x = i * stepX
-    const y = height - ((v - min) / range) * (height - 2) - 1
-    return `${x.toFixed(1)},${y.toFixed(1)}`
-  })
+  // px/py replican el prototipo: margen 2px izq, 3px vert, punto final a -8px del borde
+  const px = (i: number) => 2 + (i / (data.length - 1 || 1)) * (width - 8)
+  const py = (v: number) => height - 3 - ((v - min) / span) * (height - 6)
+
+  const d = data
+    .map((v, i) => `${i ? 'L' : 'M'}${px(i).toFixed(1)},${py(v).toFixed(1)}`)
+    .join(' ')
 
   const lastIdx = data.length - 1
-  const lastX = lastIdx * stepX
-  const lastY = height - ((data[lastIdx] - min) / range) * (height - 2) - 1
+  const lastX = px(lastIdx)
+  const lastY = py(data[lastIdx])
 
-  // Auto color: comparar último vs penúltimo
-  let strokeColor = color || 'var(--accent)'
+  let strokeColor = color || 'var(--fg-3)'
   if (autoColor && data.length >= 2) {
     const last = data[lastIdx]
     const prev = data[lastIdx - 1]
     if (last > prev) strokeColor = 'var(--success)'
     else if (last < prev) strokeColor = 'var(--danger)'
-    else strokeColor = 'var(--fg-faint)'
+    else strokeColor = 'var(--fg-3)'
   }
 
   return (
     <svg
       width={width}
       height={height}
-      viewBox={`0 0 ${width} ${height}`}
-      className="kpi-spark"
-      style={{ overflow: 'visible' }}
+      style={{ display: 'block', overflow: 'visible' }}
       aria-hidden
     >
-      <polyline
-        points={points.join(' ')}
+      <path
+        d={d}
         fill="none"
         stroke={strokeColor}
-        strokeWidth={1.5}
+        strokeWidth={1.8}
         strokeLinecap="round"
         strokeLinejoin="round"
+        opacity={0.8}
       />
-      {showLast && (
-        <circle cx={lastX} cy={lastY} r={2.5} fill={strokeColor} />
-      )}
+      {showLast && <circle cx={lastX} cy={lastY} r={2.6} fill={strokeColor} />}
     </svg>
   )
 }

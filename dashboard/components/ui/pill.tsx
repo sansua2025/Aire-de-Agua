@@ -9,6 +9,7 @@ interface PillProps {
   className?: string
 }
 
+/** Pill v2 — radius 999, sans, sentence-case. Alineada a la clase .pill del design system. */
 export function Pill({ children, kind = 'muted', dot = false, className = '' }: PillProps) {
   return (
     <span className={`pill ${kind}${className ? ' ' + className : ''}`}>
