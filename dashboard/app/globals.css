@@ -570,7 +570,7 @@ body {
 .callout .co-title { font-weight: 650; margin-bottom: 2px; }
 
 /* ---------- Charts ---------- */
-.chart-svg { display: block; width: 100%; overflow: visible; }
+.chart-svg { display: block; width: 100%; overflow: hidden; }
 .chart-svg text { font-family: inherit; font-size: 11px; fill: var(--fg-3); font-variant-numeric: tabular-nums; }
 .chart-svg .gline, .grid-line { stroke: var(--chart-grid); stroke-width: 1; }
 .chart-svg .refline { stroke: var(--fg-3); stroke-width: 1; stroke-dasharray: 4 4; opacity: 0.6; }

@@ -30,9 +30,12 @@ export function Sparkline({
   const max = Math.max(...data)
   const span = max - min || 1
 
-  // px/py replican el prototipo: margen 2px izq, 3px vert, punto final a -8px del borde
-  const px = (i: number) => 2 + (i / (data.length - 1 || 1)) * (width - 8)
-  const py = (v: number) => height - 3 - ((v - min) / span) * (height - 6)
+  // Márgenes internos: el trazo (1.8px) y el círculo final (r=2.6) deben caber dentro
+  // de la caja width×height. margen vertical 3.5px ≥ r del punto → nada se sale.
+  // margen horizontal: 3px izq + headroom dcha (width-9) para que el círculo final
+  // (en x = 3 + width-9 = width-6) + su radio (2.6) no toque el borde derecho.
+  const px = (i: number) => 3 + (i / (data.length - 1 || 1)) * (width - 9)
+  const py = (v: number) => height - 3.5 - ((v - min) / span) * (height - 7)
 
   const d = data
     .map((v, i) => `${i ? 'L' : 'M'}${px(i).toFixed(1)},${py(v).toFixed(1)}`)
@@ -55,7 +58,7 @@ export function Sparkline({
     <svg
       width={width}
       height={height}
-      style={{ display: 'block', overflow: 'visible' }}
+      style={{ display: 'block', overflow: 'hidden' }}
       aria-hidden
     >
       <path

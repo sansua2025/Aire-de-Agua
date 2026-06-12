@@ -48,10 +48,14 @@ export function LineChart<T extends object>({
   const min = Math.min(...values, refV ?? Infinity) * 0.85
   const range = max - min || 1
 
-  const padTop = 16
+  // padTop reserva headroom para el label del último valor (~18px) + el radio del
+  // punto destacado, de modo que ni el punto ni su label desborden el borde superior.
+  const padTop = 22
   const padBottom = 12
-  const padLeft = 4
-  const padRight = 4
+  // padLeft/padRight dejan inset horizontal: el punto final (r≈4px) y su borde no
+  // tocan el borde derecho del SVG, y el primer punto no toca el izquierdo.
+  const padLeft = 5
+  const padRight = 5
   const axisHeight = 18
 
   const svgHeight = height - axisHeight
@@ -79,8 +83,13 @@ export function LineChart<T extends object>({
   const lastIdx = values.length - 1
   const lastValue = values[lastIdx]
 
+  // Clamp para que el label del último valor no se salga por arriba del SVG.
+  // El label se dibuja a (yPct% - 18px); el headroom de padTop garantiza margen,
+  // pero si el último valor es el máximo cerca del tope, fijamos un mínimo seguro.
+  const lastLabelTopPx = Math.max((yPctFor(lastValue) / 100) * svgHeight - 18, 2)
+
   return (
-    <div style={{ position: 'relative' }}>
+    <div style={{ position: 'relative', overflow: 'hidden' }}>
       {/* SVG: solo shapes (paths, lines, areas) que no se distorsionan visualmente */}
       <svg
         viewBox={`0 0 100 ${svgHeight}`}
@@ -196,14 +205,16 @@ export function LineChart<T extends object>({
         <div
           style={{
             position: 'absolute',
-            left: `${xPctFor(lastIdx)}%`,
-            top: `calc(${yPctFor(lastValue)}% - 18px)`,
-            transform: 'translateX(-50%)',
+            // Anclado al borde derecho del área útil y creciendo hacia la izquierda,
+            // para que el label del último valor nunca se corte con overflow:hidden.
+            right: `${padRight}%`,
+            top: lastLabelTopPx,
             fontSize: 11,
             fontWeight: 600,
             color: accentColor,
             fontFamily: 'var(--font-mono-stack)',
             whiteSpace: 'nowrap',
+            textAlign: 'right',
           }}
         >
           {valueFmt(lastValue)}
