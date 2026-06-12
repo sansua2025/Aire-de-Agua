@@ -25,7 +25,7 @@ FAILS=0; WARNS=0
 fail() { echo "FAIL  $1"; FAILS=$((FAILS+1)); }
 warn() { echo "WARN  $1"; WARNS=$((WARNS+1)); }
 
-for f in "${FILES[@]}"; do
+for f in ${FILES[@]+"${FILES[@]}"}; do
   [ -f "$f" ] || continue
   case "$f" in *.sql|*.ts|*.tsx) ;; *) continue ;; esac
   # saltar tipos generados de Supabase: contienen nombres de columna
