@@ -1,13 +1,5 @@
 {
-  "id": "fcNTDNNiYXqpxwlF",
   "name": "E2 - Backfill Historico Shopify",
-  "active": false,
-  "description": "Carga historica de productos, variantes, ordenes, clientes y line items desde Shopify a Supabase. La atribucion UTM se maneja desde E5A via shopify_customer_journeys.",
-  "settings": {
-    "executionOrder": "v1",
-    "availableInMCP": true,
-    "binaryMode": "separate"
-  },
   "nodes": [
     {
       "parameters": {},
@@ -15,7 +7,10 @@
       "name": "When clicking Test workflow",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
-      "position": [0, 304]
+      "position": [
+        0,
+        304
+      ]
     },
     {
       "parameters": {
@@ -23,7 +18,11 @@
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "shopifyAccessTokenApi",
         "options": {
-          "response": { "response": { "neverError": true } },
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
           "pagination": {
             "pagination": {
               "paginationMode": "responseContainsNextURL",
@@ -39,18 +38,29 @@
       "name": "Fetch All Products",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [272, 304],
-      "credentials": { "shopifyAccessTokenApi": { "id": "PLACEHOLDER", "name": "Shopify AdeA" } }
+      "position": [
+        272,
+        304
+      ],
+      "credentials": {
+        "shopifyAccessTokenApi": {
+          "id": "rrxe9HTxfm6k99Vw",
+          "name": "Shopify Access Token account"
+        }
+      }
     },
     {
       "parameters": {
-        "jsCode": "const allItems = $input.all();\nconst sanitize = (str) => str ? str.replace(/[\\x00-\\x1F]/g, \"\").substring(0, 5000) : null;\n// AIR-78: mapear talla/color por nombre de option (Shopify REST: product.options = [{name, position, values}]).\n// Fallback posicional (talla=option1, color=option2) si options vacio o nombres desconocidos.\nconst optionKeys = (prod) => {\n  const opts = Array.isArray(prod.options) ? prod.options : [];\n  const findPos = (pred) => {\n    const o = opts.find(o => o && typeof o.name === \"string\" && pred(o.name.toLowerCase().trim()));\n    return o ? o.position : null;\n  };\n  const tallaPos = findPos(n => n === \"talla\" || n === \"size\");\n  const colorPos = findPos(n => n === \"color\");\n  return { tallaKey: \"option\" + (tallaPos || 1), colorKey: \"option\" + (colorPos || 2) };\n};\nconst products = [];\nfor (const item of allItems) {\n  for (const p of (item.json.products || [])) {\n    const { tallaKey, colorKey } = optionKeys(p);\n    products.push({\n      shopify_product_id: String(p.id), handle: p.handle,\n      titulo: sanitize(p.title), descripcion: sanitize(p.body_html),\n      tipo: sanitize(p.product_type) || null, tags: sanitize(p.tags),\n      estado: p.status, shopify_created_at: p.created_at, shopify_updated_at: p.updated_at,\n      variants: (p.variants || []).map(v => ({\n        shopify_variant_id: String(v.id),\n        shopify_inventory_item_id: v.inventory_item_id ? String(v.inventory_item_id) : null,\n        sku: v.sku || null, titulo: sanitize(v.title),\n        talla: v[tallaKey] || null, color: v[colorKey] || null,\n        precio: String(parseFloat(v.price) || 0),\n        precio_comparacion: v.compare_at_price ? String(parseFloat(v.compare_at_price)) : null,\n        peso_gramos: v.grams ? String(v.grams) : null,\n        codigo_barras: v.barcode || null, shopify_updated_at: v.updated_at\n      }))\n    });\n  }\n}\nreturn [{ json: { products_data: products } }];"
+        "jsCode": "const allItems = $input.all();\nconst sanitize = (str) => str ? str.replace(/[\\x00-\\x1F]/g, \"\").substring(0, 5000) : null;\nconst products = [];\nfor (const item of allItems) {\n  for (const p of (item.json.products || [])) {\n    products.push({\n      shopify_product_id: String(p.id), handle: p.handle,\n      titulo: sanitize(p.title), descripcion: sanitize(p.body_html),\n      tipo: sanitize(p.product_type) || null, tags: sanitize(p.tags),\n      estado: p.status, shopify_created_at: p.created_at, shopify_updated_at: p.updated_at,\n      variants: (p.variants || []).map(v => ({\n        shopify_variant_id: String(v.id),\n        shopify_inventory_item_id: v.inventory_item_id ? String(v.inventory_item_id) : null,\n        sku: v.sku || null, titulo: sanitize(v.title),\n        talla: v.option1 || null, color: v.option2 || null,\n        precio: String(parseFloat(v.price) || 0),\n        precio_comparacion: v.compare_at_price ? String(parseFloat(v.compare_at_price)) : null,\n        peso_gramos: v.grams ? String(v.grams) : null,\n        codigo_barras: v.barcode || null, shopify_updated_at: v.updated_at\n      }))\n    });\n  }\n}\nreturn [{ json: { products_data: products } }];"
       },
       "id": "00b40a46-d8e1-4122-8d71-77228a35e6ae",
       "name": "Prepare Products JSON",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [528, 304]
+      "position": [
+        528,
+        304
+      ]
     },
     {
       "parameters": {
@@ -59,7 +69,14 @@
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }] },
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ products_data: $json.products_data }) }}",
@@ -69,33 +86,59 @@
       "name": "Call backfill_products RPC",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [784, 304],
-      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+      "position": [
+        784,
+        304
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "R1gvcFqRbgctuPP5",
+          "name": "Header Auth Supabase"
+        }
+      }
     },
     {
       "parameters": {
         "url": "https://749941.myshopify.com/admin/api/2024-01/orders.json?limit=25&status=any&created_at_min=2023-09-01T00:00:00-05:00",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "shopifyAccessTokenApi",
-        "options": { "response": { "response": { "fullResponse": true, "neverError": true } } }
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
       },
-      "executeOnce": true,
       "id": "797c9349-7d71-4d7e-b1ba-b5813e094a29",
       "name": "Fetch First Order Page",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [1040, 304],
-      "credentials": { "shopifyAccessTokenApi": { "id": "PLACEHOLDER", "name": "Shopify AdeA" } }
+      "position": [
+        1040,
+        304
+      ],
+      "executeOnce": true,
+      "credentials": {
+        "shopifyAccessTokenApi": {
+          "id": "rrxe9HTxfm6k99Vw",
+          "name": "Shopify Access Token account"
+        }
+      }
     },
     {
       "parameters": {
-        "jsCode": "const response = $input.first().json;\nconst orders = response.body?.orders || [];\nconst linkHeader = response.headers?.link || \"\";\nconst nextMatch = linkHeader.match(/<([^>]+)>;\\s*rel=\"next\"/);\nconst nextUrl = nextMatch ? nextMatch[1] : \"\";\nreturn [{ json: { orders_data: orders, count: orders.length, next_url: nextUrl, has_more: nextUrl !== \"\" } }];"
+        "jsCode": "const response = $input.first().json;\nconst orders = response.body?.orders || [];\nconst linkHeader = response.headers?.link || \"\";\nconst nextMatch = linkHeader.match(/<([^>]+)>;\\s*rel=\"next\"/);\nconst nextUrl = nextMatch ? nextMatch[1] : \"\";\n// La atribucion UTM se maneja desde E5A (shopify_customer_journeys), no aqui\nreturn [{ json: { orders_data: orders, count: orders.length, next_url: nextUrl, has_more: nextUrl !== \"\" } }];"
       },
       "id": "740f88f6-a546-4918-89f6-dc032e290330",
       "name": "Extract Orders and Next URL",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1312, 304]
+      "position": [
+        1312,
+        304
+      ]
     },
     {
       "parameters": {
@@ -104,7 +147,14 @@
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }] },
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ orders_data: $(\"Extract Orders and Next URL\").item.json.orders_data }) }}",
@@ -114,15 +164,39 @@
       "name": "Upsert Order Batch RPC",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [1568, 304],
-      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+      "position": [
+        1568,
+        304
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "R1gvcFqRbgctuPP5",
+          "name": "Header Auth Supabase"
+        }
+      }
     },
     {
       "parameters": {
         "conditions": {
-          "options": { "caseSensitive": true, "leftValue": "", "version": 2, "typeValidation": "strict" },
-          "combinator": "and",
-          "conditions": [{ "id": "cond-1", "leftValue": "={{ $(\"Extract Orders and Next URL\").item.json.has_more }}", "rightValue": "true", "operator": { "type": "string", "operation": "equals" } }]
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-1",
+              "leftValue": "={{ $(\"Extract Orders and Next URL\").item.json.has_more }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
         },
         "options": {}
       },
@@ -130,29 +204,52 @@
       "name": "More Pages",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1824, 304]
+      "position": [
+        1824,
+        304
+      ]
     },
     {
-      "parameters": { "jsCode": "await new Promise(r => setTimeout(r, 1000));\nreturn $input.all();" },
+      "parameters": {
+        "jsCode": "await new Promise(r => setTimeout(r, 1000));\nreturn $input.all();"
+      },
       "id": "5baef8f7-621e-4676-98b9-c7ad42892feb",
       "name": "Wait 1s",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2080, 112]
+      "position": [
+        2080,
+        112
+      ]
     },
     {
       "parameters": {
         "url": "={{ $(\"Extract Orders and Next URL\").item.json.next_url }}",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "shopifyAccessTokenApi",
-        "options": { "response": { "response": { "fullResponse": true, "neverError": true } } }
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
       },
       "id": "948722c0-ef88-447e-9b62-c48ec1aeda05",
       "name": "Fetch Next Order Page",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [2080, 208],
-      "credentials": { "shopifyAccessTokenApi": { "id": "PLACEHOLDER", "name": "Shopify AdeA" } }
+      "position": [
+        2080,
+        208
+      ],
+      "credentials": {
+        "shopifyAccessTokenApi": {
+          "id": "44DIND6qYi0XOLGH",
+          "name": "Shopify Access Token Claude MCP"
+        }
+      }
     },
     {
       "parameters": {
@@ -161,7 +258,18 @@
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "Prefer", "value": "return=minimal" }] },
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ evento: \"backfill_orders_complete\", entidad: \"ventas\", estado: \"ok\" }) }}",
@@ -171,22 +279,150 @@
       "name": "Log Orders Complete",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [2080, 400],
-      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+      "position": [
+        2080,
+        400
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "R1gvcFqRbgctuPP5",
+          "name": "Header Auth Supabase"
+        }
+      }
     }
   ],
+  "pinData": {},
   "connections": {
-    "When clicking Test workflow": { "main": [[{ "node": "Fetch All Products", "type": "main", "index": 0 }]] },
-    "Fetch All Products": { "main": [[{ "node": "Prepare Products JSON", "type": "main", "index": 0 }]] },
-    "Prepare Products JSON": { "main": [[{ "node": "Call backfill_products RPC", "type": "main", "index": 0 }]] },
-    "Call backfill_products RPC": { "main": [[{ "node": "Fetch First Order Page", "type": "main", "index": 0 }]] },
-    "Fetch First Order Page": { "main": [[{ "node": "Extract Orders and Next URL", "type": "main", "index": 0 }]] },
-    "Extract Orders and Next URL": { "main": [[{ "node": "Upsert Order Batch RPC", "type": "main", "index": 0 }]] },
-    "Upsert Order Batch RPC": { "main": [[{ "node": "More Pages", "type": "main", "index": 0 }]] },
-    "More Pages": { "main": [[{ "node": "Wait 1s", "type": "main", "index": 0 }], [{ "node": "Log Orders Complete", "type": "main", "index": 0 }]] },
-    "Wait 1s": { "main": [[{ "node": "Fetch Next Order Page", "type": "main", "index": 0 }]] },
-    "Fetch Next Order Page": { "main": [[{ "node": "Extract Orders and Next URL", "type": "main", "index": 0 }]] }
+    "When clicking Test workflow": {
+      "main": [
+        [
+          {
+            "node": "Fetch All Products",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch All Products": {
+      "main": [
+        [
+          {
+            "node": "Prepare Products JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Products JSON": {
+      "main": [
+        [
+          {
+            "node": "Call backfill_products RPC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call backfill_products RPC": {
+      "main": [
+        [
+          {
+            "node": "Fetch First Order Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch First Order Page": {
+      "main": [
+        [
+          {
+            "node": "Extract Orders and Next URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Orders and Next URL": {
+      "main": [
+        [
+          {
+            "node": "Upsert Order Batch RPC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Order Batch RPC": {
+      "main": [
+        [
+          {
+            "node": "More Pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "More Pages": {
+      "main": [
+        [
+          {
+            "node": "Wait 1s",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Orders Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 1s": {
+      "main": [
+        [
+          {
+            "node": "Fetch Next Order Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Next Order Page": {
+      "main": [
+        [
+          {
+            "node": "Extract Orders and Next URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
-  "tags": [],
-  "meta": { "aiBuilderAssisted": true }
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true
+  },
+  "versionId": "a935f798-a1c7-4753-befe-732a58d97c52",
+  "meta": {
+    "aiBuilderAssisted": true,
+    "instanceId": "03f01987a4b9b23db260988f039c886a1fbeb123946848991d417c74eab693d1"
+  },
+  "nodeGroups": [],
+  "id": "fcNTDNNiYXqpxwlF",
+  "tags": []
 }
