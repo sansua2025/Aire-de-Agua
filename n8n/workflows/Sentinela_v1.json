@@ -54,7 +54,7 @@
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "{\"query\":\"query Sentinela($teamId: String!) { issueLabels(filter: { name: { eq: \\\"agent-ready\\\" }, team: { id: { eq: $teamId } } }, first: 1) { nodes { id name } } issues(filter: { team: { id: { eq: $teamId } }, state: { type: { nin: [\\\"completed\\\", \\\"canceled\\\"] } } }, first: 250) { nodes { id identifier title } } }\",\"variables\":{\"teamId\":\"5d10e240-7669-454b-b0d6-a90370c01db2\"}}",
+        "jsonBody": "={{ JSON.stringify({ query: \"query Sentinela($teamId: String!) { issueLabels(filter: { name: { eq: \\\"agent-ready\\\" }, team: { id: { eq: $teamId } } }, first: 1) { nodes { id name } } issues(filter: { team: { id: { eq: $teamId } }, state: { type: { nin: [\\\"completed\\\", \\\"canceled\\\"] } } }, first: 250) { nodes { id identifier title } } }\", variables: { teamId: \"5d10e240-7669-454b-b0d6-a90370c01db2\" } }) }}",
         "options": {}
       },
       "credentials": {
@@ -294,7 +294,8 @@
               "rightValue": "",
               "operator": {
                 "type": "string",
-                "operation": "notEmpty"
+                "operation": "notEmpty",
+                "singleValue": true
               }
             }
           ],
