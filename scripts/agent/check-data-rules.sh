@@ -28,6 +28,9 @@ warn() { echo "WARN  $1"; WARNS=$((WARNS+1)); }
 for f in "${FILES[@]}"; do
   [ -f "$f" ] || continue
   case "$f" in *.sql|*.ts|*.tsx) ;; *) continue ;; esac
+  # saltar tipos generados de Supabase: contienen nombres de columna
+  # (valor_compras, ordered_at...) en definiciones de tipo, no en queries.
+  case "$f" in */types/database.ts|*/database.types.ts) continue ;; esac
 
   # R1 — valor_compras es revenue de Meta (0 por bug de pixel)
   grep -qiE 'valor_compras' "$f" \
