@@ -92,7 +92,7 @@
             },
             {
               "name": "includeData",
-              "value": "false"
+              "value": "true"
             }
           ]
         },
