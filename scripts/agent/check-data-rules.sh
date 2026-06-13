@@ -53,6 +53,16 @@ for f in ${FILES[@]+"${FILES[@]}"}; do
         warn "$f — migración sin reversa documentada. Incluye el rollback o documéntalo."
       fi ;;
   esac
+
+  # R5 — RPCs nuevos deben denegar acceso a anon (patrón AIR-61/AIR-69/AIR-91, ≥2 detecciones)
+  # Si la migración define una función nueva, exigir REVOKE EXECUTE ... FROM anon (o PUBLIC).
+  case "$f" in
+    supabase/migrations/*.sql)
+      if grep -qiE 'CREATE (OR REPLACE )?FUNCTION' "$f" && \
+         ! grep -qiE 'REVOKE EXECUTE' "$f"; then
+        warn "$f — RPC nuevo sin 'REVOKE EXECUTE ... FROM anon'. Añade REVOKE para evitar exposición vía PostgREST."
+      fi ;;
+  esac
 done
 
 echo "---"
