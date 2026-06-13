@@ -5,6 +5,7 @@
   "description": "E5-D · Cron diario 8am COT (0 13 * * * UTC). GET candidatos pending close → loop close_insight_loop por insight → email resumen + log. Si no hay candidatos, log silencioso sin email.",
   "settings": {
     "executionOrder": "v1",
+    "errorWorkflow": "ErrorHandlerGlobal01",
     "availableInMCP": true
   },
   "nodes": [
@@ -23,10 +24,7 @@
       "name": "Cron Daily 8am COT",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.3,
-      "position": [
-        128,
-        368
-      ]
+      "position": [128, 368]
     },
     {
       "parameters": {
@@ -52,10 +50,7 @@
       "name": "GET pending close",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [
-        352,
-        368
-      ],
+      "position": [352, 368],
       "credentials": {
         "httpHeaderAuth": {
           "id": "PLACEHOLDER",
@@ -90,10 +85,7 @@
       "name": "Any candidates?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
-      "position": [
-        560,
-        368
-      ]
+      "position": [560, 368]
     },
     {
       "parameters": {
@@ -119,10 +111,7 @@
       "name": "RPC close_insight_loop",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [
-        784,
-        208
-      ],
+      "position": [784, 208],
       "credentials": {
         "httpHeaderAuth": {
           "id": "PLACEHOLDER",
@@ -138,10 +127,7 @@
       "name": "Render Closure Email",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        1008,
-        208
-      ]
+      "position": [1008, 208]
     },
     {
       "parameters": {
@@ -157,10 +143,7 @@
       "name": "Send Closure Email",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.2,
-      "position": [
-        1232,
-        208
-      ],
+      "position": [1232, 208],
       "webhookId": "075b3319-62e0-498b-baf4-b3f1adc4bae5",
       "credentials": {
         "gmailOAuth2": {
@@ -197,10 +180,7 @@
       "name": "INSERT log (closures)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [
-        1440,
-        208
-      ],
+      "position": [1440, 208],
       "credentials": {
         "httpHeaderAuth": {
           "id": "PLACEHOLDER",
@@ -236,10 +216,7 @@
       "name": "INSERT log (no candidates)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [
-        784,
-        544
-      ],
+      "position": [784, 544],
       "credentials": {
         "httpHeaderAuth": {
           "id": "PLACEHOLDER",

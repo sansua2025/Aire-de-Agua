@@ -5,6 +5,7 @@
   "description": "E5-F · Cron mensual día 1 a las 9am COT (0 14 1 * * UTC). Llama analytics_decay_stale_insights para archivar insights sin reconfirmar en >56d. Log a ai_analysis_log.",
   "settings": {
     "executionOrder": "v1",
+    "errorWorkflow": "ErrorHandlerGlobal01",
     "availableInMCP": true
   },
   "nodes": [
@@ -23,10 +24,7 @@
       "name": "Cron 1st of month 9am COT",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.3,
-      "position": [
-        128,
-        368
-      ]
+      "position": [128, 368]
     },
     {
       "parameters": {
@@ -52,10 +50,7 @@
       "name": "RPC decay_stale_insights",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [
-        352,
-        368
-      ],
+      "position": [352, 368],
       "credentials": {
         "httpHeaderAuth": {
           "id": "PLACEHOLDER",
@@ -91,10 +86,7 @@
       "name": "INSERT log decay",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [
-        560,
-        368
-      ],
+      "position": [560, 368],
       "credentials": {
         "httpHeaderAuth": {
           "id": "PLACEHOLDER",

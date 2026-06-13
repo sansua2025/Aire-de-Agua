@@ -5,6 +5,7 @@
   "description": "E5-F · Cron diario 9am COT (0 14 * * * UTC). GET v_loop_system_health → si dias_desde_weekly>8 manda alerta por email. Siempre log a ai_analysis_log.",
   "settings": {
     "executionOrder": "v1",
+    "errorWorkflow": "ErrorHandlerGlobal01",
     "availableInMCP": true
   },
   "nodes": [
@@ -23,10 +24,7 @@
       "name": "Cron Daily 9am COT",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.3,
-      "position": [
-        128,
-        368
-      ]
+      "position": [128, 368]
     },
     {
       "parameters": {
@@ -48,10 +46,7 @@
       "name": "GET system_health",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [
-        352,
-        368
-      ],
+      "position": [352, 368],
       "credentials": {
         "httpHeaderAuth": {
           "id": "PLACEHOLDER",
@@ -86,10 +81,7 @@
       "name": "Loop weekly stale (>8d)?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
-      "position": [
-        560,
-        368
-      ]
+      "position": [560, 368]
     },
     {
       "parameters": {
@@ -99,10 +91,7 @@
       "name": "Render Alert Email",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        784,
-        208
-      ]
+      "position": [784, 208]
     },
     {
       "parameters": {
@@ -118,10 +107,7 @@
       "name": "Send Alert Email",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.2,
-      "position": [
-        1008,
-        208
-      ],
+      "position": [1008, 208],
       "webhookId": "587a1f41-8ca8-4bcb-9b0b-56afb4e97556",
       "credentials": {
         "gmailOAuth2": {
@@ -158,10 +144,7 @@
       "name": "INSERT log health_check",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [
-        1232,
-        368
-      ],
+      "position": [1232, 368],
       "credentials": {
         "httpHeaderAuth": {
           "id": "PLACEHOLDER",

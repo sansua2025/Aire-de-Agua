@@ -7,10 +7,7 @@
       "name": "When clicking Test workflow",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
-      "position": [
-        0,
-        304
-      ]
+      "position": [0, 304]
     },
     {
       "parameters": {
@@ -18,11 +15,6 @@
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "shopifyAccessTokenApi",
         "options": {
-          "response": {
-            "response": {
-              "neverError": true
-            }
-          },
           "pagination": {
             "pagination": {
               "paginationMode": "responseContainsNextURL",
@@ -38,10 +30,7 @@
       "name": "Fetch All Products",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [
-        272,
-        304
-      ],
+      "position": [272, 304],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 2000,
@@ -60,10 +49,7 @@
       "name": "Prepare Products JSON",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        528,
-        304
-      ],
+      "position": [528, 304],
       "onError": "stopWorkflow"
     },
     {
@@ -90,10 +76,7 @@
       "name": "Call backfill_products RPC",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [
-        784,
-        304
-      ],
+      "position": [784, 304],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 2000,
@@ -112,8 +95,7 @@
         "options": {
           "response": {
             "response": {
-              "fullResponse": true,
-              "neverError": true
+              "fullResponse": true
             }
           }
         }
@@ -122,10 +104,7 @@
       "name": "Fetch First Order Page",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [
-        1040,
-        304
-      ],
+      "position": [1040, 304],
       "executeOnce": true,
       "retryOnFail": true,
       "maxTries": 3,
@@ -146,10 +125,7 @@
       "name": "Extract Orders and Next URL",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        1312,
-        304
-      ],
+      "position": [1312, 304],
       "onError": "stopWorkflow"
     },
     {
@@ -176,10 +152,7 @@
       "name": "Upsert Order Batch RPC",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [
-        1568,
-        304
-      ],
+      "position": [1568, 304],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 2000,
@@ -220,10 +193,7 @@
       "name": "More Pages",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [
-        1824,
-        304
-      ]
+      "position": [1824, 304]
     },
     {
       "parameters": {
@@ -233,10 +203,7 @@
       "name": "Wait 1s",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        2080,
-        112
-      ]
+      "position": [2080, 112]
     },
     {
       "parameters": {
@@ -246,8 +213,7 @@
         "options": {
           "response": {
             "response": {
-              "fullResponse": true,
-              "neverError": true
+              "fullResponse": true
             }
           }
         }
@@ -256,10 +222,7 @@
       "name": "Fetch Next Order Page",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [
-        2080,
-        208
-      ],
+      "position": [2080, 208],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 2000,
@@ -299,10 +262,7 @@
       "name": "Log Orders Complete",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [
-        2080,
-        400
-      ],
+      "position": [2080, 400],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 2000,
