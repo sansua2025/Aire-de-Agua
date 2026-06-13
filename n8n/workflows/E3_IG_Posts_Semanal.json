@@ -18,11 +18,22 @@
       "typeVersion": 4.5,
       "position": [0, 0],
       "parameters": {
-        "documentId": { "__rl": true, "mode": "id", "value": "1iTRUildmV6RCdvzQwWqtMNBvsVZ7-zpxACWav5wiy74" },
-        "sheetName": { "__rl": true, "mode": "name", "value": "Post Performance" },
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1iTRUildmV6RCdvzQwWqtMNBvsVZ7-zpxACWav5wiy74"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Post Performance"
+        },
         "options": {
           "outputFormatting": {
-            "values": { "general": "FORMATTED_VALUE", "date": "FORMATTED_STRING" }
+            "values": {
+              "general": "FORMATTED_VALUE",
+              "date": "FORMATTED_STRING"
+            }
           }
         }
       }
@@ -46,11 +57,18 @@
       "typeVersion": 4.5,
       "position": [0, 208],
       "parameters": {
-        "documentId": { "__rl": true, "mode": "id", "value": "1iTRUildmV6RCdvzQwWqtMNBvsVZ7-zpxACWav5wiy74" },
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1iTRUildmV6RCdvzQwWqtMNBvsVZ7-zpxACWav5wiy74"
+        },
         "sheetName": { "__rl": true, "mode": "name", "value": "Reels" },
         "options": {
           "outputFormatting": {
-            "values": { "general": "FORMATTED_VALUE", "date": "FORMATTED_STRING" }
+            "values": {
+              "general": "FORMATTED_VALUE",
+              "date": "FORMATTED_STRING"
+            }
           }
         }
       }
@@ -99,13 +117,18 @@
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendQuery": true,
-        "queryParameters": { "parameters": [{ "name": "on_conflict", "value": "upsert_key" }] },
+        "queryParameters": {
+          "parameters": [{ "name": "on_conflict", "value": "upsert_key" }]
+        },
         "sendHeaders": true,
         "specifyHeaders": "keypair",
         "headerParameters": {
           "parameters": [
             { "name": "Content-Type", "value": "application/json" },
-            { "name": "Prefer", "value": "resolution=merge-duplicates,return=minimal" }
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates,return=minimal"
+            }
           ]
         },
         "sendBody": true,
@@ -118,10 +141,12 @@
   ],
   "connections": {
     "Domingo 10pm COT": {
-      "main": [[
-        { "node": "Leer Posts Feed", "type": "main", "index": 0 },
-        { "node": "Leer Reels", "type": "main", "index": 0 }
-      ]]
+      "main": [
+        [
+          { "node": "Leer Posts Feed", "type": "main", "index": 0 },
+          { "node": "Leer Reels", "type": "main", "index": 0 }
+        ]
+      ]
     },
     "Leer Posts Feed": {
       "main": [[{ "node": "Transformar Posts", "type": "main", "index": 0 }]]
@@ -143,6 +168,7 @@
     }
   },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "errorWorkflow": "ErrorHandlerGlobal01"
   }
 }

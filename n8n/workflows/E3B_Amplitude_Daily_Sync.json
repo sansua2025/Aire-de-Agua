@@ -4,9 +4,7 @@
     {
       "parameters": {
         "rule": {
-          "interval": [
-            { "field": "cronExpression", "expression": "0 7 * * *" }
-          ]
+          "interval": [{ "field": "cronExpression", "expression": "0 7 * * *" }]
         }
       },
       "id": "a1b2c3d4-1001-4aaa-b001-000000000001",
@@ -21,11 +19,36 @@
         "duplicateItem": false,
         "assignments": {
           "assignments": [
-            { "id": "a1", "name": "yesterday", "value": "={{ $now.minus(1, \"day\").toFormat(\"yyyyMMdd\") }}", "type": "string" },
-            { "id": "a2", "name": "yesterdayISO", "value": "={{ $now.minus(1, \"day\").toFormat(\"yyyy-MM-dd\") }}", "type": "string" },
-            { "id": "a3", "name": "weekStart", "value": "={{ $now.minus(1, \"day\").startOf(\"week\").toFormat(\"yyyy-MM-dd\") }}", "type": "string" },
-            { "id": "a4", "name": "weekStartAmp", "value": "={{ $now.minus(1, \"day\").startOf(\"week\").toFormat(\"yyyyMMdd\") }}", "type": "string" },
-            { "id": "a5", "name": "isMonday", "value": "={{ $now.weekday === 1 }}", "type": "boolean" }
+            {
+              "id": "a1",
+              "name": "yesterday",
+              "value": "={{ $now.minus(1, \"day\").toFormat(\"yyyyMMdd\") }}",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "yesterdayISO",
+              "value": "={{ $now.minus(1, \"day\").toFormat(\"yyyy-MM-dd\") }}",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "weekStart",
+              "value": "={{ $now.minus(1, \"day\").startOf(\"week\").toFormat(\"yyyy-MM-dd\") }}",
+              "type": "string"
+            },
+            {
+              "id": "a4",
+              "name": "weekStartAmp",
+              "value": "={{ $now.minus(1, \"day\").startOf(\"week\").toFormat(\"yyyyMMdd\") }}",
+              "type": "string"
+            },
+            {
+              "id": "a5",
+              "name": "isMonday",
+              "value": "={{ $now.weekday === 1 }}",
+              "type": "boolean"
+            }
           ]
         },
         "options": {}
@@ -48,8 +71,14 @@
           "parameters": [
             { "name": "e", "value": "{\"event_type\":\"session_start\"}" },
             { "name": "m", "value": "totals" },
-            { "name": "start", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
-            { "name": "end", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
+            {
+              "name": "start",
+              "value": "={{ $(\"Set Config\").first().json.yesterday }}"
+            },
+            {
+              "name": "end",
+              "value": "={{ $(\"Set Config\").first().json.yesterday }}"
+            },
             { "name": "i", "value": "1" }
           ]
         },
@@ -77,8 +106,14 @@
           "parameters": [
             { "name": "e", "value": "{\"event_type\":\"_active\"}" },
             { "name": "m", "value": "uniques" },
-            { "name": "start", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
-            { "name": "end", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
+            {
+              "name": "start",
+              "value": "={{ $(\"Set Config\").first().json.yesterday }}"
+            },
+            {
+              "name": "end",
+              "value": "={{ $(\"Set Config\").first().json.yesterday }}"
+            },
             { "name": "i", "value": "1" }
           ]
         },
@@ -105,8 +140,14 @@
         "queryParameters": {
           "parameters": [
             { "name": "m", "value": "new" },
-            { "name": "start", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
-            { "name": "end", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
+            {
+              "name": "start",
+              "value": "={{ $(\"Set Config\").first().json.yesterday }}"
+            },
+            {
+              "name": "end",
+              "value": "={{ $(\"Set Config\").first().json.yesterday }}"
+            },
             { "name": "i", "value": "1" }
           ]
         },
@@ -132,10 +173,19 @@
         "specifyQuery": "keypair",
         "queryParameters": {
           "parameters": [
-            { "name": "e", "value": "{\"event_type\":\"[Amplitude] Page Viewed\"}" },
+            {
+              "name": "e",
+              "value": "{\"event_type\":\"[Amplitude] Page Viewed\"}"
+            },
             { "name": "m", "value": "totals" },
-            { "name": "start", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
-            { "name": "end", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
+            {
+              "name": "start",
+              "value": "={{ $(\"Set Config\").first().json.yesterday }}"
+            },
+            {
+              "name": "end",
+              "value": "={{ $(\"Set Config\").first().json.yesterday }}"
+            },
             { "name": "i", "value": "1" }
           ]
         },
@@ -161,10 +211,19 @@
         "specifyQuery": "keypair",
         "queryParameters": {
           "parameters": [
-            { "name": "e", "value": "{\"event_type\":\"[Amplitude] Product Viewed\"}" },
+            {
+              "name": "e",
+              "value": "{\"event_type\":\"[Amplitude] Product Viewed\"}"
+            },
             { "name": "m", "value": "totals" },
-            { "name": "start", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
-            { "name": "end", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
+            {
+              "name": "start",
+              "value": "={{ $(\"Set Config\").first().json.yesterday }}"
+            },
+            {
+              "name": "end",
+              "value": "={{ $(\"Set Config\").first().json.yesterday }}"
+            },
             { "name": "i", "value": "1" }
           ]
         },
@@ -190,10 +249,19 @@
         "specifyQuery": "keypair",
         "queryParameters": {
           "parameters": [
-            { "name": "e", "value": "{\"event_type\":\"[Amplitude] Product Added To Cart\"}" },
+            {
+              "name": "e",
+              "value": "{\"event_type\":\"[Amplitude] Product Added To Cart\"}"
+            },
             { "name": "m", "value": "totals" },
-            { "name": "start", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
-            { "name": "end", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
+            {
+              "name": "start",
+              "value": "={{ $(\"Set Config\").first().json.yesterday }}"
+            },
+            {
+              "name": "end",
+              "value": "={{ $(\"Set Config\").first().json.yesterday }}"
+            },
             { "name": "i", "value": "1" }
           ]
         },
@@ -219,10 +287,19 @@
         "specifyQuery": "keypair",
         "queryParameters": {
           "parameters": [
-            { "name": "e", "value": "{\"event_type\":\"[Amplitude] Checkout Started\"}" },
+            {
+              "name": "e",
+              "value": "{\"event_type\":\"[Amplitude] Checkout Started\"}"
+            },
             { "name": "m", "value": "totals" },
-            { "name": "start", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
-            { "name": "end", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
+            {
+              "name": "start",
+              "value": "={{ $(\"Set Config\").first().json.yesterday }}"
+            },
+            {
+              "name": "end",
+              "value": "={{ $(\"Set Config\").first().json.yesterday }}"
+            },
             { "name": "i", "value": "1" }
           ]
         },
@@ -248,10 +325,19 @@
         "specifyQuery": "keypair",
         "queryParameters": {
           "parameters": [
-            { "name": "e", "value": "{\"event_type\":\"[Amplitude] Order Created\"}" },
+            {
+              "name": "e",
+              "value": "{\"event_type\":\"[Amplitude] Order Created\"}"
+            },
             { "name": "m", "value": "totals" },
-            { "name": "start", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
-            { "name": "end", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
+            {
+              "name": "start",
+              "value": "={{ $(\"Set Config\").first().json.yesterday }}"
+            },
+            {
+              "name": "end",
+              "value": "={{ $(\"Set Config\").first().json.yesterday }}"
+            },
             { "name": "i", "value": "1" }
           ]
         },
@@ -320,7 +406,11 @@
     {
       "parameters": {
         "conditions": {
-          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
           "combinator": "and",
           "conditions": [
             {
@@ -349,10 +439,19 @@
         "specifyQuery": "keypair",
         "queryParameters": {
           "parameters": [
-            { "name": "e", "value": "{\"event_type\":\"[Amplitude] Product Viewed\",\"group_by\":[{\"type\":\"event\",\"value\":\"[Amplitude] Title\"}]}" },
+            {
+              "name": "e",
+              "value": "{\"event_type\":\"[Amplitude] Product Viewed\",\"group_by\":[{\"type\":\"event\",\"value\":\"[Amplitude] Title\"}]}"
+            },
             { "name": "m", "value": "totals" },
-            { "name": "start", "value": "={{ $(\"Set Config\").first().json.weekStartAmp }}" },
-            { "name": "end", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
+            {
+              "name": "start",
+              "value": "={{ $(\"Set Config\").first().json.weekStartAmp }}"
+            },
+            {
+              "name": "end",
+              "value": "={{ $(\"Set Config\").first().json.yesterday }}"
+            },
             { "name": "i", "value": "7" },
             { "name": "limit", "value": "20" }
           ]
@@ -379,10 +478,19 @@
         "specifyQuery": "keypair",
         "queryParameters": {
           "parameters": [
-            { "name": "e", "value": "{\"event_type\":\"[Amplitude] Product Viewed\",\"group_by\":[{\"type\":\"event\",\"value\":\"[Amplitude] Title\"}]}" },
+            {
+              "name": "e",
+              "value": "{\"event_type\":\"[Amplitude] Product Viewed\",\"group_by\":[{\"type\":\"event\",\"value\":\"[Amplitude] Title\"}]}"
+            },
             { "name": "m", "value": "uniques" },
-            { "name": "start", "value": "={{ $(\"Set Config\").first().json.weekStartAmp }}" },
-            { "name": "end", "value": "={{ $(\"Set Config\").first().json.yesterday }}" },
+            {
+              "name": "start",
+              "value": "={{ $(\"Set Config\").first().json.weekStartAmp }}"
+            },
+            {
+              "name": "end",
+              "value": "={{ $(\"Set Config\").first().json.yesterday }}"
+            },
             { "name": "i", "value": "7" },
             { "name": "limit", "value": "20" }
           ]
@@ -498,27 +606,47 @@
       "main": [[{ "node": "Set Config", "type": "main", "index": 0 }]]
     },
     "Set Config": {
-      "main": [[
-        { "node": "Get Sessions", "type": "main", "index": 0 },
-        { "node": "Get Active Users", "type": "main", "index": 0 },
-        { "node": "Get New Users", "type": "main", "index": 0 },
-        { "node": "Get Pageviews", "type": "main", "index": 0 },
-        { "node": "Get Product Views", "type": "main", "index": 0 },
-        { "node": "Get Add to Cart", "type": "main", "index": 0 },
-        { "node": "Get Checkout", "type": "main", "index": 0 },
-        { "node": "Get Orders", "type": "main", "index": 0 }
-      ]]
+      "main": [
+        [
+          { "node": "Get Sessions", "type": "main", "index": 0 },
+          { "node": "Get Active Users", "type": "main", "index": 0 },
+          { "node": "Get New Users", "type": "main", "index": 0 },
+          { "node": "Get Pageviews", "type": "main", "index": 0 },
+          { "node": "Get Product Views", "type": "main", "index": 0 },
+          { "node": "Get Add to Cart", "type": "main", "index": 0 },
+          { "node": "Get Checkout", "type": "main", "index": 0 },
+          { "node": "Get Orders", "type": "main", "index": 0 }
+        ]
+      ]
     },
-    "Get Sessions":      { "main": [[{ "node": "Merge", "type": "main", "index": 0 }]] },
-    "Get Active Users":  { "main": [[{ "node": "Merge", "type": "main", "index": 1 }]] },
-    "Get New Users":     { "main": [[{ "node": "Merge", "type": "main", "index": 2 }]] },
-    "Get Pageviews":     { "main": [[{ "node": "Merge", "type": "main", "index": 3 }]] },
-    "Get Product Views": { "main": [[{ "node": "Merge", "type": "main", "index": 4 }]] },
-    "Get Add to Cart":   { "main": [[{ "node": "Merge", "type": "main", "index": 5 }]] },
-    "Get Checkout":      { "main": [[{ "node": "Merge", "type": "main", "index": 6 }]] },
-    "Get Orders":        { "main": [[{ "node": "Merge", "type": "main", "index": 7 }]] },
+    "Get Sessions": {
+      "main": [[{ "node": "Merge", "type": "main", "index": 0 }]]
+    },
+    "Get Active Users": {
+      "main": [[{ "node": "Merge", "type": "main", "index": 1 }]]
+    },
+    "Get New Users": {
+      "main": [[{ "node": "Merge", "type": "main", "index": 2 }]]
+    },
+    "Get Pageviews": {
+      "main": [[{ "node": "Merge", "type": "main", "index": 3 }]]
+    },
+    "Get Product Views": {
+      "main": [[{ "node": "Merge", "type": "main", "index": 4 }]]
+    },
+    "Get Add to Cart": {
+      "main": [[{ "node": "Merge", "type": "main", "index": 5 }]]
+    },
+    "Get Checkout": {
+      "main": [[{ "node": "Merge", "type": "main", "index": 6 }]]
+    },
+    "Get Orders": {
+      "main": [[{ "node": "Merge", "type": "main", "index": 7 }]]
+    },
     "Merge": {
-      "main": [[{ "node": "Transform Daily Metrics", "type": "main", "index": 0 }]]
+      "main": [
+        [{ "node": "Transform Daily Metrics", "type": "main", "index": 0 }]
+      ]
     },
     "Transform Daily Metrics": {
       "main": [[{ "node": "Upsert Daily Metrics", "type": "main", "index": 0 }]]
@@ -536,7 +664,9 @@
       "main": [[{ "node": "Get Top Uniques", "type": "main", "index": 0 }]]
     },
     "Get Top Uniques": {
-      "main": [[{ "node": "Transform Top Content", "type": "main", "index": 0 }]]
+      "main": [
+        [{ "node": "Transform Top Content", "type": "main", "index": 0 }]
+      ]
     },
     "Transform Top Content": {
       "main": [[{ "node": "Upsert Top Content", "type": "main", "index": 0 }]]
@@ -546,6 +676,7 @@
     }
   },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "errorWorkflow": "ErrorHandlerGlobal01"
   }
 }

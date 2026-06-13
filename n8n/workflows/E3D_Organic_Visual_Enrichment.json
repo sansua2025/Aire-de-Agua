@@ -84,7 +84,52 @@
           "timeout": 60000
         }
       },
-      "onError": "continueRegularOutput"
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "e3d-build-error-0001",
+      "name": "Build Vision Error Log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [640, 416],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// AIR-91 - rama de error de Anthropic Vision. Construye un error_mensaje SANEADO para sync_log.\n// sync_log NO tiene JSONB: solo texto en error_mensaje. Columnas reales: evento, entidad, entidad_id, estado, error_mensaje.\n// sanitize endurecida (CLAUDE.md / AIR-94): strip de control chars + TODOS los tags + truncado. Invariante: sin < ni > tras sanear.\nfunction sanitize(s, maxLen) {\n  if (s == null) return '';\n  maxLen = maxLen || 500;\n  const str = String(s).replace(/[\\x00-\\x1F\\x7F]/g, ' ').replace(/<[^>]*>/g, '');\n  return str.length > maxLen ? str.slice(0, maxLen) + '...' : str;\n}\nconst items = $input.all();\nconst sources = $('Build Anthropic Request').all();\nconst out = [];\nfor (let i = 0; i < items.length; i++) {\n  const r = (items[i] && items[i].json) || {};\n  const src = sources[i];\n  const assetId = src && src.json && src.json.asset_id ? src.json.asset_id : null;\n  const err = r.error || r;\n  const rawType = (err && (err.type || err.code)) || 'vision_error';\n  const rawMsg = (err && (err.message || err.description)) || (typeof r === 'string' ? r : '') || 'Anthropic Vision fallo sin mensaje';\n  const errorMensaje = sanitize('E3D Anthropic Vision error | type=' + sanitize(rawType, 80) + ' | msg=' + sanitize(rawMsg, 300), 500);\n  out.push({ json: {\n    evento: 'organic_vision_error',\n    entidad: 'creative_visuals',\n    entidad_id: assetId ? String(assetId) : null,\n    estado: 'error',\n    error_mensaje: errorMensaje\n  }});\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "e3d-log-error-0001",
+      "name": "Log Vision Error to sync_log",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [864, 416],
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ evento: $json.evento, entidad: $json.entidad, entidad_id: $json.entidad_id, estado: $json.estado, error_mensaje: $json.error_mensaje }) }}",
+        "options": {}
+      },
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" }
+      }
     },
     {
       "id": "382364a0-58a6-48ff-934c-cfd8c659c7aa",
@@ -110,13 +155,18 @@
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendQuery": true,
-        "queryParameters": { "parameters": [{ "name": "on_conflict", "value": "asset_id" }] },
+        "queryParameters": {
+          "parameters": [{ "name": "on_conflict", "value": "asset_id" }]
+        },
         "sendHeaders": true,
         "specifyHeaders": "keypair",
         "headerParameters": {
           "parameters": [
             { "name": "Content-Type", "value": "application/json" },
-            { "name": "Prefer", "value": "resolution=merge-duplicates,return=minimal" }
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates,return=minimal"
+            }
           ]
         },
         "sendBody": true,
@@ -129,25 +179,42 @@
   ],
   "connections": {
     "Run Bulk Organic Visuals": {
-      "main": [[{ "node": "Leer Visuals Pendientes", "type": "main", "index": 0 }]]
+      "main": [
+        [{ "node": "Leer Visuals Pendientes", "type": "main", "index": 0 }]
+      ]
     },
     "Domingo 10:30pm COT": {
-      "main": [[{ "node": "Leer Visuals Pendientes", "type": "main", "index": 0 }]]
+      "main": [
+        [{ "node": "Leer Visuals Pendientes", "type": "main", "index": 0 }]
+      ]
     },
     "Leer Visuals Pendientes": {
-      "main": [[{ "node": "Build Anthropic Request", "type": "main", "index": 0 }]]
+      "main": [
+        [{ "node": "Build Anthropic Request", "type": "main", "index": 0 }]
+      ]
     },
     "Build Anthropic Request": {
       "main": [[{ "node": "Anthropic Vision", "type": "main", "index": 0 }]]
     },
     "Anthropic Vision": {
-      "main": [[{ "node": "Build Visual Row", "type": "main", "index": 0 }]]
+      "main": [
+        [{ "node": "Build Visual Row", "type": "main", "index": 0 }],
+        [{ "node": "Build Vision Error Log", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Vision Error Log": {
+      "main": [
+        [{ "node": "Log Vision Error to sync_log", "type": "main", "index": 0 }]
+      ]
     },
     "Build Visual Row": {
-      "main": [[{ "node": "Upsert Creative Visuals", "type": "main", "index": 0 }]]
+      "main": [
+        [{ "node": "Upsert Creative Visuals", "type": "main", "index": 0 }]
+      ]
     }
   },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "errorWorkflow": "ErrorHandlerGlobal01"
   }
 }

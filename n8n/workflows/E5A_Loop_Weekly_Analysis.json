@@ -10,6 +10,7 @@
   "updatedAt": "2026-06-07T22:31:01.338Z",
   "settings": {
     "executionOrder": "v1",
+    "errorWorkflow": "ErrorHandlerGlobal01",
     "availableInMCP": true,
     "binaryMode": "separate",
     "timeSavedMode": "fixed",
@@ -223,10 +224,7 @@
       "name": "Cron Mon 7am COT",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.3,
-      "position": [
-        128,
-        368
-      ]
+      "position": [128, 368]
     },
     {
       "parameters": {
@@ -258,10 +256,7 @@
       "name": "Set Week Config",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [
-        352,
-        368
-      ]
+      "position": [352, 368]
     },
     {
       "parameters": {
@@ -283,10 +278,7 @@
       "name": "Pre-flight sync_log",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [
-        560,
-        368
-      ]
+      "position": [560, 368]
     },
     {
       "parameters": {
@@ -317,10 +309,7 @@
       "name": "Upstream fresh (<24h)?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
-      "position": [
-        784,
-        368
-      ]
+      "position": [784, 368]
     },
     {
       "parameters": {
@@ -346,10 +335,7 @@
       "name": "RPC compute_weekly_snapshot",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [
-        1008,
-        208
-      ]
+      "position": [1008, 208]
     },
     {
       "parameters": {
@@ -375,10 +361,7 @@
       "name": "RPC detect_anomalies",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [
-        1232,
-        208
-      ]
+      "position": [1232, 208]
     },
     {
       "parameters": {
@@ -404,10 +387,7 @@
       "name": "RPC recompute_creative_learnings",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [
-        1440,
-        208
-      ]
+      "position": [1440, 208]
     },
     {
       "parameters": {
@@ -433,10 +413,7 @@
       "name": "RPC recompute_audience_segments",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [
-        1664,
-        208
-      ]
+      "position": [1664, 208]
     },
     {
       "parameters": {
@@ -462,10 +439,7 @@
       "name": "RPC get_memoria_activa",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [
-        1888,
-        208
-      ]
+      "position": [1888, 208]
     },
     {
       "parameters": {
@@ -475,10 +449,7 @@
       "name": "Build Prompt (sanitized)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        2112,
-        208
-      ]
+      "position": [2112, 208]
     },
     {
       "parameters": {
@@ -510,10 +481,7 @@
       "name": "Claude API (opus-4-7)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [
-        2320,
-        208
-      ]
+      "position": [2320, 208]
     },
     {
       "parameters": {
@@ -523,10 +491,7 @@
       "name": "Parse Claude + split insights",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        2544,
-        208
-      ]
+      "position": [2544, 208]
     },
     {
       "parameters": {
@@ -555,10 +520,7 @@
       "name": "Is insight item?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
-      "position": [
-        2768,
-        208
-      ]
+      "position": [2768, 208]
     },
     {
       "parameters": {
@@ -584,10 +546,7 @@
       "name": "RPC upsert_insight",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [
-        2992,
-        80
-      ]
+      "position": [2992, 80]
     },
     {
       "parameters": {
@@ -617,10 +576,7 @@
       "name": "PATCH weekly_snapshot.resumen_ai",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [
-        2992,
-        320
-      ]
+      "position": [2992, 320]
     },
     {
       "parameters": {
@@ -630,10 +586,7 @@
       "name": "Render Email HTML",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        3200,
-        320
-      ]
+      "position": [3200, 320]
     },
     {
       "parameters": {
@@ -649,10 +602,7 @@
       "name": "Send Email (Gmail)",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.2,
-      "position": [
-        3424,
-        320
-      ],
+      "position": [3424, 320],
       "webhookId": "51d11be4-be99-40fe-a068-8e76c6801f9e"
     },
     {
@@ -683,10 +633,7 @@
       "name": "INSERT ai_analysis_log",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [
-        3648,
-        320
-      ]
+      "position": [3648, 320]
     },
     {
       "parameters": {
@@ -716,10 +663,7 @@
       "name": "Log Stale (abort)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [
-        1008,
-        544
-      ]
+      "position": [1008, 544]
     }
   ],
   "activeVersion": {
@@ -739,10 +683,7 @@
         "name": "Cron Mon 7am COT",
         "type": "n8n-nodes-base.scheduleTrigger",
         "typeVersion": 1.3,
-        "position": [
-          128,
-          368
-        ]
+        "position": [128, 368]
       },
       {
         "parameters": {
@@ -774,10 +715,7 @@
         "name": "Set Week Config",
         "type": "n8n-nodes-base.set",
         "typeVersion": 3.4,
-        "position": [
-          352,
-          368
-        ]
+        "position": [352, 368]
       },
       {
         "parameters": {
@@ -799,10 +737,7 @@
         "name": "Pre-flight sync_log",
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.4,
-        "position": [
-          560,
-          368
-        ]
+        "position": [560, 368]
       },
       {
         "parameters": {
@@ -833,10 +768,7 @@
         "name": "Upstream fresh (<24h)?",
         "type": "n8n-nodes-base.if",
         "typeVersion": 2.3,
-        "position": [
-          784,
-          368
-        ]
+        "position": [784, 368]
       },
       {
         "parameters": {
@@ -862,10 +794,7 @@
         "name": "RPC compute_weekly_snapshot",
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.4,
-        "position": [
-          1008,
-          208
-        ]
+        "position": [1008, 208]
       },
       {
         "parameters": {
@@ -891,10 +820,7 @@
         "name": "RPC detect_anomalies",
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.4,
-        "position": [
-          1232,
-          208
-        ]
+        "position": [1232, 208]
       },
       {
         "parameters": {
@@ -920,10 +846,7 @@
         "name": "RPC recompute_creative_learnings",
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.4,
-        "position": [
-          1440,
-          208
-        ]
+        "position": [1440, 208]
       },
       {
         "parameters": {
@@ -949,10 +872,7 @@
         "name": "RPC recompute_audience_segments",
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.4,
-        "position": [
-          1664,
-          208
-        ]
+        "position": [1664, 208]
       },
       {
         "parameters": {
@@ -978,10 +898,7 @@
         "name": "RPC get_memoria_activa",
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.4,
-        "position": [
-          1888,
-          208
-        ]
+        "position": [1888, 208]
       },
       {
         "parameters": {
@@ -991,10 +908,7 @@
         "name": "Build Prompt (sanitized)",
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
-        "position": [
-          2112,
-          208
-        ]
+        "position": [2112, 208]
       },
       {
         "parameters": {
@@ -1026,10 +940,7 @@
         "name": "Claude API (opus-4-7)",
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.4,
-        "position": [
-          2320,
-          208
-        ]
+        "position": [2320, 208]
       },
       {
         "parameters": {
@@ -1039,10 +950,7 @@
         "name": "Parse Claude + split insights",
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
-        "position": [
-          2544,
-          208
-        ]
+        "position": [2544, 208]
       },
       {
         "parameters": {
@@ -1071,10 +979,7 @@
         "name": "Is insight item?",
         "type": "n8n-nodes-base.if",
         "typeVersion": 2.3,
-        "position": [
-          2768,
-          208
-        ]
+        "position": [2768, 208]
       },
       {
         "parameters": {
@@ -1100,10 +1005,7 @@
         "name": "RPC upsert_insight",
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.4,
-        "position": [
-          2992,
-          80
-        ]
+        "position": [2992, 80]
       },
       {
         "parameters": {
@@ -1133,10 +1035,7 @@
         "name": "PATCH weekly_snapshot.resumen_ai",
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.4,
-        "position": [
-          2992,
-          320
-        ]
+        "position": [2992, 320]
       },
       {
         "parameters": {
@@ -1146,10 +1045,7 @@
         "name": "Render Email HTML",
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
-        "position": [
-          3200,
-          320
-        ]
+        "position": [3200, 320]
       },
       {
         "parameters": {
@@ -1165,10 +1061,7 @@
         "name": "Send Email (Gmail)",
         "type": "n8n-nodes-base.gmail",
         "typeVersion": 2.2,
-        "position": [
-          3424,
-          320
-        ],
+        "position": [3424, 320],
         "webhookId": "51d11be4-be99-40fe-a068-8e76c6801f9e"
       },
       {
@@ -1199,10 +1092,7 @@
         "name": "INSERT ai_analysis_log",
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.4,
-        "position": [
-          3648,
-          320
-        ]
+        "position": [3648, 320]
       },
       {
         "parameters": {
@@ -1232,10 +1122,7 @@
         "name": "Log Stale (abort)",
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.4,
-        "position": [
-          1008,
-          544
-        ]
+        "position": [1008, 544]
       }
     ],
     "connections": {

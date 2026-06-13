@@ -3,7 +3,12 @@
   "name": "E3E - Klaviyo Daily Sync",
   "active": true,
   "description": "Ingesta diaria Klaviyo a Supabase. Cron 8am COT. 3 ramas: campaigns (rolling 7d), profiles (updated 1d), flow_daily (yesterday — Welcome+Abandoned Cart). Conversion metric: Placed Order (ThumxF).",
-  "settings": { "executionOrder": "v1", "availableInMCP": true, "binaryMode": "separate" },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "ErrorHandlerGlobal01",
+    "availableInMCP": true,
+    "binaryMode": "separate"
+  },
   "nodes": [
     {
       "id": "e87ab6b3-0829-4fe6-8770-90037c306700",
@@ -11,7 +16,11 @@
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.3,
       "position": [0, 600],
-      "parameters": { "rule": { "interval": [{ "field": "cronExpression", "expression": "0 8 * * *" }] } }
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "cronExpression", "expression": "0 8 * * *" }]
+        }
+      }
     },
     {
       "id": "3c09376f-3f02-409e-9b88-758716fc4fd7",
@@ -23,11 +32,36 @@
         "mode": "manual",
         "assignments": {
           "assignments": [
-            { "id": "a1", "name": "yesterdayISO", "value": "={{ $now.minus(1, \"day\").toFormat(\"yyyy-MM-dd\") }}", "type": "string" },
-            { "id": "a2", "name": "yesterdayStart", "value": "={{ $now.minus(1, \"day\").startOf(\"day\").toUTC().toISO() }}", "type": "string" },
-            { "id": "a3", "name": "yesterdayEnd", "value": "={{ $now.minus(1, \"day\").endOf(\"day\").toUTC().toISO() }}", "type": "string" },
-            { "id": "a4", "name": "campaignsSinceISO", "value": "={{ $now.minus(7, \"days\").toUTC().toISO() }}", "type": "string" },
-            { "id": "a5", "name": "profilesSinceISO", "value": "={{ $now.minus(1, \"day\").toUTC().toISO() }}", "type": "string" }
+            {
+              "id": "a1",
+              "name": "yesterdayISO",
+              "value": "={{ $now.minus(1, \"day\").toFormat(\"yyyy-MM-dd\") }}",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "yesterdayStart",
+              "value": "={{ $now.minus(1, \"day\").startOf(\"day\").toUTC().toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "yesterdayEnd",
+              "value": "={{ $now.minus(1, \"day\").endOf(\"day\").toUTC().toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "a4",
+              "name": "campaignsSinceISO",
+              "value": "={{ $now.minus(7, \"days\").toUTC().toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "a5",
+              "name": "profilesSinceISO",
+              "value": "={{ $now.minus(1, \"day\").toUTC().toISO() }}",
+              "type": "string"
+            }
           ]
         },
         "options": {}
@@ -45,13 +79,36 @@
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [{ "name": "Accept", "value": "application/vnd.api+json" }, { "name": "revision", "value": "2024-10-15" }] },
+        "headerParameters": {
+          "parameters": [
+            { "name": "Accept", "value": "application/vnd.api+json" },
+            { "name": "revision", "value": "2024-10-15" }
+          ]
+        },
         "sendQuery": true,
-        "queryParameters": { "parameters": [{ "name": "filter", "value": "=and(equals(messages.channel,\"email\"),equals(status,\"Sent\"),greater-than(updated_at,{{ $(\"Set Config\").first().json.campaignsSinceISO }}))" }, { "name": "fields[campaign]", "value": "name,status,send_time,audiences" }, { "name": "include", "value": "campaign-messages" }, { "name": "fields[campaign-message]", "value": "definition.content.subject,definition.content.preview_text" }] },
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filter",
+              "value": "=and(equals(messages.channel,\"email\"),equals(status,\"Sent\"),greater-than(updated_at,{{ $(\"Set Config\").first().json.campaignsSinceISO }}))"
+            },
+            {
+              "name": "fields[campaign]",
+              "value": "name,status,send_time,audiences"
+            },
+            { "name": "include", "value": "campaign-messages" },
+            {
+              "name": "fields[campaign-message]",
+              "value": "definition.content.subject,definition.content.preview_text"
+            }
+          ]
+        },
         "options": { "response": { "response": { "responseFormat": "json" } } }
       },
       "alwaysOutputData": true,
-      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Klaviyo AdeA" } }
+      "credentials": {
+        "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Klaviyo AdeA" }
+      }
     },
     {
       "id": "30a8469a-b335-46bb-a20c-31e125d6e39c",
@@ -85,14 +142,25 @@
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [{ "name": "Accept", "value": "application/vnd.api+json" }, { "name": "revision", "value": "2024-10-15" }, { "name": "Content-Type", "value": "application/vnd.api+json" }] },
+        "headerParameters": {
+          "parameters": [
+            { "name": "Accept", "value": "application/vnd.api+json" },
+            { "name": "revision", "value": "2024-10-15" },
+            { "name": "Content-Type", "value": "application/vnd.api+json" }
+          ]
+        },
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ data: { type: \"campaign-values-report\", attributes: { statistics: [\"recipients\",\"delivered\",\"opens_unique\",\"clicks_unique\",\"conversions\",\"unsubscribes\",\"bounced\"], conversion_metric_id: \"ThumxF\", timeframe: { key: \"last_365_days\" }, filter: \"and(equals(send_channel,\\\"email\\\"),equals(campaign_id,\\\"\" + $json.campaign_id + \"\\\"))\" } } }) }}",
-        "options": { "batching": { "batch": { "batchSize": 1, "batchInterval": 1500 } }, "response": { "response": { "responseFormat": "json" } } }
+        "options": {
+          "batching": { "batch": { "batchSize": 1, "batchInterval": 1500 } },
+          "response": { "response": { "responseFormat": "json" } }
+        }
       },
-      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Klaviyo AdeA" } }
+      "credentials": {
+        "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Klaviyo AdeA" }
+      }
     },
     {
       "id": "44b0f775-8c6b-43b1-8f87-1fb043431911",
@@ -118,16 +186,30 @@
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "Prefer", "value": "resolution=merge-duplicates,return=minimal" }] },
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates,return=minimal"
+            }
+          ]
+        },
         "sendQuery": true,
-        "queryParameters": { "parameters": [{ "name": "on_conflict", "value": "klaviyo_campaign_id" }] },
+        "queryParameters": {
+          "parameters": [
+            { "name": "on_conflict", "value": "klaviyo_campaign_id" }
+          ]
+        },
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json) }}",
         "options": {}
       },
-      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+      "credentials": {
+        "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" }
+      }
     },
     {
       "id": "b216c548-c6e6-485d-a571-24394ca6ea86",
@@ -141,7 +223,12 @@
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "Prefer", "value": "return=minimal" }] },
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
@@ -149,7 +236,9 @@
         "options": {}
       },
       "executeOnce": true,
-      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+      "credentials": {
+        "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" }
+      }
     },
     {
       "id": "a3454194-6976-48de-8302-fe86ae2bfa98",
@@ -163,13 +252,45 @@
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [{ "name": "Accept", "value": "application/vnd.api+json" }, { "name": "revision", "value": "2024-10-15" }] },
+        "headerParameters": {
+          "parameters": [
+            { "name": "Accept", "value": "application/vnd.api+json" },
+            { "name": "revision", "value": "2024-10-15" }
+          ]
+        },
         "sendQuery": true,
-        "queryParameters": { "parameters": [{ "name": "filter", "value": "=greater-than(updated,{{ $(\"Set Config\").first().json.profilesSinceISO }})" }, { "name": "fields[profile]", "value": "email,first_name,last_name" }, { "name": "additional-fields[profile]", "value": "subscriptions" }, { "name": "page[size]", "value": "100" }] },
-        "options": { "response": { "response": { "responseFormat": "json" } }, "pagination": { "pagination": { "paginationMode": "responseContainsNextURL", "nextURL": "={{ $response.body.links.next }}", "paginationCompleteWhen": "other", "completeExpression": "={{ !$response.body.links.next }}", "limitPagesFetched": true, "maxRequests": 50 } } }
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filter",
+              "value": "=greater-than(updated,{{ $(\"Set Config\").first().json.profilesSinceISO }})"
+            },
+            {
+              "name": "fields[profile]",
+              "value": "email,first_name,last_name"
+            },
+            { "name": "additional-fields[profile]", "value": "subscriptions" },
+            { "name": "page[size]", "value": "100" }
+          ]
+        },
+        "options": {
+          "response": { "response": { "responseFormat": "json" } },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "responseContainsNextURL",
+              "nextURL": "={{ $response.body.links.next }}",
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.body.links.next }}",
+              "limitPagesFetched": true,
+              "maxRequests": 50
+            }
+          }
+        }
       },
       "alwaysOutputData": true,
-      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Klaviyo AdeA" } }
+      "credentials": {
+        "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Klaviyo AdeA" }
+      }
     },
     {
       "id": "03a1e8a3-2254-4653-927e-f4c8c004d8d4",
@@ -195,16 +316,30 @@
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "Prefer", "value": "resolution=merge-duplicates,return=minimal" }] },
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates,return=minimal"
+            }
+          ]
+        },
         "sendQuery": true,
-        "queryParameters": { "parameters": [{ "name": "on_conflict", "value": "klaviyo_profile_id" }] },
+        "queryParameters": {
+          "parameters": [
+            { "name": "on_conflict", "value": "klaviyo_profile_id" }
+          ]
+        },
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.rows || []) }}",
         "options": {}
       },
-      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+      "credentials": {
+        "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" }
+      }
     },
     {
       "id": "11e702c3-6c70-4880-9d51-8eba55314210",
@@ -218,7 +353,12 @@
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "Prefer", "value": "return=minimal" }] },
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
@@ -226,7 +366,9 @@
         "options": {}
       },
       "executeOnce": true,
-      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+      "credentials": {
+        "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" }
+      }
     },
     {
       "id": "580e5065-6459-40c3-a9b8-f9dd3d4b69a9",
@@ -240,7 +382,13 @@
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [{ "name": "Accept", "value": "application/vnd.api+json" }, { "name": "revision", "value": "2024-10-15" }, { "name": "Content-Type", "value": "application/vnd.api+json" }] },
+        "headerParameters": {
+          "parameters": [
+            { "name": "Accept", "value": "application/vnd.api+json" },
+            { "name": "revision", "value": "2024-10-15" },
+            { "name": "Content-Type", "value": "application/vnd.api+json" }
+          ]
+        },
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
@@ -248,7 +396,9 @@
         "options": { "response": { "response": { "responseFormat": "json" } } }
       },
       "alwaysOutputData": true,
-      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Klaviyo AdeA" } }
+      "credentials": {
+        "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Klaviyo AdeA" }
+      }
     },
     {
       "id": "33d193d6-2b89-47c4-8bfd-3ba0e363fd70",
@@ -274,16 +424,30 @@
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "Prefer", "value": "resolution=merge-duplicates,return=minimal" }] },
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates,return=minimal"
+            }
+          ]
+        },
         "sendQuery": true,
-        "queryParameters": { "parameters": [{ "name": "on_conflict", "value": "fecha,klaviyo_flow_id" }] },
+        "queryParameters": {
+          "parameters": [
+            { "name": "on_conflict", "value": "fecha,klaviyo_flow_id" }
+          ]
+        },
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.rows || []) }}",
         "options": {}
       },
-      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+      "credentials": {
+        "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" }
+      }
     },
     {
       "id": "6e64f277-a6bf-4776-95c2-553ebdfa96fb",
@@ -297,7 +461,12 @@
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "Prefer", "value": "return=minimal" }] },
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
@@ -305,24 +474,63 @@
         "options": {}
       },
       "executeOnce": true,
-      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+      "credentials": {
+        "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" }
+      }
     }
   ],
   "connections": {
-    "Cron 8am COT": { "main": [[{ "node": "Set Config", "type": "main", "index": 0 }]] },
-    "Set Config": { "main": [[{ "node": "Get Sent Campaigns", "type": "main", "index": 0 }, { "node": "Get Updated Profiles", "type": "main", "index": 0 }, { "node": "Get Flow Report Yesterday", "type": "main", "index": 0 }]] },
-    "Get Sent Campaigns": { "main": [[{ "node": "Extract Campaigns", "type": "main", "index": 0 }]] },
-    "Extract Campaigns": { "main": [[{ "node": "Loop Campaigns", "type": "main", "index": 0 }]] },
-    "Loop Campaigns": { "main": [[{ "node": "Log Campaigns", "type": "main", "index": 0 }], [{ "node": "Get Campaign Report", "type": "main", "index": 0 }]] },
-    "Get Campaign Report": { "main": [[{ "node": "Transform Campaign", "type": "main", "index": 0 }]] },
-    "Transform Campaign": { "main": [[{ "node": "Upsert Campaign", "type": "main", "index": 0 }]] },
-    "Upsert Campaign": { "main": [[{ "node": "Loop Campaigns", "type": "main", "index": 0 }]] },
-    "Get Updated Profiles": { "main": [[{ "node": "Transform Profiles", "type": "main", "index": 0 }]] },
-    "Transform Profiles": { "main": [[{ "node": "Upsert Profiles", "type": "main", "index": 0 }]] },
-    "Upsert Profiles": { "main": [[{ "node": "Log Profiles", "type": "main", "index": 0 }]] },
-    "Get Flow Report Yesterday": { "main": [[{ "node": "Transform Flows", "type": "main", "index": 0 }]] },
-    "Transform Flows": { "main": [[{ "node": "Upsert Flow Daily", "type": "main", "index": 0 }]] },
-    "Upsert Flow Daily": { "main": [[{ "node": "Log Flows", "type": "main", "index": 0 }]] }
+    "Cron 8am COT": {
+      "main": [[{ "node": "Set Config", "type": "main", "index": 0 }]]
+    },
+    "Set Config": {
+      "main": [
+        [
+          { "node": "Get Sent Campaigns", "type": "main", "index": 0 },
+          { "node": "Get Updated Profiles", "type": "main", "index": 0 },
+          { "node": "Get Flow Report Yesterday", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Get Sent Campaigns": {
+      "main": [[{ "node": "Extract Campaigns", "type": "main", "index": 0 }]]
+    },
+    "Extract Campaigns": {
+      "main": [[{ "node": "Loop Campaigns", "type": "main", "index": 0 }]]
+    },
+    "Loop Campaigns": {
+      "main": [
+        [{ "node": "Log Campaigns", "type": "main", "index": 0 }],
+        [{ "node": "Get Campaign Report", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Campaign Report": {
+      "main": [[{ "node": "Transform Campaign", "type": "main", "index": 0 }]]
+    },
+    "Transform Campaign": {
+      "main": [[{ "node": "Upsert Campaign", "type": "main", "index": 0 }]]
+    },
+    "Upsert Campaign": {
+      "main": [[{ "node": "Loop Campaigns", "type": "main", "index": 0 }]]
+    },
+    "Get Updated Profiles": {
+      "main": [[{ "node": "Transform Profiles", "type": "main", "index": 0 }]]
+    },
+    "Transform Profiles": {
+      "main": [[{ "node": "Upsert Profiles", "type": "main", "index": 0 }]]
+    },
+    "Upsert Profiles": {
+      "main": [[{ "node": "Log Profiles", "type": "main", "index": 0 }]]
+    },
+    "Get Flow Report Yesterday": {
+      "main": [[{ "node": "Transform Flows", "type": "main", "index": 0 }]]
+    },
+    "Transform Flows": {
+      "main": [[{ "node": "Upsert Flow Daily", "type": "main", "index": 0 }]]
+    },
+    "Upsert Flow Daily": {
+      "main": [[{ "node": "Log Flows", "type": "main", "index": 0 }]]
+    }
   },
   "tags": [],
   "meta": { "aiBuilderAssisted": true }

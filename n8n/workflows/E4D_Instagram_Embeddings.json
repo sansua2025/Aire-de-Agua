@@ -12,9 +12,7 @@
     {
       "parameters": {
         "rule": {
-          "interval": [
-            { "triggerAtHour": 9, "triggerAtMinute": 30 }
-          ]
+          "interval": [{ "triggerAtHour": 9, "triggerAtMinute": 30 }]
         }
       },
       "id": "fcc787b6-246c-4c56-b5e8-52919446d5fe",
@@ -89,7 +87,10 @@
         "headerParameters": {
           "parameters": [
             { "name": "Content-Type", "value": "application/json" },
-            { "name": "Prefer", "value": "return=minimal,resolution=merge-duplicates" }
+            {
+              "name": "Prefer",
+              "value": "return=minimal,resolution=merge-duplicates"
+            }
           ]
         },
         "sendBody": true,
@@ -106,25 +107,38 @@
   ],
   "connections": {
     "Run Bulk Posts": {
-      "main": [[{ "node": "Fetch Posts Pendientes", "type": "main", "index": 0 }]]
+      "main": [
+        [{ "node": "Fetch Posts Pendientes", "type": "main", "index": 0 }]
+      ]
     },
     "Schedule Diario Posts": {
-      "main": [[{ "node": "Fetch Posts Pendientes", "type": "main", "index": 0 }]]
+      "main": [
+        [{ "node": "Fetch Posts Pendientes", "type": "main", "index": 0 }]
+      ]
     },
     "Fetch Posts Pendientes": {
-      "main": [[{ "node": "Preparar Textos Posts", "type": "main", "index": 0 }]]
+      "main": [
+        [{ "node": "Preparar Textos Posts", "type": "main", "index": 0 }]
+      ]
     },
     "Preparar Textos Posts": {
-      "main": [[{ "node": "OpenAI Embeddings Posts", "type": "main", "index": 0 }]]
+      "main": [
+        [{ "node": "OpenAI Embeddings Posts", "type": "main", "index": 0 }]
+      ]
     },
     "OpenAI Embeddings Posts": {
-      "main": [[{ "node": "Separar Embeddings Posts", "type": "main", "index": 0 }]]
+      "main": [
+        [{ "node": "Separar Embeddings Posts", "type": "main", "index": 0 }]
+      ]
     },
     "Separar Embeddings Posts": {
-      "main": [[{ "node": "Guardar Embedding Post", "type": "main", "index": 0 }]]
+      "main": [
+        [{ "node": "Guardar Embedding Post", "type": "main", "index": 0 }]
+      ]
     }
   },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "errorWorkflow": "ErrorHandlerGlobal01"
   }
 }
