@@ -19,3 +19,43 @@
 - (1x) Idempotencia de ejecutor n8n basada en `$json.length` sobre respuesta HTTP de PostgREST:
   comportamiento de array-vs-item del nodo HTTP no esta verificado en el repo; preferir Code node
   con `$input.all().length`.
+
+---
+
+# Issue-analyst — memoria
+
+## Verificar antes de construir (AIR-71, AIR-119)
+Antes de planear construcción, comprobar si el issue YA está satisfecho:
+1. `grep -r "AIR-<n>" supabase/migrations/ n8n/workflows/ .github/` — busca evidencia de impl previa.
+2. `git log --oneline --all | grep -i <slug>` — detecta merges ya integrados.
+3. Si el código está mergeado y documentado: marcar como `auto`, criterio = "verificar estado en prod",
+   NO generar plan de construcción. AIR-119 ya estaba en 5ab4a7d; AIR-71 era ops externa ya mitigada.
+
+---
+
+# Builder / Orchestrator — memoria compartida
+
+## MCP no disponible en subagentes con allowlist positiva de `tools` (lección sesión AIR-71/119/67/97)
+Los subagentes con lista `tools:` positiva (builder, verify, reviewer, retro, fixer) **NO reciben
+herramientas MCP en el entorno web/remoto**, aunque el frontmatter declare `mcpServers`. Solo los
+agentes "All tools except..." (issue-analyst, orchestrator) tienen MCP garantizado.
+
+Consecuencia operativa:
+- El builder puede AUTORAR archivos (SQL/JSON) pero NO puede validar vía MCP (apply_migration,
+  validate_workflow, get_advisors).
+- El ORQUESTADOR debe ejecutar él mismo las operaciones MCP: probar migraciones en Supabase,
+  `validate_workflow` de n8n, consultar prod para confirmar contratos.
+- No asumir que builder o verify validan en prod vía MCP.
+
+## Supabase sin plan Pro → branching deshabilitado (restricción conocida del entorno)
+`create_branch` devuelve `PaymentRequired` en el proyecto `vnctmzsgemefgbtjctlo`.
+No se pueden probar migraciones en preview branch.
+Mitigación: verificación estática comparando `pg_get_functiondef` en prod contra el SQL de la
+migración + tests sintéticos incluidos en el PR para correr al aplicar (humano aplica y verifica).
+
+## Candidato a graduación — drift docstring/cuerpo en RPCs (AIR-97, relacionar con AIR-127)
+La migración 033 documentaba penalización `refutado -0.15` que el cuerpo de la RPC NUNCA implementó.
+Esto lo encontró AIR-97 comparando el header-comment contra la lógica SQL.
+Candidato a check en `check-data-rules.sh`: verificar que los comentarios-cabecera de las RPCs del
+loop de insights son consistentes con la lógica del cuerpo (al menos detectar penalizaciones/bonus
+declarados pero ausentes). No implementar aún; proponer en AIR-127.
