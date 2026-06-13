@@ -12,10 +12,7 @@
       "name": "Cron cada 6h",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.3,
-      "position": [
-        0,
-        192
-      ],
+      "position": [0, 192],
       "parameters": {
         "rule": {
           "interval": [
@@ -32,10 +29,7 @@
       "name": "Linear - Contexto (label + abiertos)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [
-        224,
-        192
-      ],
+      "position": [224, 192],
       "parameters": {
         "method": "POST",
         "url": "https://api.linear.app/graphql",
@@ -69,10 +63,7 @@
       "name": "n8n - Ejecuciones fallidas",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [
-        448,
-        0
-      ],
+      "position": [448, 0],
       "parameters": {
         "method": "GET",
         "url": "https://airedeagua.app.n8n.cloud/api/v1/executions",
@@ -110,14 +101,11 @@
       "name": "Agrupar fallos >=2",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        672,
-        0
-      ],
+      "position": [672, 0],
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "function sanitize(s) {\n  if (s == null) return '';\n  let t = String(s);\n  t = t.replace(/[\\r\\n\\t]+/g, ' ');\n  t = t.replace(/[`<>{}|\\\\$]/g, '');\n  t = t.replace(/\\b(ignore|disregard|system|assistant|prompt|instruction)\\b/gi, '_');\n  t = t.replace(/\\s+/g, ' ').trim();\n  if (t.length > 140) t = t.slice(0, 140) + String.fromCharCode(8230);\n  return t;\n}\nconst rows = $input.first().json.data || [];\nconst byWf = {};\nfor (const r of rows) {\n  if (r.workflowId === 'Aul2pyDbdIECaBhY') continue;\n  if (r.mode === 'manual') continue;\n  if (r.workflowData && r.workflowData.active === false) continue;\n  if (!(r.data && r.data.resultData && r.data.resultData.error && r.data.resultData.error.message)) continue;\n  const name = (r.workflowData && r.workflowData.name) || r.workflowId || 'desconocido';\n  if (!byWf[name]) byWf[name] = { count: 0, lastErr: null, lastAt: null };\n  byWf[name].count += 1;\n  const at = r.stoppedAt || r.startedAt || null;\n  if (!byWf[name].lastAt || (at && at > byWf[name].lastAt)) {\n    byWf[name].lastAt = at;\n    byWf[name].lastErr = r.data.resultData.error.message || '';\n  }\n}\nconst out = [];\nfor (const name of Object.keys(byWf)) {\n  const g = byWf[name];\n  if (g.count < 2) continue;\n  const safeName = sanitize(name);\n  const safeErr = sanitize(g.lastErr) || \"sin mensaje\";\n  const signalKey = 'n8n_exec_fail:' + safeName;\n  const titulo = safeName + \" falló \" + g.count + \" veces: \" + safeErr;\n  out.push({ json: {\n    senal: 'n8n_exec_fail',\n    fuente: safeName,\n    signalKey: signalKey,\n    titulo: titulo.slice(0, 200),\n    descripcion: 'Senal automatica (Sentinela v1): el workflow n8n **' + safeName + '** registro ' + g.count + ' ejecuciones con estado error en las ultimas 100 ejecuciones.\\n\\nUltimo error (sanitizado): ' + safeErr + '\\n\\nNivel de autonomia: pr-only (maximo).\\n\\nsignal-key: ' + signalKey,\n  } });\n}\nreturn out;"
+        "jsCode": "function sanitize(s) {\n  if (s == null) return '';\n  let t = String(s);\n  t = t.replace(/[\\r\\n\\t]+/g, ' ');\n  t = t.replace(/[`<>{}|\\\\$]/g, '');\n  t = t.replace(/\\b(ignore|disregard|system|assistant|prompt|instruction)\\b/gi, '_');\n  t = t.replace(/\\s+/g, ' ').trim();\n  if (t.length > 140) t = t.slice(0, 140) + String.fromCharCode(8230);\n  return t;\n}\nconst rows = $input.first().json.data || [];\n// (4) OPCIONAL active=false: cruzar contra /workflows (la rama 'n8n - Workflows actuales'),\n// porque 'active' NO viene en el payload de /executions. DESACTIVADO por defecto:\n// el issue lo marca opcional y el filtro de 'manual' ya atrapa Loop-Knowledge\n// Consolidation; activarlo arriesga falsos negativos. Para activarlo, descomentar\n// las dos lineas marcadas con [active=false] mas abajo.\n// const wfList = ($('n8n - Workflows actuales').first().json.data) || [];\n// const activeSet = new Set(wfList.filter(function (w) { return w.active; }).map(function (w) { return w.id; }));\nconst byWf = {};\nfor (const r of rows) {\n  if (r.workflowId === 'Aul2pyDbdIECaBhY') continue; // (1) self: no reportarse a si mismo\n  if (r.mode !== 'trigger' && r.mode !== 'webhook') continue; // (2) allowlist: solo disparos automaticos (excluye 'manual')\n  if (!(r.data && r.data.resultData && r.data.resultData.error && r.data.resultData.error.message)) continue; // (3) sin-mensaje: requiere error.message real (includeData=true)\n  // if (!activeSet.has(r.workflowId)) continue; // [active=false] descomentar para exigir workflow activo\n  const name = (r.workflowData && r.workflowData.name) || r.workflowId || 'desconocido';\n  if (!byWf[name]) byWf[name] = { count: 0, lastErr: null, lastAt: null };\n  byWf[name].count += 1;\n  const at = r.stoppedAt || r.startedAt || null;\n  if (!byWf[name].lastAt || (at && at > byWf[name].lastAt)) {\n    byWf[name].lastAt = at;\n    byWf[name].lastErr = r.data.resultData.error.message || '';\n  }\n}\nconst out = [];\nfor (const name of Object.keys(byWf)) {\n  const g = byWf[name];\n  if (g.count < 2) continue;\n  const safeName = sanitize(name);\n  const safeErr = sanitize(g.lastErr) || \"sin mensaje\";\n  const signalKey = 'n8n_exec_fail:' + safeName;\n  const titulo = safeName + \" falló \" + g.count + \" veces: \" + safeErr;\n  out.push({ json: {\n    senal: 'n8n_exec_fail',\n    fuente: safeName,\n    signalKey: signalKey,\n    titulo: titulo.slice(0, 200),\n    descripcion: 'Senal automatica (Sentinela v1): el workflow n8n **' + safeName + '** registro ' + g.count + ' ejecuciones con estado error en las ultimas 100 ejecuciones.\\n\\nUltimo error (sanitizado): ' + safeErr + '\\n\\nNivel de autonomia: pr-only (maximo).\\n\\nsignal-key: ' + signalKey,\n  } });\n}\nreturn out;"
       }
     },
     {
@@ -125,10 +113,7 @@
       "name": "Unir candidatos",
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3.2,
-      "position": [
-        896,
-        176
-      ],
+      "position": [896, 176],
       "parameters": {
         "mode": "append",
         "numberInputs": 3
@@ -139,10 +124,7 @@
       "name": "Supabase - sync_log 7d",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [
-        448,
-        192
-      ],
+      "position": [448, 192],
       "parameters": {
         "method": "GET",
         "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log",
@@ -194,10 +176,7 @@
       "name": "Fuentes sin correr hoy (COT)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        672,
-        192
-      ],
+      "position": [672, 192],
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
@@ -209,10 +188,7 @@
       "name": "n8n - Workflows actuales",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [
-        448,
-        384
-      ],
+      "position": [448, 384],
       "parameters": {
         "method": "GET",
         "url": "https://airedeagua.app.n8n.cloud/api/v1/workflows",
@@ -246,10 +222,7 @@
       "name": "Drift n8n vs repo",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        672,
-        384
-      ],
+      "position": [672, 384],
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
@@ -261,14 +234,11 @@
       "name": "Dedupe vs Linear",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        1120,
-        192
-      ],
+      "position": [1120, 192],
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "const LABELS = [\"197fb5ae-dff3-45de-b2ae-1533069d1d39\", \"d30a9e60-b290-4fd4-bacc-c9c87d66bf18\"];\nconst ctx = $(\"Linear - Contexto (label + abiertos)\").first().json;\nconst gql = (ctx && ctx.data) || {};\nconst abiertos = (gql.issues && gql.issues.nodes) || [];\nconst keysAbiertos = new Set();\nfor (const i of abiertos) {\n  const m = String(i.description || '').match(/signal-key:\\s*([^\\n\\r]+)/);\n  if (m && m[1]) keysAbiertos.add(m[1].trim());\n}\nconst candidatos = $input.all().map(function (i) { return i.json; });\nconst vistos = new Set();\nconst out = [];\nfor (const c of candidatos) {\n  const t = String(c.titulo || '').trim();\n  if (!t) continue;\n  const sk = String(c.signalKey || '').trim();\n  if (!sk) continue;\n  if (keysAbiertos.has(sk)) continue;\n  if (vistos.has(sk)) continue;\n  vistos.add(sk);\n  out.push({ json: {\n    titulo: t,\n    descripcion: c.descripcion || '',\n    senal: c.senal || '',\n    fuente: c.fuente || '',\n    signalKey: sk,\n    labelIds: LABELS,\n  } });\n}\nreturn out;"
+        "jsCode": "// Label IDs (team AIR). NUNCA usar agent-ready (c89c500f-...) en señales de Sentinela: es pr-only.\nconst LBL_NEEDS_REFINEMENT = '197fb5ae-dff3-45de-b2ae-1533069d1d39';\nconst LBL_SENSORS = 'd30a9e60-b290-4fd4-bacc-c9c87d66bf18';\n// Labels por tipo de señal:\n//   n8n_exec_fail / drift -> [needs-refinement]\n//   sync_gap              -> [Sensors, needs-refinement] (jamás agent-ready)\nfunction labelsFor(senal) {\n  if (senal === 'sync_gap') return [LBL_SENSORS, LBL_NEEDS_REFINEMENT];\n  return [LBL_NEEDS_REFINEMENT];\n}\nconst ctx = $(\"Linear - Contexto (label + abiertos)\").first().json;\nconst gql = (ctx && ctx.data) || {};\nconst abiertos = (gql.issues && gql.issues.nodes) || [];\nconst keysAbiertos = new Set();\nfor (const i of abiertos) {\n  const m = String(i.description || '').match(/signal-key:\\s*([^\\n\\r]+)/);\n  if (m && m[1]) keysAbiertos.add(m[1].trim());\n}\nconst candidatos = $input.all().map(function (i) { return i.json; });\nconst vistos = new Set();\nconst out = [];\nfor (const c of candidatos) {\n  const t = String(c.titulo || '').trim();\n  if (!t) continue;\n  const sk = String(c.signalKey || '').trim();\n  if (!sk) continue;\n  if (keysAbiertos.has(sk)) continue;\n  if (vistos.has(sk)) continue;\n  vistos.add(sk);\n  const senal = c.senal || '';\n  out.push({ json: {\n    titulo: t,\n    descripcion: c.descripcion || '',\n    senal: senal,\n    fuente: c.fuente || '',\n    signalKey: sk,\n    labelIds: labelsFor(senal),\n  } });\n}\nreturn out;"
       }
     },
     {
@@ -276,10 +246,7 @@
       "name": "¿Hay candidatos nuevos?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
-      "position": [
-        1344,
-        192
-      ],
+      "position": [1344, 192],
       "parameters": {
         "conditions": {
           "options": {
@@ -308,10 +275,7 @@
       "name": "Linear - Crear issue",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [
-        1792,
-        192
-      ],
+      "position": [1792, 192],
       "parameters": {
         "method": "POST",
         "url": "https://api.linear.app/graphql",
@@ -345,10 +309,7 @@
       "name": "Loop crear issues",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
-      "position": [
-        1568,
-        192
-      ],
+      "position": [1568, 192],
       "parameters": {
         "batchSize": 1
       }
