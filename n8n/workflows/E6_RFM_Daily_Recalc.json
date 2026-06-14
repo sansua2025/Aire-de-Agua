@@ -9,27 +9,24 @@
   },
   "nodes": [
     {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 * * *"
+            }
+          ]
+        }
+      },
       "id": "e6-cron-0001",
-      "name": "Cron Weekly TUE 11am COT",
+      "name": "Cron Daily 2am COT",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.3,
       "position": [
         128,
         368
-      ],
-      "parameters": {
-        "rule": {
-          "interval": [
-            {
-              "field": "weeks",
-              "triggerAtDay": [
-                2
-              ],
-              "triggerAtHour": 11
-            }
-          ]
-        }
-      }
+      ]
     },
     {
       "parameters": {
@@ -211,6 +208,17 @@
     }
   ],
   "connections": {
+    "Cron Daily 2am COT": {
+      "main": [
+        [
+          {
+            "node": "RPC recalcular_rfm_clientes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "RPC recalcular_rfm_clientes": {
       "main": [
         [
@@ -265,17 +273,6 @@
           }
         ],
         []
-      ]
-    },
-    "Cron Weekly TUE 11am COT": {
-      "main": [
-        [
-          {
-            "node": "RPC recalcular_rfm_clientes",
-            "type": "main",
-            "index": 0
-          }
-        ]
       ]
     }
   },
