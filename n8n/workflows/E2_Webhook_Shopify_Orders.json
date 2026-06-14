@@ -51,6 +51,27 @@
       "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
     },
     {
+      "id": "f7c1d2e9-5a64-4b0e-9c3a-1d2e3f4a5b6c",
+      "name": "Asignar Segmento Nuevo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [1008, 352],
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/rpc/asignar_segmento_nuevo",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_shopify_order_id: String($('Sanitize Order Data').item.json.id) }) }}",
+        "options": {}
+      },
+      "onError": "continueRegularOutput",
+      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+    },
+    {
       "id": "4a23f2de-ca3f-4250-9b2c-25a56be57367",
       "name": "Order Updated",
       "type": "n8n-nodes-base.shopifyTrigger",
@@ -64,6 +85,7 @@
   "connections": {
     "Order Created": { "main": [[{ "node": "Sanitize Order Data", "type": "main", "index": 0 }]] },
     "Sanitize Order Data": { "main": [[{ "node": "Upsert Order RPC", "type": "main", "index": 0 }]] },
+    "Upsert Order RPC": { "main": [[{ "node": "Asignar Segmento Nuevo", "type": "main", "index": 0 }]] },
     "Order Updated": { "main": [[{ "node": "Sanitize Order Data", "type": "main", "index": 0 }]] }
   },
   "tags": [],
