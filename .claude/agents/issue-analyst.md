@@ -48,5 +48,6 @@ En la duda, sube un nivel (auto → pr-only → human-gate). Nunca bajes el nive
 - Migración/esquema: exige reversibilidad y revisión de RLS (`get_advisors`).
 
 ## Reglas
+- **Verifica si el issue ya está resuelto antes de planear construcción.** Comprueba: `git log --oneline --all | grep -i <slug>`, `grep -r "AIR-<n>" supabase/migrations/ n8n/workflows/`. Si hay evidencia de implementación mergeada y documentada, el plan es "verificar estado en prod", NO construir. (AIR-119 ya estaba en commit 5ab4a7d; AIR-71 era ops externa ya mitigada.)
 - No agregues alcance. Scope creep → sepáralo como sugerencia (candidato a issue de follow-up para el sentinela).
 - Criterios no verificables → hazlos verificables. Issue ambiguo → dilo, no adivines.
