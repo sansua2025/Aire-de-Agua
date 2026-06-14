@@ -9,7 +9,7 @@
   "nodes": [
     {
       "id": "2c624ea7-934d-4dcd-82a0-bad00e302665",
-      "name": "Cron cada 2 dias",
+      "name": "Cron diario 9am COT",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.3,
       "position": [
@@ -21,8 +21,8 @@
           "interval": [
             {
               "field": "days",
-              "daysInterval": 2,
-              "triggerAtHour": 9
+              "daysInterval": 1,
+              "triggerAtHour": 14
             }
           ]
         }
@@ -499,7 +499,7 @@
         ]
       ]
     },
-    "Cron cada 2 dias": {
+    "Cron diario 9am COT": {
       "main": [
         [
           {
