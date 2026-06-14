@@ -233,3 +233,22 @@ export const getAnomalias = unstable_cache(
   ['anomalias'],
   { tags: ['insights'], revalidate: CACHE_FALLBACK_SECONDS }
 )
+
+/**
+ * Capa 2 del dashboard /ai (AIR-61): strategic_learnings en estado 'candidato'
+ * esperando aprobación humana (human-gate). Lee la vista SECURITY DEFINER
+ * analytics.view_dashboard_strategic_learnings_candidatos (sin embedding ni
+ * evidencia_ids). Tag 'insights': lo invalida el write-path de aprobar-learning
+ * y cualquier revalidación de insights, igual que la cola de acción.
+ */
+export const getStrategicLearningsCandidatos = unstable_cache(
+  async () => {
+    const { data, error } = await supabase
+      .from('view_dashboard_strategic_learnings_candidatos')
+      .select('*')
+    if (error) throw error
+    return data ?? []
+  },
+  ['strategic_learnings_candidatos'],
+  { tags: ['insights'], revalidate: CACHE_FALLBACK_SECONDS }
+)
