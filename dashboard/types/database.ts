@@ -3245,6 +3245,15 @@ export type Database = {
         }
         Returns: Json
       }
+      analytics_aprobar_learning: {
+        Args: {
+          p_learning_id: string
+          p_aprobado: boolean
+          p_notas?: string | null
+          p_decidido_por?: string | null
+        }
+        Returns: Json
+      }
       analytics_close_insight_loop: {
         Args: { p_insight_id: string }
         Returns: Json
