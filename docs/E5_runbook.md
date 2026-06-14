@@ -126,6 +126,8 @@ Para cambiar comportamiento, editar la migración correspondiente y aplicar `CRE
 | Score growth function | `s + (1-s)*0.15` | `028` | Cambiar `0.15` |
 | Score decay sin_cambio | -0.05 | `033_analytics_close_insight_loop.sql` | Cambiar `- 0.05` |
 | Score boost confirmado | +0.10 | `033` | Cambiar `+ 0.10` |
+| Score penalización refutado | -0.15 | `066_air97_signo_predicho_close_insight_loop_v2.sql` | Cambiar `- 0.15` (solo aplica con `signo_predicho` NOT NULL y delta en sentido contrario) |
+| Umbral direccional (significancia delta) | 5% (`0.05`) | `066` | Cambiar `ABS(v_delta_eficacia) < 0.05`. Bajo este umbral → `sin_cambio`; igual o mayor → `confirmado`/`refutado` según `signo_predicho` |
 | Decay umbral | 56 días | `035_analytics_decay_and_system_health.sql` | Cambiar `INTERVAL '56 days'` |
 
 ## Limitaciones conocidas
@@ -133,7 +135,7 @@ Para cambiar comportamiento, editar la migración correspondiente y aplicar `CRE
 1. **Atribución Meta→Shopify caída** — `roas_meta=0` casi siempre. El loop lo refleja correctamente (no oculta). Resolver via [AIR-44](https://linear.app/airedeagua/issue/AIR-44).
 2. **Klaviyo no integrado** — métricas de email en NULL hasta que E3E esté activo. El `audience_segments` queda con datos pero sin enriquecer accion_klaviyo hasta entonces.
 3. **`detect_anomalies` ruidoso con n<4 efectivo** — para métricas como `cvr_web` que solo tienen valor en algunas semanas (gap de Amplitude), z-score se computa sobre poca muestra. Comportamiento correcto pero los z-scores pueden ser dramáticos (ej. z=5.7) hasta acumular más historia.
-4. **Score asimétrico simple** — el `close_insight_loop` actual usa heurística direccional débil (no distingue "más es mejor" vs "menos es mejor" por métrica). v2 podría añadir un campo `signo_predicho` al schema de insights.
+4. ~~**Score asimétrico simple** — el `close_insight_loop` actual usa heurística direccional débil (no distingue "más es mejor" vs "menos es mejor" por métrica). v2 podría añadir un campo `signo_predicho` al schema de insights.~~ **RESUELTO por v2 / AIR-97** (`066_air97_signo_predicho_close_insight_loop_v2.sql`): el LLM emite `signo_predicho` (`sube`/`baja`/`null`) por insight y `close_insight_loop` v2 compara el signo del delta observado (28d post-acción) contra el predicho — `confirmado` (+0.10) si coincide, `refutado` (-0.15) si contradice, `sin_cambio` (-0.05) si `|delta|<5%`. Insights históricos con `signo_predicho` NULL conservan el comportamiento de 033 (fallback no direccional).
 5. **MCP `update_workflow` desconecta credenciales** — para cambios pequeños usar la UI; para cambios estructurales usar SDK pero presupuestar reasignación de credenciales.
 
 ## Métricas de éxito del épico (criterios de cierre AIR-9)
