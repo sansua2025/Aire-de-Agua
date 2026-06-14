@@ -241,6 +241,21 @@ type ViewAnomalias = ReadOnlyView<{
   created_at: string | null
 }>
 
+// AIR-61: Capa 2 del dashboard /ai · strategic_learnings en estado 'candidato'.
+// Excluye embedding y evidencia_ids (vista SECURITY DEFINER, ver mig 066).
+type ViewStrategicLearningsCandidatos = ReadOnlyView<{
+  id: string
+  titulo: string | null
+  sintesis: string | null
+  accion_recomendada: string | null
+  dominio: string | null
+  score_estabilidad: number | null
+  semanas_activo: number | null
+  primera_observacion: string | null
+  ultima_observacion: string | null
+  created_at: string | null
+}>
+
 type ViewTopSkus = ReadOnlyView<{
   producto_id: string
   producto_titulo: string | null
@@ -331,7 +346,7 @@ type ViewCustomerPanel = ReadOnlyView<{
 }>
 
 /**
- * Tipo Database scopeado al schema `analytics` con las 13 views dashboard.
+ * Tipo Database scopeado al schema `analytics` con las 15 views dashboard.
  */
 export type AnalyticsDatabase = {
   analytics: {
@@ -346,6 +361,7 @@ export type AnalyticsDatabase = {
       view_dashboard_insights_activos: ViewInsightsActivos
       view_dashboard_cola_agrupada: ViewColaAgrupada
       view_dashboard_anomalias: ViewAnomalias
+      view_dashboard_strategic_learnings_candidatos: ViewStrategicLearningsCandidatos
       view_dashboard_top_skus: ViewTopSkus
       view_dashboard_inventory_health: ViewInventoryHealth
       view_dashboard_discount_mix: ViewDiscountMix
