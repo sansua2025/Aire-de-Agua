@@ -9,16 +9,20 @@
   "nodes": [
     {
       "id": "2c624ea7-934d-4dcd-82a0-bad00e302665",
-      "name": "Cron cada 6h",
+      "name": "Cron cada 2 dias",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.3,
-      "position": [0, 192],
+      "position": [
+        0,
+        192
+      ],
       "parameters": {
         "rule": {
           "interval": [
             {
-              "field": "hours",
-              "hoursInterval": 6
+              "field": "days",
+              "daysInterval": 2,
+              "triggerAtHour": 9
             }
           ]
         }
@@ -29,7 +33,10 @@
       "name": "Linear - Contexto (label + abiertos)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [224, 192],
+      "position": [
+        224,
+        192
+      ],
       "parameters": {
         "method": "POST",
         "url": "https://api.linear.app/graphql",
@@ -63,7 +70,10 @@
       "name": "n8n - Ejecuciones fallidas",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [448, 0],
+      "position": [
+        448,
+        0
+      ],
       "parameters": {
         "method": "GET",
         "url": "https://airedeagua.app.n8n.cloud/api/v1/executions",
@@ -101,7 +111,10 @@
       "name": "Agrupar fallos >=2",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [672, 0],
+      "position": [
+        672,
+        0
+      ],
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
@@ -113,7 +126,10 @@
       "name": "Unir candidatos",
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3.2,
-      "position": [896, 176],
+      "position": [
+        896,
+        176
+      ],
       "parameters": {
         "mode": "append",
         "numberInputs": 3
@@ -124,7 +140,10 @@
       "name": "Supabase - sync_log 7d",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [448, 192],
+      "position": [
+        448,
+        192
+      ],
       "parameters": {
         "method": "GET",
         "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log",
@@ -176,7 +195,10 @@
       "name": "Fuentes sin correr hoy (COT)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [672, 192],
+      "position": [
+        672,
+        192
+      ],
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
@@ -188,7 +210,10 @@
       "name": "n8n - Workflows actuales",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [448, 384],
+      "position": [
+        448,
+        384
+      ],
       "parameters": {
         "method": "GET",
         "url": "https://airedeagua.app.n8n.cloud/api/v1/workflows",
@@ -222,7 +247,10 @@
       "name": "Drift n8n vs repo",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [672, 384],
+      "position": [
+        672,
+        384
+      ],
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
@@ -234,7 +262,10 @@
       "name": "Dedupe vs Linear",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1120, 192],
+      "position": [
+        1120,
+        192
+      ],
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
@@ -246,7 +277,10 @@
       "name": "¿Hay candidatos nuevos?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
-      "position": [1344, 192],
+      "position": [
+        1344,
+        192
+      ],
       "parameters": {
         "conditions": {
           "options": {
@@ -275,7 +309,10 @@
       "name": "Linear - Crear issue",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [1792, 192],
+      "position": [
+        1792,
+        192
+      ],
       "parameters": {
         "method": "POST",
         "url": "https://api.linear.app/graphql",
@@ -309,24 +346,16 @@
       "name": "Loop crear issues",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
-      "position": [1568, 192],
+      "position": [
+        1568,
+        192
+      ],
       "parameters": {
         "batchSize": 1
       }
     }
   ],
   "connections": {
-    "Cron cada 6h": {
-      "main": [
-        [
-          {
-            "node": "Linear - Contexto (label + abiertos)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Linear - Contexto (label + abiertos)": {
       "main": [
         [
@@ -464,6 +493,17 @@
         [
           {
             "node": "Linear - Crear issue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cron cada 2 dias": {
+      "main": [
+        [
+          {
+            "node": "Linear - Contexto (label + abiertos)",
             "type": "main",
             "index": 0
           }
