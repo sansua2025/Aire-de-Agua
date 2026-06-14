@@ -212,6 +212,18 @@ Principio: **cada issue resuelto hace al siguiente más barato.** Si un aprendiz
 
 MCP **acotado por subagente** (frontmatter `mcpServers`) → el hilo principal no carga tools que no usa → prefijo de contexto estable → KV-cache caliente.
 
+> **Restricción verificada en entorno web/remoto (sesión AIR-71/119/67/97):** los subagentes con
+> lista `tools:` positiva (builder, verify, reviewer, retro, fixer) **no reciben herramientas MCP**
+> aunque el frontmatter declare `mcpServers`. Solo los agentes "All tools except…" (issue-analyst,
+> orchestrator — cuyo frontmatter NO usa lista positiva) tienen MCP garantizado. Consecuencia:
+> el ORQUESTADOR ejecuta las operaciones MCP críticas (apply_migration, validate_workflow,
+> get_advisors); el builder solo puede autorar archivos.
+
+> **Restricción de infraestructura (plan Free):** `create_branch` en Supabase devuelve
+> `PaymentRequired` (`vnctmzsgemefgbtjctlo` sin plan Pro). Preview branches no disponibles.
+> Mitigación activa: verificación estática de RPCs via `pg_get_functiondef` + tests sintéticos en
+> el PR para que el humano ejecute al aplicar.
+
 ---
 
 ## 8. Modos de operación
@@ -242,3 +254,6 @@ flowchart LR
 | 7 | Carril `human-gate` formal | ✅ Resuelto — escalera de autonomía: analyst decide → orchestrator etiqueta → gate condición 0 |
 
 Extras de esta rama: contador determinista de reintentos (`attempt.sh`), reglas de datos como fuente única (`check-data-rules.sh`, usada por hook + CI), regla de graduación en `retro`, guard anti prompt-injection en `issue-analyst`. Diseño completo de autonomía: `docs/agentes/AUTONOMIA.md`.
+| 8 | MCP no llega a subagentes con allowlist `tools:` positiva en entorno web/remoto | Documentado — el orquestador ejecuta las ops MCP; builder/verify/reviewer solo autoran archivos. Ver §7. |
+| 9 | Supabase branching deshabilitado (plan Free) | Documentado — mitigación: verificación estática + tests sintéticos en PR. Ver §7. |
+| 10 | Drift docstring/cuerpo en RPCs del loop de insights | Candidato a regla `check-data-rules.sh` (AIR-127) — aún no implementado. |
