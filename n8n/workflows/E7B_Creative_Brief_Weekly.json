@@ -230,7 +230,7 @@
     },
     {
       "id": "e7b-parse-0001",
-      "name": "Parse Brief + Build Slack",
+      "name": "Parse Brief + Build Email",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -239,7 +239,7 @@
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// AIR-94 · parser JSON estricto con fallback tolerante.\nconst resp = $input.first().json;\nconst text = (resp && Array.isArray(resp.content) && resp.content[0] && resp.content[0].text) || '';\n\nlet brief;\ntry {\n  brief = JSON.parse(text);\n} catch (e) {\n  const fence = text.match(/```(?:json)?\\s*([\\s\\S]*?)```/);\n  if (fence) { brief = JSON.parse(fence[1].trim()); }\n  else {\n    const brace = text.match(/\\{[\\s\\S]*\\}/);\n    if (brace) brief = JSON.parse(brace[0]);\n    else throw new Error('Claude brief not valid JSON: ' + text.slice(0, 200));\n  }\n}\n\nfunction clean(s, max) {\n  if (s == null) return '';\n  const str = String(s).replace(/[\\x00-\\x1F\\x7F]/g, ' ').replace(/<[^>]*>/g, '').trim();\n  max = max || 200;\n  return str.length > max ? str.slice(0, max) + '...' : str;\n}\n\nconst priorizar = Array.isArray(brief.priorizar) ? brief.priorizar : [];\n// 'evitar' SIEMPRE presente: si el modelo lo omite, dejamos un placeholder explicito.\nlet evitar = Array.isArray(brief.evitar) ? brief.evitar : [];\nif (evitar.length === 0) {\n  evitar = [{ elemento: '-', valor: '-', canal: '-', por_que: 'Sin senal negativa clara esta semana; mantener cautela con elementos de muestra pequena.' }];\n}\n\nfunction lineas(arr) {\n  return arr.map(function (x) {\n    const el = clean(x.elemento, 30);\n    const val = clean(x.valor, 80);\n    const can = clean(x.canal, 20);\n    const pq = clean(x.por_que, 240);\n    return '• ' + el + ' = ' + val + ' [' + can + ']' + (pq ? ' — ' + pq : '');\n  }).join('\\n');\n}\n\nconst productoFoco = clean(brief.producto_foco, 200);\nconst objetivo = clean(brief.objetivo, 200);\n\nconst slackText = ':art: *Brief creativo semanal — Aire de Agua*\\n\\n'\n  + '*PRIORIZAR*\\n' + (priorizar.length ? lineas(priorizar) : '• (sin patrones positivos con muestra suficiente)') + '\\n\\n'\n  + '*EVITAR*\\n' + lineas(evitar) + '\\n\\n'\n  + '*PRODUCTO FOCO*\\n' + (productoFoco || '(sin definir)') + '\\n\\n'\n  + '*OBJETIVO*\\n' + (objetivo || '(sin definir)') + '\\n\\n'\n  + '*COPIES SUGERIDOS*\\n_pendiente E6/AIR-10 (generador de copies aun no implementado)_';\n\n// Slack URL desde env (puede estar vacia -> no se notifica).\nlet slackUrl = '';\ntry { slackUrl = ($env && $env.SLACK_WEBHOOK_URL) ? String($env.SLACK_WEBHOOK_URL).trim() : ''; } catch (e) { slackUrl = ''; }\nconst hasSlack = /^https?:\\/\\//i.test(slackUrl);\n\nreturn [{ json: {\n  slack_url: slackUrl,\n  has_slack: hasSlack,\n  slack_text: slackText.slice(0, 3500),\n  priorizar_count: priorizar.length,\n  evitar_count: evitar.length\n} }];"
+        "jsCode": "// AIR-11/94 · Brief creativo semanal en HTML (Gmail). Parser tolerante + render estructurado.\nconst resp = $input.first().json;\nconst text = (resp && Array.isArray(resp.content) && resp.content[0] && resp.content[0].text) || '';\nlet brief;\ntry { brief = JSON.parse(text); }\ncatch (e) {\n  const fence = text.match(/```(?:json)?\\s*([\\s\\S]*?)```/);\n  if (fence) { brief = JSON.parse(fence[1].trim()); }\n  else { const brace = text.match(/\\{[\\s\\S]*\\}/); if (brace) brief = JSON.parse(brace[0]); else throw new Error('Claude brief not valid JSON: ' + text.slice(0,200)); }\n}\nfunction clean(s, max) {\n  if (s == null) return '';\n  const str = String(s).replace(/[\\x00-\\x1F\\x7F]/g, ' ').replace(/<[^>]*>/g, '').trim();\n  max = max || 200;\n  return str.length > max ? str.slice(0, max) + '...' : str;\n}\nconst esc = (s) => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');\n\nconst priorizar = Array.isArray(brief.priorizar) ? brief.priorizar : [];\nlet evitar = Array.isArray(brief.evitar) ? brief.evitar : [];\nif (evitar.length === 0) {\n  evitar = [{ elemento: '-', valor: '-', canal: '-', por_que: 'Sin senal negativa clara esta semana; mantener cautela con elementos de muestra pequena.' }];\n}\nconst productoFoco = clean(brief.producto_foco, 200);\nconst objetivo = clean(brief.objetivo, 200);\n\n// slack_text (compat / log) — texto plano sin markdown\nfunction lineasTxt(arr) {\n  return arr.map(x => '• ' + clean(x.elemento,30) + ' = ' + clean(x.valor,80) + ' [' + clean(x.canal,20) + ']' + (x.por_que ? ' — ' + clean(x.por_que,240) : '')).join('\\n');\n}\nconst slackText = 'Brief creativo semanal — Aire de Agua\\n\\nPRIORIZAR\\n'\n  + (priorizar.length ? lineasTxt(priorizar) : '• (sin patrones positivos con muestra suficiente)')\n  + '\\n\\nEVITAR\\n' + lineasTxt(evitar)\n  + '\\n\\nPRODUCTO FOCO\\n' + (productoFoco || '(sin definir)')\n  + '\\n\\nOBJETIVO\\n' + (objetivo || '(sin definir)');\n\n// HTML\nfunction liHtml(arr, accent) {\n  return arr.map(x => {\n    const el = esc(clean(x.elemento,30)), val = esc(clean(x.valor,80)), can = esc(clean(x.canal,20)), pq = esc(clean(x.por_que,240));\n    return '<li style=\"margin:0 0 10px;list-style:none;border-left:3px solid ' + accent + ';padding:2px 0 2px 12px;\">'\n      + '<b>' + el + ' = ' + val + '</b> <span style=\"color:#999;font-size:11px;\">[' + can + ']</span>'\n      + (pq ? '<div style=\"color:#555;font-size:12px;margin-top:3px;line-height:1.5;\">' + pq + '</div>' : '')\n      + '</li>';\n  }).join('');\n}\nfunction seccion(titulo, color, contenidoHtml) {\n  return '<div style=\"margin:0 0 20px;\">'\n    + '<div style=\"font-size:12px;font-weight:700;color:' + color + ';text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;\">' + titulo + '</div>'\n    + '<ul style=\"margin:0;padding:0;\">' + contenidoHtml + '</ul></div>';\n}\nconst prioHtml = priorizar.length ? liHtml(priorizar, '#16a085')\n  : '<li style=\"list-style:none;color:#999;font-size:13px;\">(sin patrones positivos con muestra suficiente)</li>';\nconst html =\n'<div style=\"margin:0;background:#f4f4f5;padding:24px 0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1a1a1a;\">' +\n  '<div style=\"max-width:640px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;border:1px solid #e5e5e5;\">' +\n    '<div style=\"background:#1a1a1a;color:#fff;padding:18px 24px;\">' +\n      '<div style=\"font-size:18px;font-weight:700;\">📋 Brief creativo semanal</div>' +\n      '<div style=\"font-size:13px;opacity:.85;margin-top:2px;\">Aire de Agua · qué priorizar y evitar en creativos</div>' +\n    '</div>' +\n    '<div style=\"padding:22px 24px;\">' +\n      seccion('✅ Priorizar', '#16a085', prioHtml) +\n      seccion('⛔ Evitar', '#c0392b', liHtml(evitar, '#c0392b')) +\n      '<div style=\"margin:0 0 16px;\"><div style=\"font-size:12px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;\">Producto foco</div><div style=\"font-size:14px;\">' + (esc(productoFoco) || '<span style=\"color:#999;\">(sin definir)</span>') + '</div></div>' +\n      '<div style=\"margin:0 0 4px;\"><div style=\"font-size:12px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;\">Objetivo</div><div style=\"font-size:14px;\">' + (esc(objetivo) || '<span style=\"color:#999;\">(sin definir)</span>') + '</div></div>' +\n      '<p style=\"margin:18px 0 0;font-size:12px;color:#999;border-top:1px solid #eee;padding-top:14px;\">Copies sugeridos: pendiente E6/AIR-10 (generador de copies).</p>' +\n    '</div>' +\n  '</div>' +\n'</div>';\n\nreturn [{ json: { html, slack_text: slackText.slice(0,3500), priorizar_count: priorizar.length, evitar_count: evitar.length } }];\n"
       }
     },
     {
@@ -254,7 +254,7 @@
       "parameters": {
         "sendTo": "marketing@airedeagua.com",
         "subject": "📋 AdeA · Brief creativo semanal",
-        "message": "={{ $json.slack_text }}",
+        "message": "={{ $json.html }}",
         "options": {
           "appendAttribution": false,
           "senderName": "Aire de Agua · Brief E7"
@@ -351,14 +351,14 @@
       "main": [
         [
           {
-            "node": "Parse Brief + Build Slack",
+            "node": "Parse Brief + Build Email",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Parse Brief + Build Slack": {
+    "Parse Brief + Build Email": {
       "main": [
         [
           {
