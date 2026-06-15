@@ -102,7 +102,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "const items = $input.all();\nconst SCHEMA = [\"upsert_key\",\"post_shortcode\",\"post_url\",\"image_url\",\"meta_post_id\",\n  \"plataforma\",\"tipo\",\"fecha_publicacion\",\"caption\",\"alcance\",\"impresiones\",\"likes\",\n  \"comentarios\",\"guardados\",\"engagement_rate\",\"compartidos\",\"visualizaciones\"];\nconst normalized = items.map(it => {\n  const out = {};\n  for (const k of SCHEMA) {\n    const v = it.json[k];\n    if (v !== undefined && v !== null) out[k] = v;\n  }\n  return out;\n});\nconst batchSize = 50;\nconst batches = [];\nfor (let i = 0; i < normalized.length; i += batchSize) {\n  batches.push({ json: { batch: normalized.slice(i, i + batchSize) }});\n}\nreturn batches;"
+        "jsCode": "const items = $input.all();\nconst SCHEMA = [\"upsert_key\",\"post_shortcode\",\"post_url\",\"image_url\",\"meta_post_id\",\n  \"plataforma\",\"tipo\",\"fecha_publicacion\",\"caption\",\"alcance\",\"impresiones\",\"likes\",\n  \"comentarios\",\"guardados\",\"engagement_rate\",\"compartidos\",\"visualizaciones\"];\n// AIR-73: NO rellenar claves ausentes con 0/null (lección AIR-45).\n// La omision de ceros preserva el merge parcial: resolution=merge-duplicates\n// no debe pisar columnas reales con ceros. Se conserva intacta esa logica.\nconst normalized = items.map(it => {\n  const out = {};\n  for (const k of SCHEMA) {\n    const v = it.json[k];\n    if (v !== undefined && v !== null) out[k] = v;\n  }\n  return out;\n});\n// AIR-73: batchSize=1. Cada request lleva UNA sola fila, por lo que PostgREST\n// nunca recibe un array multi-fila con sets de columnas heterogeneos (esa era\n// la causa del HTTP 400 \"All object keys must match\"). El upsert sigue siendo\n// idempotente sobre upsert_key con resolution=merge-duplicates.\nconst batchSize = 1;\nconst batches = [];\nfor (let i = 0; i < normalized.length; i += batchSize) {\n  batches.push({ json: { batch: normalized.slice(i, i + batchSize) }});\n}\nreturn batches;"
       }
     },
     {
@@ -137,6 +137,44 @@
         "jsonBody": "={{ JSON.stringify($json.batch) }}",
         "options": {}
       }
+    },
+    {
+      "id": "a1f0c3e2-7b44-4d8a-9c11-2f6e5b9a0d31",
+      "name": "Resumen E3",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 112],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// AIR-73: agrega el resultado del upsert por-fila en una sola fila de resumen\n// para dejar traza en sync_log. Antes E3 NO logueaba y el corte fue invisible.\nconst filas = $items('Split en Batches').length;\nreturn [{ json: {\n  evento: 'e3_organic_posts',\n  entidad: 'meta_organic_posts',\n  estado: 'ok',\n  filas: filas\n} }];"
+      }
+    },
+    {
+      "id": "b2e1d4f3-8c55-4e9b-ad22-3a7f6c0b1e42",
+      "name": "Log sync_log",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [1344, 112],
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ evento: $json.evento, entidad: $json.entidad, estado: $json.estado, error_mensaje: 'filas_procesadas=' + $json.filas }) }}",
+        "options": {}
+      }
     }
   ],
   "connections": {
@@ -165,6 +203,12 @@
     },
     "Split en Batches": {
       "main": [[{ "node": "Upsert Supabase", "type": "main", "index": 0 }]]
+    },
+    "Upsert Supabase": {
+      "main": [[{ "node": "Resumen E3", "type": "main", "index": 0 }]]
+    },
+    "Resumen E3": {
+      "main": [[{ "node": "Log sync_log", "type": "main", "index": 0 }]]
     }
   },
   "settings": {
