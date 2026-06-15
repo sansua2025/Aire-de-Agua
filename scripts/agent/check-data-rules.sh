@@ -16,7 +16,7 @@ case "$MODE" in
   --diff)
     BASE="${1:?Uso: check-data-rules.sh --diff <base>}"
     while IFS= read -r f; do [ -n "$f" ] && FILES+=("$f"); done \
-      < <(git diff --name-only --diff-filter=ACMR "$BASE"...HEAD -- '*.sql' '*.ts' '*.tsx' 2>/dev/null)
+      < <(git diff --name-only --diff-filter=ACMR "$BASE"...HEAD -- '*.sql' '*.ts' '*.tsx' 'n8n/workflows/*.json' 2>/dev/null)
     ;;
   *) echo "Uso: check-data-rules.sh --file <ruta>... | --diff <base>"; exit 2 ;;
 esac
@@ -27,6 +27,16 @@ warn() { echo "WARN  $1"; WARNS=$((WARNS+1)); }
 
 for f in ${FILES[@]+"${FILES[@]}"}; do
   [ -f "$f" ] || continue
+  # Los workflows n8n (.json) entran SOLO para R1 (valor_compras): el bug de E8B
+  # demostró que el grep de revenue de pixel debe cubrirlos. R2/R3/R4 son
+  # específicas de SQL/TS y no aplican al JSON exportado.
+  case "$f" in
+    n8n/workflows/*.json)
+      grep -qiE 'valor_compras' "$f" \
+        && fail "$f — 'valor_compras' como revenue. Usa 'roas_real' / v_meta_ads_roas_real."
+      continue ;;
+  esac
+
   case "$f" in *.sql|*.ts|*.tsx) ;; *) continue ;; esac
   # saltar tipos generados de Supabase y tipos de vistas del dashboard hechos
   # a mano (analytics.ts): contienen nombres de columna (valor_compras,

@@ -1,0 +1,465 @@
+{
+  "id": "E8BPostPubAnalysis001",
+  "name": "E8B - Post Publication Analysis",
+  "active": false,
+  "description": "E8B · AIR-12. Analisis post-publicacion. Schedule cada hora (cron '0 * * * *'; settings.timezone=America/Bogota). 1) Busca filas de calendario_editorial con estado='publicado' y publicado_at <= ahora-48h (ya hay metricas). 2) Por fila con creative_asset_id, hace pull de metricas reales segun canal (Meta Ads: roas_real = revenue_real_cop/gasto_cop desde la vista de verdad v_meta_ads_roas_real_asset (mig 076), atribucion REAL a nivel creativo via mapping curado creative_utm_map (utm_content->ad_name), SIN prorrateo y SIN pixel; solo creativos mapeados (tiene_atribucion_real) tienen ROAS real, los NO mapeados se omiten (no ROAS=0); Klaviyo: ingresos/open_rate). 3) Compara vs benchmark (referencia = score_rendimiento previo del asset o 1.0 baseline). 4) Llama RPC registrar_analisis_post_publicacion(asset,canal,metrica,observado,referencia) que persiste score_rendimiento y materializa insight logro(ratio>=2)/anomalia(ratio<=0.5) idempotente. 5) Marca la fila estado='analizado'. 6) Llama recompute_creative_learnings(ventana 28d). Es mayormente numerico (no hay texto libre a Claude en este flujo); ningun LLM. sync_log registra el resultado (estado ok/skip).",
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "ErrorHandlerGlobal01",
+    "timezone": "America/Bogota"
+  },
+  "nodes": [
+    {
+      "id": "e8b-manual-0001",
+      "name": "Run Analysis Now",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-320, 480],
+      "parameters": {}
+    },
+    {
+      "id": "e8b-cron-0001",
+      "name": "Schedule Cada Hora",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [-320, 256],
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "cronExpression", "expression": "0 * * * *" }]
+        }
+      }
+    },
+    {
+      "id": "e8b-cutoff-0001",
+      "name": "Compute Cutoff 48h",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-60, 368],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Filas publicadas hace >= 48h estan listas para analizar (ventana de maduracion).\nconst cutoff = new Date(Date.now() - 48 * 3600 * 1000).toISOString();\nconst inicio28 = new Date(Date.now() - 28 * 24 * 3600 * 1000).toISOString().slice(0, 10);\nconst fin = new Date().toISOString().slice(0, 10);\nreturn [{ json: { cutoff_iso: cutoff, recompute_inicio: inicio28, recompute_fin: fin } }];"
+      }
+    },
+    {
+      "id": "e8b-fetch-pendientes-0001",
+      "name": "Fetch Publicadas Maduras",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [200, 368],
+      "parameters": {
+        "method": "GET",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/calendario_editorial",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "estado", "value": "eq.publicado" },
+            { "name": "creative_asset_id", "value": "not.is.null" },
+            { "name": "publicado_at", "value": "=lte.{{ $json.cutoff_iso }}" },
+            {
+              "name": "select",
+              "value": "id,canal,formato,producto_id,creative_asset_id,objetivo,publicado_at"
+            },
+            { "name": "order", "value": "publicado_at.asc" },
+            { "name": "limit", "value": "50" }
+          ]
+        },
+        "options": {}
+      },
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" }
+      }
+    },
+    {
+      "id": "e8b-split-0001",
+      "name": "Split Rows",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [460, 368],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "e8b-has-row-0001",
+      "name": "Hay fila?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [720, 368],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-has-asset",
+              "leftValue": "={{ $json.creative_asset_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e8b-fetch-metric-0001",
+      "name": "Fetch Metric (by canal)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [980, 256],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.canal === 'email' ? 'https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/klaviyo_campaigns' : 'https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/meta_ads_performance' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "select",
+              "value": "={{ $json.canal === 'email' ? 'ingresos,open_rate,enviado_at' : 'gasto,impresiones,clics,fecha' }}"
+            },
+            {
+              "name": "creative_asset_id",
+              "value": "={{ $json.canal === 'email' ? undefined : 'eq.' + $json.creative_asset_id }}"
+            },
+            {
+              "name": "order",
+              "value": "={{ $json.canal === 'email' ? 'enviado_at.desc' : 'fecha.desc' }}"
+            },
+            { "name": "limit", "value": "200" }
+          ]
+        },
+        "options": {}
+      },
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" }
+      }
+    },
+    {
+      "id": "e8b-fetch-roasreal-0001",
+      "name": "Fetch ROAS Real (asset)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [980, 416],
+      "parameters": {
+        "method": "GET",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/v_meta_ads_roas_real_asset",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "select",
+              "value": "ad_name,gasto_cop,revenue_real_cop,ventas_reales,roas_real_asset,tiene_atribucion_real,creative_asset_ids"
+            },
+            {
+              "name": "creative_asset_ids",
+              "value": "={{ 'cs.{' + $json.creative_asset_id + '}' }}"
+            },
+            {
+              "name": "tiene_atribucion_real",
+              "value": "is.true"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" }
+      }
+    },
+    {
+      "id": "e8b-fetch-roasbench-0001",
+      "name": "Fetch ROAS Bench (asset)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [980, 528],
+      "parameters": {
+        "method": "GET",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/v_meta_ads_roas_real_asset",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "select",
+              "value": "ad_name,gasto_cop,revenue_real_cop,roas_real_asset,tiene_atribucion_real"
+            },
+            {
+              "name": "tiene_atribucion_real",
+              "value": "is.true"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" }
+      }
+    },
+    {
+      "id": "e8b-build-call-0001",
+      "name": "Build RPC Call",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1240, 256],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Calculo 100% numerico de observado vs referencia. Sin LLM, sin texto libre.\nconst row = $('Split Rows').item.json;\nconst metricRows = $('Fetch Metric (by canal)').all().map(i => i.json).filter(Boolean);\nconst canal = row.canal;\n\nfunction num(v) { const n = Number(v); return Number.isFinite(n) ? n : null; }\n\nlet metrica;\nlet observado = null;\nlet referencia = null;\n\nif (canal === 'email') {\n  // metrica = ingresos del envio mas reciente; referencia = promedio de ingresos de los envios recientes (>0).\n  metrica = 'ingresos';\n  const vals = metricRows.map(r => num(r.ingresos)).filter(v => v != null && v > 0);\n  observado = vals.length ? vals[0] : null;\n  const prev = vals.slice(1);\n  referencia = prev.length ? (prev.reduce((a, b) => a + b, 0) / prev.length) : (vals.length ? vals[0] : null);\n} else {\n  // meta_ads / organico tratados como paid: metrica = roas_real ATRIBUIDO (revenue REAL / gasto).\n  // SIN PRORRATEO. La verdad vive en v_meta_ads_roas_real_asset (mig 076), grain ad_name/creativo:\n  // revenue real (Shopify, NO pixel) atribuido por utm_content (slug) -> ad_name via el mapping\n  // curado creative_utm_map; el asset se resuelve por creative_asset_ids (array) de la vista.\n  // PROHIBIDO el revenue del pixel de Meta y la col GENERATED 'roas'.\n  // CAVEAT: solo creativos mapeados (tiene_atribucion_real=true, ya filtrado en el fetch) tienen\n  // revenue real. Si el creativo analizado NO esta mapeado, no hay filas -> observado=null -> skip\n  // (NO se reporta ROAS=0, que falsearia el learning).\n  metrica = 'roas_real';\n  const assetRows = $('Fetch ROAS Real (asset)').all().map(i => i.json).filter(Boolean)\n    .filter(r => r && r.tiene_atribucion_real === true);\n  // observado = ROAS real del creativo = SUM(revenue real atribuido) / SUM(gasto real).\n  // Si el asset mapea a >1 ad_name, se suman revenues y gastos reales (sigue siendo real, no prorrateo).\n  let revAsset = 0;\n  let gastoAsset = 0;\n  for (const a of assetRows) {\n    const rev = num(a.revenue_real_cop);\n    const g = num(a.gasto_cop);\n    if (rev == null || g == null || g <= 0) continue;\n    revAsset += rev;\n    gastoAsset += g;\n  }\n  observado = gastoAsset > 0 ? (revAsset / gastoAsset) : null;\n  // referencia = ROAS real promedio (ponderado por gasto) de TODOS los creativos con atribucion\n  // real en la vista; baseline 1.0 (ROAS de equilibrio) si aun no hay historia. Numerico, sin pixel.\n  const benchRows = $('Fetch ROAS Bench (asset)').all().map(i => i.json).filter(Boolean)\n    .filter(r => r && r.tiene_atribucion_real === true);\n  let revRef = 0, gastoRef = 0;\n  for (const b of benchRows) {\n    const g = num(b.gasto_cop);\n    const rev = num(b.revenue_real_cop);\n    if (g == null || g <= 0 || rev == null) continue;\n    revRef += rev; gastoRef += g;\n  }\n  referencia = gastoRef > 0 ? (revRef / gastoRef) : 1.0;\n}\n\nconst valido = observado != null && referencia != null && referencia !== 0;\n\nreturn [{ json: {\n  calendario_id: row.id,\n  creative_asset_id: row.creative_asset_id,\n  canal: canal,\n  metrica: metrica,\n  valor_observado: observado,\n  valor_referencia: referencia,\n  valido: valido\n} }];"
+      }
+    },
+    {
+      "id": "e8b-if-valid-0001",
+      "name": "Metrica valida?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [1500, 256],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-valido",
+              "leftValue": "={{ $json.valido }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e8b-rpc-analisis-0001",
+      "name": "RPC registrar_analisis_post_publicacion",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [1760, 160],
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/rpc/registrar_analisis_post_publicacion",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_creative_asset_id: $json.creative_asset_id, p_canal: $json.canal, p_metrica: $json.metrica, p_valor_observado: $json.valor_observado, p_valor_referencia: $json.valor_referencia }) }}",
+        "options": {}
+      },
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" }
+      }
+    },
+    {
+      "id": "e8b-mark-0001",
+      "name": "PATCH estado=analizado",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [2020, 160],
+      "parameters": {
+        "method": "PATCH",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/calendario_editorial",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "=eq.{{ $('Build RPC Call').item.json.calendario_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ estado: 'analizado' }) }}",
+        "options": {}
+      },
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" }
+      }
+    },
+    {
+      "id": "e8b-loop-back-0001",
+      "name": "Back to Split",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [2280, 256],
+      "parameters": {}
+    },
+    {
+      "id": "e8b-rpc-recompute-0001",
+      "name": "RPC recompute_creative_learnings",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [980, 560],
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/rpc/recompute_creative_learnings",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_periodo_inicio: $('Compute Cutoff 48h').first().json.recompute_inicio, p_periodo_fin: $('Compute Cutoff 48h').first().json.recompute_fin }) }}",
+        "options": {}
+      },
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" }
+      }
+    },
+    {
+      "id": "e8b-synclog-0001",
+      "name": "Log sync_log",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [1240, 560],
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ evento: 'post_publication_analysis', entidad: 'calendario_editorial', estado: 'ok', error_mensaje: 'analizadas=' + $('Fetch Publicadas Maduras').all().length + ' filas publicadas maduras (>=48h)' }) }}",
+        "options": {}
+      },
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" }
+      }
+    }
+  ],
+  "connections": {
+    "Run Analysis Now": {
+      "main": [[{ "node": "Compute Cutoff 48h", "type": "main", "index": 0 }]]
+    },
+    "Schedule Cada Hora": {
+      "main": [[{ "node": "Compute Cutoff 48h", "type": "main", "index": 0 }]]
+    },
+    "Compute Cutoff 48h": {
+      "main": [
+        [{ "node": "Fetch Publicadas Maduras", "type": "main", "index": 0 }]
+      ]
+    },
+    "Fetch Publicadas Maduras": {
+      "main": [[{ "node": "Split Rows", "type": "main", "index": 0 }]]
+    },
+    "Split Rows": {
+      "main": [
+        [
+          {
+            "node": "RPC recompute_creative_learnings",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [{ "node": "Hay fila?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Hay fila?": {
+      "main": [
+        [{ "node": "Fetch Metric (by canal)", "type": "main", "index": 0 }],
+        [{ "node": "Back to Split", "type": "main", "index": 0 }]
+      ]
+    },
+    "Fetch Metric (by canal)": {
+      "main": [
+        [{ "node": "Fetch ROAS Real (asset)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Fetch ROAS Real (asset)": {
+      "main": [
+        [{ "node": "Fetch ROAS Bench (asset)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Fetch ROAS Bench (asset)": {
+      "main": [[{ "node": "Build RPC Call", "type": "main", "index": 0 }]]
+    },
+    "Build RPC Call": {
+      "main": [[{ "node": "Metrica valida?", "type": "main", "index": 0 }]]
+    },
+    "Metrica valida?": {
+      "main": [
+        [
+          {
+            "node": "RPC registrar_analisis_post_publicacion",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [{ "node": "Back to Split", "type": "main", "index": 0 }]
+      ]
+    },
+    "RPC registrar_analisis_post_publicacion": {
+      "main": [
+        [{ "node": "PATCH estado=analizado", "type": "main", "index": 0 }]
+      ]
+    },
+    "PATCH estado=analizado": {
+      "main": [[{ "node": "Back to Split", "type": "main", "index": 0 }]]
+    },
+    "Back to Split": {
+      "main": [[{ "node": "Split Rows", "type": "main", "index": 0 }]]
+    },
+    "RPC recompute_creative_learnings": {
+      "main": [[{ "node": "Log sync_log", "type": "main", "index": 0 }]]
+    }
+  },
+  "tags": [],
+  "meta": {
+    "aiBuilderAssisted": false
+  }
+}
