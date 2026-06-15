@@ -1,0 +1,250 @@
+{
+  "name": "E - Data Freshness Check",
+  "active": false,
+  "description": "AIR-73 · Cron diario 8am COT (0 13 * * * UTC). GET v_data_source_freshness (1 fila/fuente con dias_desde_ultimo y stale). Filtra fuentes stale; si hay alguna manda alerta a Slack. Siempre loguea a sync_log. Check 100% numerico — NO pasa texto libre a ningun LLM (no aplica AIR-94).",
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "ErrorHandlerGlobal01",
+    "availableInMCP": true
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 13
+            }
+          ]
+        }
+      },
+      "id": "3f1b8a20-1c44-4e6a-9d11-7a2c5b9e0d01",
+      "name": "Cron diario 8am COT",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [128, 368]
+    },
+    {
+      "parameters": {
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/v_data_source_freshness?select=*",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "5a2c7e31-2d55-4f7b-ae22-8b3d6c0f1e12",
+      "name": "GET data_source_freshness",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [352, 368],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Supabase AdeA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// AIR-73: la view v_data_source_freshness ya calcula `stale` por fuente con su\n// umbral_dias (orgánico semanal: >10d, perfil/ads/amplitude diario: >2d,\n// klaviyo campañas: >3d). Aquí solo agregamos: cuántas y cuáles están stale.\n// Check 100% numérico — ningún campo de texto libre se reenvía a un LLM.\nconst rows = $input.all().map(i => i.json);\nconst staleRows = rows.filter(r => r.stale === true);\nconst resumen = rows\n  .map(r => r.fuente + '=' + (r.dias_desde_ultimo == null ? 'vacia' : r.dias_desde_ultimo + 'd'))\n  .join(', ');\nconst detalleStale = staleRows\n  .map(r => '• ' + r.fuente + ' (' + r.cadencia + '): ' + (r.dias_desde_ultimo == null ? 'tabla vacia' : r.dias_desde_ultimo + ' dias sin datos, umbral ' + r.umbral_dias + 'd') + ', ultima ' + (r.ultima_fecha || '—'))\n  .join('\\n');\nreturn [{ json: {\n  total_fuentes: rows.length,\n  stale_count: staleRows.length,\n  resumen,\n  detalle_stale: detalleStale\n} }];"
+      },
+      "id": "6b3d8f42-3e66-4a8c-bf33-9c4e7d102f23",
+      "name": "Agregar Frescura",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [576, 368]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.stale_count }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "7c4e9053-4f77-4b9d-a044-ad5f8e213034",
+      "name": "Hay fuentes stale?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [800, 368]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// AIR-73: arma el texto Slack a partir SOLO de campos numéricos/nombres de\n// fuente controlados por nosotros (no texto externo). No hay LLM involucrado.\nconst d = $json;\nconst text = ':rotating_light: *Aire de Agua · Corte de datos detectado*\\n' +\n  d.stale_count + ' de ' + d.total_fuentes + ' fuentes sin datos frescos:\\n' +\n  d.detalle_stale + '\\n\\nResumen: ' + d.resumen;\nreturn [{ json: { text, stale_count: d.stale_count, resumen: d.resumen } }];"
+      },
+      "id": "8d5f0164-5088-4cae-b155-be6f9f324145",
+      "name": "Render Slack Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1024, 208]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "alertas-data"
+        },
+        "text": "={{ $json.text }}",
+        "otherOptions": {}
+      },
+      "id": "9e601275-6199-4dbf-c266-cf0a4f435256",
+      "name": "Slack Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [1248, 208],
+      "webhookId": "c4e7a1f0-2b3c-4d5e-8f90-1a2b3c4d5e6f",
+      "credentials": {
+        "slackApi": {
+          "id": "PLACEHOLDER",
+          "name": "Slack AdeA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ evento: 'data_freshness_check', entidad: 'v_data_source_freshness', estado: ($('Agregar Frescura').first().json.stale_count > 0 ? 'skip' : 'ok'), error_mensaje: 'stale=' + $('Agregar Frescura').first().json.stale_count + '/' + $('Agregar Frescura').first().json.total_fuentes + '; ' + $('Agregar Frescura').first().json.resumen }) }}",
+        "options": {}
+      },
+      "id": "af712386-72aa-4ce0-d377-d0a5b546e367",
+      "name": "Log sync_log",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [1248, 480],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Supabase AdeA"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Cron diario 8am COT": {
+      "main": [
+        [
+          {
+            "node": "GET data_source_freshness",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET data_source_freshness": {
+      "main": [
+        [
+          {
+            "node": "Agregar Frescura",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agregar Frescura": {
+      "main": [
+        [
+          {
+            "node": "Hay fuentes stale?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hay fuentes stale?": {
+      "main": [
+        [
+          {
+            "node": "Render Slack Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log sync_log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Render Slack Alert": {
+      "main": [
+        [
+          {
+            "node": "Slack Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack Alert": {
+      "main": [
+        [
+          {
+            "node": "Log sync_log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "tags": [],
+  "meta": {
+    "aiBuilderAssisted": true
+  }
+}
