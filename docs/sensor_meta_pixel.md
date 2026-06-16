@@ -41,8 +41,9 @@ Shopify/Meta Business, no de código.
   (capacidad de atribuir el evento a una persona), **no** valida el valor del campo `value`
   per se. Además, `meta_ads_performance.valor_compras` proviene de la Insights API
   (revenue atribuido), **no** es lectura directa del campo `value` del evento crudo. Por eso
-  el criterio de Events Manager (`value > 0` + `currency = COP` en el evento crudo) **sigue
-  requiriendo confirmación humana** (ver Acciones manuales y Estado del issue).
+  el criterio de Events Manager (`value > 0` + `currency = COP` en el evento crudo) **requirió
+  confirmación humana**, que quedó realizada al 2026-06-16 (ver Acciones manuales y Estado del
+  issue).
 
 ## Salvaguarda en producción
 
@@ -57,11 +58,13 @@ de las ventas son POS sin atribución. Aunque el pixel esté sano, `valor_compra
 revenue de forma sistemática. `roas_real` cruza el gasto contra el revenue real de Shopify y
 no arrastra ese sesgo.
 
-## Acciones manuales (fundador, fuera del repo)
+## Acciones manuales (fundador, fuera del repo — ejecutadas al 2026-06-16)
+
+Quedaron aplicadas y confirmadas; se conservan como registro de la configuración que sostiene el fix:
 
 1. Shopify → canal Facebook/IG: pixel `1030747298351597` en modo **Optimized** + **CAPI
    habilitado**, sin GTM Server-Side reconectado.
-2. Meta Events Manager: compra de prueba → confirmar `Purchase` con `value > 0` y
+2. Meta Events Manager: compra de prueba → confirmado `Purchase` con `value > 0` y
    `currency=COP`, sin duplicados pixel/CAPI.
 
 ## Riesgo a vigilar
