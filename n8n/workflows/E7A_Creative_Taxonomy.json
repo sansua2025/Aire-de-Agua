@@ -17,13 +17,15 @@
         "rule": {
           "interval": [
             {
-              "triggerAtHour": 9
+              "field": "days",
+              "daysInterval": 3,
+              "triggerAtHour": 14
             }
           ]
         }
       },
       "id": "e7a-cron-0001",
-      "name": "Schedule Diario 9 UTC",
+      "name": "Schedule cada 3 días 14 UTC (post-match)",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.3,
       "position": [
@@ -83,7 +85,7 @@
         ]
       ]
     },
-    "Schedule Diario 9 UTC": {
+    "Schedule cada 3 días 14 UTC (post-match)": {
       "main": [
         [
           {
