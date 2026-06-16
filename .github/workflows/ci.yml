@@ -21,6 +21,20 @@ jobs:
           git fetch origin main --quiet || true
           bash scripts/agent/check-data-rules.sh --diff origin/main
 
+  docstring-rpc-loop:
+    name: docstring-rpc-loop
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      # AIR-135 — drift docstring↔cuerpo en las RPCs del loop de insights.
+      # Origen: AIR-97 (penalización 'refutado -0.15' documentada pero nunca implementada).
+      - name: Drift docstring↔cuerpo en RPCs del loop sobre el diff
+        run: |
+          git fetch origin main --quiet || true
+          bash scripts/agent/check-docstring-rpc-loop.sh --diff origin/main
+
   n8n-sync:
     name: n8n-sync
     runs-on: ubuntu-latest
