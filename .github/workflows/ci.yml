@@ -45,6 +45,19 @@ jobs:
       - name: Transform Ads Data en sync (Backfill ↔ Daily)
         run: bash scripts/check-transform-ads-sync.sh
 
+  n8n-graph-parity:
+    name: n8n-graph-parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # AIR-140 — paridad nodes ↔ activeVersion.nodes: los nodos críticos de
+      # seguridad (Build Prompt*, Claude*, Anthropic*, Parse Claude*) deben ser
+      # idénticos en ambas copias del grafo. n8n EJECUTA activeVersion.nodes; si
+      # diverge de w.nodes, una protección anti prompt-injection puede quedar en
+      # la copia editada pero no en la que corre (regresión silenciosa).
+      - name: Paridad de nodos críticos (nodes ↔ activeVersion.nodes)
+        run: bash scripts/agent/check-n8n-graph-parity.sh
+
   dashboard:
     name: dashboard
     runs-on: ubuntu-latest
