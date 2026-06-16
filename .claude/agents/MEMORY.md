@@ -71,3 +71,33 @@ Esto lo encontró AIR-97 comparando el header-comment contra la lógica SQL.
 Candidato a check en `check-data-rules.sh`: verificar que los comentarios-cabecera de las RPCs del
 loop de insights son consistentes con la lógica del cuerpo (al menos detectar penalizaciones/bonus
 declarados pero ausentes). No implementar aún; proponer en AIR-127.
+
+---
+
+# Retro sesión nocturna 2026-06-16
+
+## Entorno remoto — restricciones adicionales confirmadas
+- `gh` CLI NO está disponible en Claude Code on web. `merge-gate.sh` no puede correr desde subagentes.
+  Operaciones GitHub van por MCP `mcp__github__*` (solo disponible en orquestador).
+- Lo anterior refuerza el patrón ya conocido: orquestador ejecuta toda validación runtime;
+  subagentes solo escriben archivos.
+
+## n8n JSON dual-grafo — bug real (AIR-79)
+Los workflows exportados con versión publicada contienen DOS copias del grafo:
+`nodes` (draft) y `activeVersion.nodes` (lo que n8n ejecuta en producción).
+Editar manualmente solo `nodes` deja `activeVersion` divergente.
+En AIR-79 esto reintrodujo snapshot CRUDO en `<data>`, perdiendo la defensa anti-injection (AIR-119)
+en la versión ejecutada, aunque el draft parecía correcto.
+Regla: al editar un nodo n8n a mano, actualizar AMBAS copias y verificar que `jsCode` sea
+byte-idéntico en `nodes[i]` y `activeVersion.nodes[i]`. Candidato a check en CI (issue abierto).
+
+## Firma de `buscar_brand_knowledge` — parámetro es VECTOR, no texto
+`buscar_brand_knowledge(query_embedding vector(1536), limite int, filtro_categoria text)`
+Recibe un embedding precomputado (vector de 1536 dims), NO `query_text`.
+Generar el embedding con `text-embedding-3-small` antes de llamar la RPC.
+Cualquier doc o issue que pase `query_text` directamente está equivocado (afecta AIR-70 y derivados).
+
+## `insights` de Supabase es solo para negocio/datos — no proceso
+`get_memoria_activa(null,...)` ignora el filtro de dominio y devuelve los top-10 `vigente`
+de TODOS los dominios al prompt E5. Insertar learnings de ingeniería/proceso ahí contaminaría
+el contexto analítico del agente E5. La memoria de proceso vive en MEMORY.md (este archivo).
