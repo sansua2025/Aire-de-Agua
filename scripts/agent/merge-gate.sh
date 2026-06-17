@@ -27,8 +27,31 @@ printf '%s\n' "$LABELS" | grep -qx 'human-gate' \
   && fail "label 'human-gate': este PR requiere aprobación humana (no auto-merge)."
 
 echo "merge-gate: [1/5] checks de CI del PR #$PR ..."
-gh pr checks "$PR" > "/tmp/gate_checks_$PR.txt" 2>&1 \
-  || { cat "/tmp/gate_checks_$PR.txt" >&2; fail "CI no está todo en verde."; }
+# gh pr checks: exit 0 = todos pasaron, exit 8 = hay PENDING (ninguno falló aún),
+# exit 1 = algún check FALLÓ. Hacemos poll-and-wait mientras haya pending.
+GATE_CI_INTERVAL="${GATE_CI_INTERVAL:-20}"
+GATE_CI_TIMEOUT="${GATE_CI_TIMEOUT:-900}"
+ci_elapsed=0
+while :; do
+  # Capturamos el rc real de 'gh pr checks' aislándolo del pipe (pipefail).
+  gh pr checks "$PR" > "/tmp/gate_checks_$PR.txt" 2>&1
+  ci_rc=$?
+  if [ "$ci_rc" -eq 0 ]; then
+    break
+  elif [ "$ci_rc" -eq 8 ]; then
+    n_pending="$(grep -ci 'pending' "/tmp/gate_checks_$PR.txt" 2>/dev/null || echo '?')"
+    if [ "$ci_elapsed" -ge "$GATE_CI_TIMEOUT" ]; then
+      cat "/tmp/gate_checks_$PR.txt" >&2
+      fail "CI: timeout esperando checks pendientes (>${GATE_CI_TIMEOUT}s)."
+    fi
+    echo "merge-gate: esperando ${n_pending} checks pending... (${ci_elapsed}s/${GATE_CI_TIMEOUT}s)"
+    sleep "$GATE_CI_INTERVAL"
+    ci_elapsed=$((ci_elapsed + GATE_CI_INTERVAL))
+  else
+    cat "/tmp/gate_checks_$PR.txt" >&2
+    fail "CI: algún check falló."
+  fi
+done
 
 echo "merge-gate: [2-4/5] veredicto anclado del reviewer ..."
 HEAD_SHA="$(gh pr view "$PR" --json headRefOid -q .headRefOid 2>/dev/null)"
@@ -54,6 +77,29 @@ if [ -n "${GATE_REVIEWER_LOGIN:-}" ] && [ "$V_AUTHOR" != "$GATE_REVIEWER_LOGIN" 
 fi
 
 echo "merge-gate: 5/5 OK (veredicto de @${V_AUTHOR:-desconocido} @ ${HEAD_SHA:0:8}). Mergeando PR #$PR (squash) ..."
-gh pr merge "$PR" --squash --delete-branch \
-  && { echo "merge-gate: PR #$PR mergeado. ✅"; exit 0; } \
-  || fail "el merge falló (branch protection / conflictos)."
+# El éxito se mide por el estado REAL del PR, no por el rc del comando: el
+# borrado de rama falla si un worktree la ocupa, aunque el squash sí haya entrado.
+merge_out="$(gh pr merge "$PR" --squash --delete-branch 2>&1)"
+merge_rc=$?
+[ -n "$merge_out" ] && printf '%s\n' "$merge_out" >&2
+
+PR_STATE="$(gh pr view "$PR" --json state -q .state 2>/dev/null || true)"
+if [ "$PR_STATE" = "MERGED" ]; then
+  if [ "$merge_rc" -ne 0 ]; then
+    # Cleanup best-effort: si la rama del PR quedó ocupada por un worktree.
+    HEAD_BRANCH="$(gh pr view "$PR" --json headRefName -q .headRefName 2>/dev/null || true)"
+    if [ -n "$HEAD_BRANCH" ]; then
+      echo "merge-gate: ⚠ squash entró pero el borrado de rama falló; limpiando worktree/rama '$HEAD_BRANCH' (best-effort) ..." >&2
+      wt_path="$(git worktree list --porcelain 2>/dev/null \
+        | awk -v b="refs/heads/$HEAD_BRANCH" '
+            /^worktree /{p=substr($0,10)}
+            /^branch /{if($2==b) print p}' \
+        | head -1)"
+      [ -n "$wt_path" ] && git worktree remove --force "$wt_path" 2>/dev/null || true
+      git branch -D "$HEAD_BRANCH" 2>/dev/null || true
+    fi
+  fi
+  echo "merge-gate: PR #$PR mergeado. ✅"
+  exit 0
+fi
+fail "el merge no se completó (state=${PR_STATE:-desconocido}, rc=$merge_rc)."
