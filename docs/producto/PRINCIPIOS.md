@@ -25,7 +25,7 @@ Un "Hallazgo del Cerebro" (trazable a un insight gobernado) y una "Hipótesis a 
 
 ### 4. La cifra que muestra es la cifra en la que se puede actuar.
 
-Usa el ROAS real (no el de Meta, contaminado por el pixel `value=0`); pre-agrega inventario antes de cruzar ventas; filtra POS del web. Una métrica inflada no es un error cosmético: lleva directo a subir presupuesto en una campaña que en realidad no convierte. **Regla dura: si una cifra requiere transformación externa para ser verdad, está prohibida en el dashboard.** Solo entran columnas ya calculadas y gobernadas en Supabase.
+Usa el ROAS real (no el de Meta: `valor_compras` solo cuenta conversiones atribuidas y ~75% de las ventas son POS sin atribución a pauta); pre-agrega inventario antes de cruzar ventas; filtra POS del web. Una métrica inflada no es un error cosmético: lleva directo a subir presupuesto en una campaña que en realidad no convierte. **Regla dura: si una cifra requiere transformación externa para ser verdad, está prohibida en el dashboard.** Solo entran columnas ya calculadas y gobernadas en Supabase.
 
 ### 5. Cada vista es honesta sobre su propia frescura.
 

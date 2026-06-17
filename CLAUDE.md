@@ -72,6 +72,7 @@ Postgres las calcula automáticamente. Incluirlas causa error.
 - **Memoria acumulativa** — insights con score_confianza que crece con veces_confirmado
 - **GENERATED STORED** — métricas derivadas calculadas por la DB, nunca por los flujos
 - **Un workflow n8n por dominio** — no uno por webhook topic
+- **Revenue de pauta = `roas_real`, nunca `valor_compras`** — `valor_compras` (Meta) solo cuenta conversiones atribuidas y ~75% de las ventas son POS sin atribución; el revenue/ROAS de pauta se toma de `v_meta_ads_roas_real.roas_real`, cruzado contra el revenue real de Shopify. El motivo es la **cobertura de atribución**, no el pixel: el bug histórico `value=0` (AIR-71) ya está resuelto. Ver `docs/sensor_meta_pixel.md`.
 
 ## Seguridad — Protección contra Prompt Injection
 

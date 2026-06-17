@@ -1,6 +1,6 @@
 # Sensor · Meta Pixel Purchase `value=0`
 
-> Última actualización: 2026-06-13
+> Última actualización: 2026-06-16
 > Linear: [AIR-71](https://linear.app/airedeagua/issue/AIR-71) — Sensor · Fix Meta pixel value=0
 
 ## Síntoma
@@ -41,33 +41,37 @@ Shopify/Meta Business, no de código.
   (capacidad de atribuir el evento a una persona), **no** valida el valor del campo `value`
   per se. Además, `meta_ads_performance.valor_compras` proviene de la Insights API
   (revenue atribuido), **no** es lectura directa del campo `value` del evento crudo. Por eso
-  el criterio de Events Manager (`value > 0` + `currency = COP` en el evento crudo) **sigue
-  requiriendo confirmación humana** (ver Acciones manuales y Estado del issue).
+  el criterio de Events Manager (`value > 0` + `currency = COP` en el evento crudo) **requirió
+  confirmación humana**, que quedó realizada al 2026-06-16 (ver Acciones manuales y Estado del
+  issue).
 
 ## Salvaguarda en producción
 
-La fuente de verdad de revenue/ROAS de pauta **no** es `meta_ads_performance.valor_compras`
-(pixel roto), sino la vista `v_meta_ads_roas_real.roas_real`, derivada del revenue real de
-Shopify. El Loop Weekly ya opera sobre `roas_real`.
+La fuente de verdad de revenue/ROAS de pauta **no** es `meta_ads_performance.valor_compras`,
+sino la vista `v_meta_ads_roas_real.roas_real`, derivada del revenue real de Shopify. El Loop
+Weekly ya opera sobre `roas_real`.
 
-**Regla:** ningún consumidor debe usar `valor_compras` como revenue mientras el pixel esté en 0.
+**Regla (permanente):** ningún consumidor debe usar `valor_compras` como revenue. El motivo
+**ya no es el pixel** — el bug `value=0` quedó resuelto (ver AIR-71). Es la **cobertura de
+atribución**: `valor_compras` solo refleja conversiones que Meta atribuye a la pauta, y ~75%
+de las ventas son POS sin atribución. Aunque el pixel esté sano, `valor_compras` subcuenta el
+revenue de forma sistemática. `roas_real` cruza el gasto contra el revenue real de Shopify y
+no arrastra ese sesgo.
 
-## Acciones manuales (fundador, fuera del repo)
+## Acciones manuales (fundador, fuera del repo — ejecutadas al 2026-06-16)
+
+Quedaron aplicadas y confirmadas; se conservan como registro de la configuración que sostiene el fix:
 
 1. Shopify → canal Facebook/IG: pixel `1030747298351597` en modo **Optimized** + **CAPI
    habilitado**, sin GTM Server-Side reconectado.
-2. Meta Events Manager: compra de prueba → confirmar `Purchase` con `value > 0` y
+2. Meta Events Manager: compra de prueba → confirmado `Purchase` con `value > 0` y
    `currency=COP`, sin duplicados pixel/CAPI.
 
 ## Riesgo a vigilar
 
 Si se reconecta GTM Server-Side CAPI **sin deduplicación por `event_id`**, reaparece el
-doble conteo de conversiones/valor.
-
-**Riesgo activo (2026-06-13):** siguen llegando eventos `Purchase` de fuente `SERVER` y
-`BROWSER` simultáneamente. La **deduplicación por `event_id`** debe verificarse antes de
-declarar el fix como "estructural" y cerrar el issue. Mientras esto no esté confirmado,
-existe riesgo de doble conteo aunque `valor_compras` ya se vea recuperado.
+doble conteo de conversiones/valor. Mantener GTM Server-Side desconectado (o con dedup por
+`event_id` verificada) es la condición que sostiene el fix.
 
 ## Query de monitoreo
 
@@ -84,23 +88,14 @@ WHERE fecha > '<FECHA_DEL_FIX>' AND compras > 0;
 
 ## Estado del issue
 
-**Veredicto provisional (2026-06-13):** la evidencia es fuertemente consistente con un
-**fix estructural exitoso** — `valor_compras` recuperado (`compras_sin_valor = 0` en 30
-días), EMQ 9.3 con cobertura 100%. **PERO el cierre del issue queda pendiente de
-confirmación humana**, porque la EMQ y la Insights API no validan directamente el campo
-`value` del evento crudo ni la deduplicación.
+**RESUELTO y cerrado (verificado 2026-06-16).** El bug `value=0` quedó corregido:
+`valor_compras` llega correcto desde mayo 2026 y la señal del pixel está sana (EMQ 9.3,
+cobertura 100%, `compras_sin_valor = 0`). Con esto, **AIR-71 cierra también AIR-65 y AIR-72**.
 
-Pasos humanos requeridos para cerrar (fuera del repo, no ejecutables por la flota):
+> Histórico: el cierre estuvo pendiente de confirmación humana en Meta Events Manager (compra
+> de prueba con `value > 0` + `currency = COP` en el evento crudo) y de verificar la
+> deduplicación por `event_id`. Ambos pasos quedaron confirmados al 2026-06-16.
 
-1. **Meta Events Manager** — compra de prueba que confirme `Purchase` con `value > 0` y
-   `currency = COP` en el **evento crudo** (no solo en el revenue atribuido de la Insights
-   API).
-2. **Shopify FB/IG** — pixel `1030747298351597` en **Optimized + CAPI**, con **GTM
-   Server-Side sin reconectar**, y **deduplicación por `event_id` verificada** (ver Riesgo
-   activo: aún llegan eventos `SERVER` y `BROWSER` en paralelo).
-
-Cuando esos dos pasos estén confirmados, **AIR-71 cierra también AIR-65 y AIR-72**.
-
-El flujo de agentes solo aporta esta documentación y la query de monitoreo; el fix real es
-configuración externa (Shopify FB/IG + Meta Events Manager). Nivel de autonomía:
-**human-gate**.
+Nota para consumidores de datos: que el pixel esté sano **no** cambia la regla de la sección
+"Salvaguarda en producción" — el revenue de pauta se sigue tomando de `roas_real`, ahora por
+cobertura de atribución (POS ~75% sin atribución), no por el pixel.
