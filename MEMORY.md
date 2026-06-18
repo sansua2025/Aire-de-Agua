@@ -16,7 +16,14 @@
 - `strategic_learnings` (mig 058): `score_estabilidad` y `margen_*` son GENERATED STORED. estado ∈ candidato/en_revision/aprobado/promovido/rechazado/deprecado. anon/authenticated sin acceso a la tabla base.
 - Hardening RPC (AIR-86, mig 060): `REVOKE EXECUTE ... FROM PUBLIC, anon, authenticated` + `GRANT EXECUTE ... TO service_role`. `ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM anon, authenticated` ya activo.
 
+## E5A / búsqueda semántica (AIR-70)
+- E5A NO hace bulk select: nodo `Build Prompt (sanitized)` (id `cd185aa9-…`) usa `get_memoria_activa(null,10,10)` + snapshot agregado + anomalías, todo saneado. Input ~3,7K tok (chars/4): memoria ~41%, snapshot ~30%, system ~16%, schema ~8%. vs bulk select* sin truncar ~66K tok solo memoria (~43× ahorro ya capturado por LIMIT 10/10 + sanitize truncado).
+- **Firma real `buscar_brand_knowledge(query_embedding vector, limite int, filtro_categoria text)`** — recibe VECTOR 1536, NO `query_text`. Pseudocódigo del issue erróneo. Generar embedding OpenAI `text-embedding-3-small` (1536 dims) ANTES de la RPC. Igual `buscar_productos(vector, int, text, text)`. Ambas: REVOKE PUBLIC/anon/auth + GRANT service_role (mig 007), search_path fijado (mig 061).
+- Veredicto AIR-70: NO migrar E5A a semántica (ya mitigado; ranking por confianza/recencia ≠ similitud; ampliaría superficie injection). AIR-67/68/69 no existen → CA bloqueados. Doc: `docs/agentes/AUDITORIA-CONTEXTO-E5A.md`.
+
 ## Entorno
+- En sesión con worktree aislado (`.claude/worktrees/agent-*`): editar/escribir SIEMPRE la copia del worktree, NO el checkout compartido (`/home/user/Aire-de-Agua/...`) — Write al path compartido falla con error de aislamiento. MEMORY.md y CLAUDE.md del worktree son archivos distintos del checkout: hay que Read la copia del worktree antes de editar.
+- Contenedor efímero (otras sesiones): NO worktrees, NO cambiar de rama. Supabase MCP NO disponible como tool en sesión builder (sin CLI ni credenciales) → escribir la migración como artefacto fiel y dejar `create_branch`/`apply_migration`/`get_advisors` al reviewer.
 - Contenedor efímero: NO worktrees, NO cambiar de rama. Supabase MCP NO disponible como tool en sesión builder (sin CLI ni credenciales) → escribir la migración como artefacto fiel y dejar `create_branch`/`apply_migration`/`get_advisors` al reviewer.
 - **MCP (Supabase y n8n) NO expuestos como tools en sesión builder** aunque sus *instructions* aparezcan en contexto. Solo tengo Read/Write/Edit/Bash/Grep/Glob. `apply_migration`/`get_advisors`/`validate_workflow`/`create_workflow_from_code` los corre el reviewer/orchestrator. Reportarlo explícito al terminar (regla de capacidad).
 

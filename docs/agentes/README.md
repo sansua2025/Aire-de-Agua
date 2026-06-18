@@ -45,6 +45,11 @@ Resultado: MCP solo donde aporta (Supabase/n8n/Linear), CLI donde ya existe. Eso
 - **Headless con `defer_loading`** (cuando migres a SDK con MCP HTTP): preserva el prefijo. Para Supabase por MCP hosteado, hoy el ahorro es el scoping.
 - **Be AGI-pilled:** el núcleo son feedback loops (verify→fixer, reviewer→fixer, retro→memoria) y el hook `run-checks.sh` que devuelve errores en el momento del edit. El único guardrail "primer tipo" es `validate-sql.sh` (piso de seguridad para prod).
 
+## Checks deterministas en CI (graduación de patrones — AIR-127)
+La línea de AIR-127: cuando un fallo se repite en review, deja de vivir en un prompt y se "gradúa" a un check determinista que corre en CI sobre el diff del PR. Hoy:
+- **`data-rules`** (`scripts/agent/check-data-rules.sh`) — reglas críticas de datos (revenue, hora Bogotá, joins de producto).
+- **`docstring-rpc-loop`** (`scripts/agent/check-docstring-rpc-loop.sh`) — detecta **drift entre el docstring-cabecera y el cuerpo SQL** de las RPCs del loop de insights (`close_insight_loop`, `upsert_insight`). Por cada `.sql` en alcance, extrae los deltas de `score_confianza` declarados en los comentarios `--` antes de `AS $$` (p.ej. `+0.10`, `-0.15 (refutado)`, `(1 - actual) * 0.15`) y verifica que cada uno aparezca también en el cuerpo. Si un delta documentado no está implementado → FAIL. **Disparador:** AIR-97 descubrió que `033_analytics_close_insight_loop.sql` documentaba una penalización `refutado -0.15` que el cuerpo nunca aplicó, degradando el aprendizaje en silencio (insights refutados no perdían confianza). Es exactamente el tipo de drift silencioso que AIR-127 manda convertir en guardrail. Corre en `pull_request` con `--diff origin/main`.
+
 ## Worktrees permanentes (no cherry-picking)
 Patrón de la charla: un repo · N worktrees · N Claudes, cada uno con una rama de tracking de larga vida; tras mergear, reset a `origin/main` conservando identidad.
 ```
