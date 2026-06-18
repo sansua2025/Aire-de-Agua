@@ -365,8 +365,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2576,
-        240
+        2512,
+        256
       ]
     },
     {
@@ -384,8 +384,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.2,
       "position": [
-        3072,
-        160
+        2736,
+        256
       ],
       "webhookId": "7993233b-8588-4968-ab19-b41caf25adc7",
       "credentials": {
