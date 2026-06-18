@@ -1,0 +1,67 @@
+# AIR-146 — Job nocturno de detección de drift repo↔n8n.
+#
+# Compara n8n/workflows/ (repo) contra el n8n vivo y reporta drift al
+# GitHub Step Summary. Informativo: si hay drift el job falla (visible en la
+# pestaña Actions), pero NO es un required check de branch protection y por
+# tanto no bloquea PRs.
+#
+# Secrets requeridos (configurar a mano en Settings → Secrets and variables →
+# Actions):
+#   - N8N_API_KEY   API key de n8n (solo lectura; el script únicamente hace GET)
+#   - N8N_BASE_URL  URL base de la instancia n8n (con o sin /api/v1; se normaliza)
+#                   p.ej. https://airedeagua.app.n8n.cloud
+#
+# TODO (fase 2): cablear notificación a Linear/Slack cuando haya drift en lugar
+# de solo fallar el job. Por ahora la señal vive en la pestaña Actions + el
+# Step Summary del run.
+
+name: n8n-drift
+
+on:
+  schedule:
+    # 11:00 UTC = 06:00 COT (America/Bogota, UTC-5). Nocturno.
+    - cron: '0 11 * * *'
+  workflow_dispatch: {}
+
+# Solo lectura del repo. El script solo hace GET contra la API de n8n.
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Check repo↔n8n drift
+        env:
+          # El script lee N8N_API_URL; el secret se llama N8N_BASE_URL.
+          N8N_API_URL: ${{ secrets.N8N_BASE_URL }}
+          N8N_API_KEY: ${{ secrets.N8N_API_KEY }}
+        run: |
+          if [ -z "$N8N_API_URL" ] || [ -z "$N8N_API_KEY" ]; then
+            echo "## n8n-drift: secrets no configurados" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Falta configurar \`N8N_BASE_URL\` y/o \`N8N_API_KEY\` en GitHub Secrets." >> "$GITHUB_STEP_SUMMARY"
+            echo "Ver docs/agentes/n8n-drift.md." >> "$GITHUB_STEP_SUMMARY"
+            exit 2
+          fi
+          # Capturar el reporte y el exit code sin que `set -e` aborte antes de
+          # escribir el Step Summary. El script NO imprime secretos (solo
+          # nombres/ids de workflow y tipos de drift).
+          set +e
+          node scripts/check-n8n-repo-drift.mjs > drift-report.txt 2>&1
+          status=$?
+          set -e
+          {
+            echo '```'
+            cat drift-report.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          # Eco también al log del job para inspección rápida.
+          cat drift-report.txt
+          exit $status
