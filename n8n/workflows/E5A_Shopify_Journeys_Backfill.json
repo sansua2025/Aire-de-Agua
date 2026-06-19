@@ -3,71 +3,461 @@
   "name": "E5A - Shopify Journeys Backfill",
   "active": false,
   "description": "Backfill historico de customer journeys de Shopify a Supabase. Procesa todas las ordenes web/draft sin filtro de tiempo en batches de 10. Propaga first_visit a ventas.utm_*. Captura metricas y errores GraphQL.",
-  "settings": { "executionOrder": "v1", "availableInMCP": true, "binaryMode": "separate" },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "binaryMode": "separate"
+  },
   "nodes": [
-    { "id": "8e375120-c464-43b2-8362-b02b5c957d6f", "name": "Iniciar Backfill", "type": "n8n-nodes-base.manualTrigger", "typeVersion": 1, "position": [0, 400], "parameters": {} },
     {
-      "id": "7b7913da-7510-44ef-a26f-18e20246f1f9", "name": "Get Pending Orders", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [240, 400],
-      "parameters": { "method": "POST", "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/rpc/get_orders_pending_journey", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendHeaders": true, "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }] }, "sendBody": true, "specifyBody": "json", "jsonBody": "{}", "options": {} },
-      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
-    },
-    { "id": "32db0739-5ebc-4ba1-98a5-3638f72f2b8e", "name": "Loop Batches of 10", "type": "n8n-nodes-base.splitInBatches", "typeVersion": 3, "position": [480, 400], "parameters": { "batchSize": 10, "options": {} } },
-    {
-      "id": "3b03bbae-9b9a-40c0-ab5c-09b926191760", "name": "Log Backfill Complete", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [720, 208],
-      "parameters": { "method": "POST", "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendHeaders": true, "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "Prefer", "value": "return=minimal" }] }, "sendBody": true, "specifyBody": "json", "jsonBody": "{\"evento\":\"e5a_journeys_backfill_complete\",\"entidad\":\"shopify_customer_journeys\",\"estado\":\"ok\"}", "options": {} },
-      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+      "id": "8e375120-c464-43b2-8362-b02b5c957d6f",
+      "name": "Iniciar Backfill",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        400
+      ]
     },
     {
-      "id": "199545dd-a778-4a46-b99e-a66ea1cb5831", "name": "Build GraphQL Query", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [720, 400],
+      "id": "7b7913da-7510-44ef-a26f-18e20246f1f9",
+      "name": "Get Pending Orders",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        240,
+        400
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/rpc/get_orders_pending_journey",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Supabase"
+        }
+      }
+    },
+    {
+      "id": "3b03bbae-9b9a-40c0-ab5c-09b926191760",
+      "name": "Log Backfill Complete",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        720,
+        208
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"evento\":\"e5a_journeys_backfill_complete\",\"entidad\":\"shopify_customer_journeys\",\"estado\":\"ok\"}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Supabase"
+        }
+      }
+    },
+    {
+      "id": "199545dd-a778-4a46-b99e-a66ea1cb5831",
+      "name": "Build GraphQL Query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        400
+      ],
       "parameters": {
         "jsCode": "const items = $input.all();\nconst orderIds = items.map(i => i.json.shopify_order_id);\n\nconst fragments = orderIds.map((id, idx) => {\n  const gid = \"gid://shopify/Order/\" + id;\n  return `o${idx}: order(id: \"${gid}\") {\n    id\n    name\n    customerJourneySummary {\n      ready\n      customerOrderIndex\n      daysToConversion\n      momentsCount { count precision }\n      firstVisit {\n        occurredAt sourceType landingPage referrerUrl\n        utmParameters { source medium campaign content term }\n        marketingEvent { id }\n      }\n      lastVisit {\n        occurredAt sourceType landingPage referrerUrl\n        utmParameters { source medium campaign content term }\n      }\n      moments(first: 50) {\n        edges {\n          node {\n            ... on CustomerVisit {\n              id occurredAt sourceType landingPage referrerUrl\n              utmParameters { source medium campaign content term }\n            }\n          }\n        }\n      }\n    }\n  }`;\n}).join(\"\\n\");\n\nconst query = \"query BatchJourneys {\\n\" + fragments + \"\\n}\";\n\nreturn [{ json: { query, batch_size: orderIds.length, order_ids: orderIds } }];"
       }
     },
     {
-      "id": "b88c9c46-b31d-4bdb-bb22-9f7bcc215620", "name": "Fetch Journeys GraphQL", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [960, 400],
-      "parameters": { "method": "POST", "url": "https://749941.myshopify.com/admin/api/2025-10/graphql.json", "authentication": "predefinedCredentialType", "nodeCredentialType": "shopifyAccessTokenApi", "sendHeaders": true, "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }] }, "sendBody": true, "specifyBody": "json", "jsonBody": "={{ JSON.stringify({ query: $json.query }) }}", "options": {} },
-      "credentials": { "shopifyAccessTokenApi": { "id": "PLACEHOLDER", "name": "Shopify AdeA" } }
-    },
-    {
-      "id": "2badb881-cd9b-4799-96ea-d065238a568d", "name": "Transform to RPC Format", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [1200, 400],
+      "id": "b88c9c46-b31d-4bdb-bb22-9f7bcc215620",
+      "name": "Fetch Journeys GraphQL",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        960,
+        400
+      ],
       "parameters": {
-        "jsCode": "const resp = $input.first().json;\nif (resp.errors) {\n  return [{ json: { journeys_data: [], errors: resp.errors, batch_failed: true } }];\n}\n\nconst data = resp.data || {};\nconst journeys = [];\n\nfor (const key of Object.keys(data)) {\n  const order = data[key];\n  if (!order) continue;\n\n  const idMatch = order.id.match(/Order\\/(\\d+)/);\n  const shopify_order_id = idMatch ? idMatch[1] : null;\n  if (!shopify_order_id) continue;\n\n  const j = order.customerJourneySummary;\n\n  if (!j) {\n    journeys.push({ shopify_order_id, ready: false, moments: [] });\n    continue;\n  }\n\n  const fv = j.firstVisit;\n  const lv = j.lastVisit;\n  const moments = (j.moments?.edges || []).map(e => e.node);\n\n  journeys.push({\n    shopify_order_id,\n    customer_order_index: j.customerOrderIndex,\n    days_to_conversion: j.daysToConversion,\n    moments_count: j.momentsCount?.count,\n    moments_precision: j.momentsCount?.precision,\n    ready: j.ready === true,\n    first_visit_at: fv?.occurredAt || null,\n    first_visit_source: fv?.utmParameters?.source || null,\n    first_visit_medium: fv?.utmParameters?.medium || null,\n    first_visit_campaign: fv?.utmParameters?.campaign || null,\n    first_visit_content: fv?.utmParameters?.content || null,\n    first_visit_term: fv?.utmParameters?.term || null,\n    first_visit_landing: fv?.landingPage || null,\n    first_visit_referrer: fv?.referrerUrl || null,\n    first_visit_source_type: fv?.sourceType || null,\n    first_visit_marketing_event_id: fv?.marketingEvent?.id || null,\n    last_visit_at: lv?.occurredAt || null,\n    last_visit_source: lv?.utmParameters?.source || null,\n    last_visit_medium: lv?.utmParameters?.medium || null,\n    last_visit_campaign: lv?.utmParameters?.campaign || null,\n    last_visit_content: lv?.utmParameters?.content || null,\n    last_visit_term: lv?.utmParameters?.term || null,\n    last_visit_landing: lv?.landingPage || null,\n    last_visit_referrer: lv?.referrerUrl || null,\n    last_visit_source_type: lv?.sourceType || null,\n    raw_payload: j,\n    moments: moments.map(m => ({\n      shopify_visit_id: m.id,\n      occurred_at: m.occurredAt,\n      utm_source: m.utmParameters?.source || null,\n      utm_medium: m.utmParameters?.medium || null,\n      utm_campaign: m.utmParameters?.campaign || null,\n      utm_content: m.utmParameters?.content || null,\n      utm_term: m.utmParameters?.term || null,\n      landing_page: m.landingPage || null,\n      referrer_url: m.referrerUrl || null,\n      source_type: m.sourceType || null,\n      marketing_event_id: null\n    }))\n  });\n}\n\nreturn [{ json: { journeys_data: journeys, batch_failed: false } }];"
+        "method": "POST",
+        "url": "https://749941.myshopify.com/admin/api/2025-10/graphql.json",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "shopifyAccessTokenApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: $json.query }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "shopifyAccessTokenApi": {
+          "id": "PLACEHOLDER",
+          "name": "Shopify Access Token account"
+        }
       }
     },
     {
-      "id": "9c99beb7-1ee1-4404-b200-99a93d1d9388", "name": "Batch OK?", "type": "n8n-nodes-base.if", "typeVersion": 2.2, "position": [1440, 400],
-      "parameters": { "conditions": { "options": { "caseSensitive": true, "leftValue": "" }, "combinator": "and", "conditions": [{ "id": "cond-1", "leftValue": "={{ $json.batch_failed }}", "rightValue": "false", "operator": { "type": "boolean", "operation": "equals" } }] }, "options": {} }
+      "id": "2badb881-cd9b-4799-96ea-d065238a568d",
+      "name": "Transform to RPC Format",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        400
+      ],
+      "parameters": {
+        "jsCode": "const resp = $input.first().json;\nif (resp.errors) {\n  return [{ json: { journeys_data: [], errors: resp.errors, batch_failed: true } }];\n}\n\nconst data = resp.data || {};\nconst journeys = [];\n\nfor (const key of Object.keys(data)) {\n  const order = data[key];\n  if (!order) continue;\n\n  const idMatch = order.id.match(/Order\\/(\\d+)/);\n  const shopify_order_id = idMatch ? idMatch[1] : null;\n  if (!shopify_order_id) continue;\n\n  const j = order.customerJourneySummary;\n\n  if (!j) {\n    journeys.push({ shopify_order_id, ready: false, moments: [] });\n    continue;\n  }\n\n  const fv = j.firstVisit;\n  const lv = j.lastVisit;\n  const moments = (j.moments?.edges || []).map(e => e.node);\n\n  journeys.push({\n    shopify_order_id,\n    customer_order_index: j.customerOrderIndex,\n    days_to_conversion: j.daysToConversion,\n    moments_count: j.momentsCount?.count,\n    moments_precision: j.momentsCount?.precision,\n    ready: j.ready === true,\n\n    first_visit_at: fv?.occurredAt || null,\n    first_visit_source: fv?.utmParameters?.source || null,\n    first_visit_medium: fv?.utmParameters?.medium || null,\n    first_visit_campaign: fv?.utmParameters?.campaign || null,\n    first_visit_content: fv?.utmParameters?.content || null,\n    first_visit_term: fv?.utmParameters?.term || null,\n    first_visit_landing: fv?.landingPage || null,\n    first_visit_referrer: fv?.referrerUrl || null,\n    first_visit_source_type: fv?.sourceType || null,\n    first_visit_marketing_event_id: fv?.marketingEvent?.id || null,\n\n    last_visit_at: lv?.occurredAt || null,\n    last_visit_source: lv?.utmParameters?.source || null,\n    last_visit_medium: lv?.utmParameters?.medium || null,\n    last_visit_campaign: lv?.utmParameters?.campaign || null,\n    last_visit_content: lv?.utmParameters?.content || null,\n    last_visit_term: lv?.utmParameters?.term || null,\n    last_visit_landing: lv?.landingPage || null,\n    last_visit_referrer: lv?.referrerUrl || null,\n    last_visit_source_type: lv?.sourceType || null,\n\n    raw_payload: j,\n\n    moments: moments.map(m => ({\n      shopify_visit_id: m.id,\n      occurred_at: m.occurredAt,\n      utm_source: m.utmParameters?.source || null,\n      utm_medium: m.utmParameters?.medium || null,\n      utm_campaign: m.utmParameters?.campaign || null,\n      utm_content: m.utmParameters?.content || null,\n      utm_term: m.utmParameters?.term || null,\n      landing_page: m.landingPage || null,\n      referrer_url: m.referrerUrl || null,\n      source_type: m.sourceType || null,\n      marketing_event_id: null\n    }))\n  });\n}\n\nreturn [{ json: { journeys_data: journeys, batch_failed: false } }];"
+      }
     },
     {
-      "id": "a22c7578-3479-4705-8024-64d9286027b9", "name": "Call Upsert RPC", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [1680, 304],
-      "parameters": { "method": "POST", "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/rpc/upsert_shopify_journey", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendHeaders": true, "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "Prefer", "value": "return=representation" }] }, "sendBody": true, "specifyBody": "json", "jsonBody": "={{ JSON.stringify({ journeys_data: $json.journeys_data }) }}", "options": {} },
-      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+      "id": "9c99beb7-1ee1-4404-b200-99a93d1d9388",
+      "name": "Batch OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1440,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": ""
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-1",
+              "leftValue": "={{ $json.batch_failed }}",
+              "rightValue": "false",
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
     },
     {
-      "id": "2d460d3c-4035-43ac-bd61-698b7ec78758", "name": "Log Batch Metrics", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [1920, 304],
-      "parameters": { "method": "POST", "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendHeaders": true, "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "Prefer", "value": "return=minimal" }] }, "sendBody": true, "specifyBody": "json", "jsonBody": "={{ JSON.stringify({ evento: \"e5a_journey_batch\", entidad: \"shopify_customer_journeys\", estado: ($json[0].errors > 0 ? \"error\" : \"ok\"), error_mensaje: \"input=\" + $json[0].total_input + \" upserted=\" + $json[0].journeys_upserted }) }}", "options": {} },
-      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+      "id": "a22c7578-3479-4705-8024-64d9286027b9",
+      "name": "Call Upsert RPC",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1680,
+        304
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/rpc/upsert_shopify_journey",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ journeys_data: $json.journeys_data }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Supabase"
+        }
+      }
     },
     {
-      "id": "2eab8e80-7a4c-4f40-a25c-7e382ee102bf", "name": "Log Batch Failed", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [1680, 500],
-      "parameters": { "method": "POST", "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendHeaders": true, "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "Prefer", "value": "return=minimal" }] }, "sendBody": true, "specifyBody": "json", "jsonBody": "={{ JSON.stringify({ evento: \"e5a_graphql_error\", entidad: \"shopify_customer_journeys\", estado: \"error\", error_mensaje: JSON.stringify($json.errors).substring(0, 500) }) }}", "options": {} },
-      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+      "id": "2d460d3c-4035-43ac-bd61-698b7ec78758",
+      "name": "Log Batch Metrics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1920,
+        304
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n        evento: \"e5a_journey_batch\",\n        entidad: \"shopify_customer_journeys\",\n        estado: ($json[0].errors > 0 ? \"error\" : \"ok\"),\n        error_mensaje: \"input=\" + $json[0].total_input + \" upserted=\" + $json[0].journeys_upserted + \" moments=\" + $json[0].moments_inserted + \" utm_updated=\" + $json[0].ventas_utm_updated + \" not_found=\" + $json[0].orders_not_found + \" errors=\" + $json[0].errors\n      }) }}",
+        "options": {}
+      }
     },
-    { "id": "3ca80351-39b1-4166-85ef-31455b852ce5", "name": "Wait 2s", "type": "n8n-nodes-base.wait", "typeVersion": 1.1, "position": [2160, 400], "parameters": { "amount": 2 }, "webhookId": "257a1637-c681-4433-9bbc-00e9c5408656" }
+    {
+      "id": "3ca80351-39b1-4166-85ef-31455b852ce5",
+      "name": "Wait 2s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2160,
+        400
+      ],
+      "parameters": {
+        "amount": 2
+      },
+      "webhookId": "257a1637-c681-4433-9bbc-00e9c5408656"
+    },
+    {
+      "id": "32db0739-5ebc-4ba1-98a5-3638f72f2b8e",
+      "name": "Loop Batches of 10",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        480,
+        400
+      ],
+      "parameters": {
+        "batchSize": 10,
+        "options": {}
+      }
+    },
+    {
+      "id": "2eab8e80-7a4c-4f40-a25c-7e382ee102bf",
+      "name": "Log Batch Failed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1680,
+        500
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n        evento: \"e5a_graphql_error\",\n        entidad: \"shopify_customer_journeys\",\n        estado: \"error\",\n        error_mensaje: JSON.stringify($json.errors).substring(0, 500)\n      }) }}",
+        "options": {}
+      }
+    }
   ],
   "connections": {
-    "Iniciar Backfill": { "main": [[{ "node": "Get Pending Orders", "type": "main", "index": 0 }]] },
-    "Get Pending Orders": { "main": [[{ "node": "Loop Batches of 10", "type": "main", "index": 0 }]] },
-    "Loop Batches of 10": { "main": [[{ "node": "Log Backfill Complete", "type": "main", "index": 0 }], [{ "node": "Build GraphQL Query", "type": "main", "index": 0 }]] },
-    "Build GraphQL Query": { "main": [[{ "node": "Fetch Journeys GraphQL", "type": "main", "index": 0 }]] },
-    "Fetch Journeys GraphQL": { "main": [[{ "node": "Transform to RPC Format", "type": "main", "index": 0 }]] },
-    "Transform to RPC Format": { "main": [[{ "node": "Batch OK?", "type": "main", "index": 0 }]] },
-    "Batch OK?": { "main": [[{ "node": "Call Upsert RPC", "type": "main", "index": 0 }], [{ "node": "Log Batch Failed", "type": "main", "index": 0 }]] },
-    "Call Upsert RPC": { "main": [[{ "node": "Log Batch Metrics", "type": "main", "index": 0 }]] },
-    "Log Batch Metrics": { "main": [[{ "node": "Wait 2s", "type": "main", "index": 0 }]] },
-    "Log Batch Failed": { "main": [[{ "node": "Wait 2s", "type": "main", "index": 0 }]] },
-    "Wait 2s": { "main": [[{ "node": "Loop Batches of 10", "type": "main", "index": 0 }]] }
+    "Iniciar Backfill": {
+      "main": [
+        [
+          {
+            "node": "Get Pending Orders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Pending Orders": {
+      "main": [
+        [
+          {
+            "node": "Loop Batches of 10",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build GraphQL Query": {
+      "main": [
+        [
+          {
+            "node": "Fetch Journeys GraphQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Journeys GraphQL": {
+      "main": [
+        [
+          {
+            "node": "Transform to RPC Format",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transform to RPC Format": {
+      "main": [
+        [
+          {
+            "node": "Batch OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch OK?": {
+      "main": [
+        [
+          {
+            "node": "Call Upsert RPC",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Batch Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Upsert RPC": {
+      "main": [
+        [
+          {
+            "node": "Log Batch Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Batch Metrics": {
+      "main": [
+        [
+          {
+            "node": "Wait 2s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 2s": {
+      "main": [
+        [
+          {
+            "node": "Loop Batches of 10",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Batches of 10": {
+      "main": [
+        [
+          {
+            "node": "Log Backfill Complete",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build GraphQL Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Batch Failed": {
+      "main": [
+        [
+          {
+            "node": "Wait 2s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
   "tags": [],
-  "meta": { "aiBuilderAssisted": true }
+  "meta": {
+    "aiBuilderAssisted": true
+  }
 }

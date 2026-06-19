@@ -3,131 +3,155 @@
   "nodes": [
     {
       "parameters": {},
-      "id": "e3a-back-0001-b001-000000000001",
+      "id": "827e1cde-3213-41e8-b615-af520535466b",
       "name": "Manual Trigger",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
-      "position": [220, 460]
+      "position": [
+        224,
+        464
+      ]
     },
     {
       "parameters": {
-        "mode": "manual",
-        "duplicateItem": false,
         "assignments": {
           "assignments": [
             {
-              "id": "assign-since",
+              "id": "a0",
+              "name": "adAccountId",
+              "value": "1055160342150593",
+              "type": "string"
+            },
+            {
+              "id": "a1",
+              "name": "apiVersion",
+              "value": "v21.0",
+              "type": "string"
+            },
+            {
+              "id": "a2",
               "name": "since",
-              "value": "2023-01-01",
+              "value": "2026-01-01",
               "type": "string"
             },
             {
-              "id": "assign-until",
+              "id": "a3",
               "name": "until",
-              "value": "={{ $now.minus(1, \"day\").toFormat(\"yyyy-MM-dd\") }}",
+              "value": "2026-02-19",
               "type": "string"
-            },
-            {
-              "id": "assign-chunk-days",
-              "name": "chunk_days",
-              "value": 90,
-              "type": "number"
             }
           ]
         },
-        "includeOtherFields": false
+        "options": {}
       },
-      "id": "e3a-back-0001-b001-000000000002",
+      "id": "09758eae-3b81-4cf9-a625-cf488621e5f1",
       "name": "Set Config",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [440, 460],
-      "notes": "Editar `since` y `until` antes de ejecutar.\n\nMeta API solo retorna insights de los últimos 37 meses.\nchunk_days = 90 → ~4-8 chunks por año, tolera rate limits."
+      "position": [
+        448,
+        464
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// Genera ventanas de N días entre `since` y `until`.\n// Cada item = un chunk que será una request a Meta con time_increment=1.\nconst cfg = $input.first().json;\nconst chunkDays = cfg.chunk_days || 90;\n\nconst startMs = new Date(cfg.since + 'T00:00:00Z').getTime();\nconst endMs = new Date(cfg.until + 'T00:00:00Z').getTime();\nconst dayMs = 24 * 60 * 60 * 1000;\n\nif (isNaN(startMs) || isNaN(endMs) || startMs > endMs) {\n  throw new Error(`Rango inválido: since=${cfg.since}, until=${cfg.until}`);\n}\n\nconst chunks = [];\nlet cursor = startMs;\nwhile (cursor <= endMs) {\n  const chunkEnd = Math.min(cursor + (chunkDays - 1) * dayMs, endMs);\n  chunks.push({\n    since: new Date(cursor).toISOString().slice(0, 10),\n    until: new Date(chunkEnd).toISOString().slice(0, 10)\n  });\n  cursor = chunkEnd + dayMs;\n}\n\nreturn chunks.map((c, i) => ({\n  json: { ...c, chunk_index: i + 1, chunk_total: chunks.length }\n}));"
+        "jsCode": "const cfg = $input.first().json;\nconst startMs = new Date(cfg.since + 'T00:00:00Z').getTime();\nconst endMs = new Date(cfg.until + 'T00:00:00Z').getTime();\nconst dayMs = 24 * 60 * 60 * 1000;\nif (isNaN(startMs) || isNaN(endMs) || startMs > endMs) {\n  throw new Error('Rango invalido: since=' + cfg.since + ', until=' + cfg.until);\n}\nconst total = Math.floor((endMs - startMs) / dayMs) + 1;\nconst days = [];\nfor (let i = 0; i < total; i++) {\n  const d = new Date(startMs + i * dayMs).toISOString().slice(0, 10);\n  days.push({ fecha: d, day_index: i + 1, day_total: total });\n}\nreturn days.map(j => ({ json: j }));"
       },
-      "id": "e3a-back-0001-b001-000000000003",
-      "name": "Generate Chunks",
+      "id": "42889d23-ca1d-4b65-a576-f5fd04232046",
+      "name": "Generate Days",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [660, 460]
+      "position": [
+        672,
+        464
+      ]
     },
     {
       "parameters": {
-        "batchSize": 1,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d1",
+              "name": "status",
+              "value": "backfill complete",
+              "type": "string"
+            }
+          ]
+        },
         "options": {}
       },
-      "id": "e3a-back-0001-b001-000000000004",
-      "name": "Loop Chunks",
-      "type": "n8n-nodes-base.splitInBatches",
-      "typeVersion": 3,
-      "position": [880, 460]
+      "id": "eef2da05-0545-4d3f-8d13-a054e673a473",
+      "name": "Done",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1120,
+        704
+      ]
     },
     {
       "parameters": {
-        "method": "GET",
-        "url": "=https://graph.facebook.com/v21.0/act_{{ $credentials.metaAdAccountId }}/insights",
+        "url": "=https://graph.facebook.com/{{ $(\"Set Config\").first().json.apiVersion }}/act_{{ $(\"Set Config\").first().json.adAccountId }}/insights",
         "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
+        "genericAuthType": "httpQueryAuth",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
             {
               "name": "time_range",
-              "value": "={{ JSON.stringify({ since: $json.since, until: $json.until }) }}"
+              "value": "={{ JSON.stringify({ since: $json.fecha, until: $json.fecha }) }}"
             },
-            { "name": "time_increment", "value": "1" },
-            { "name": "level", "value": "ad" },
+            {
+              "name": "level",
+              "value": "ad"
+            },
             {
               "name": "fields",
               "value": "ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,objective,impressions,reach,clicks,inline_link_clicks,spend,actions,action_values"
             },
-            { "name": "limit", "value": "500" },
+            {
+              "name": "limit",
+              "value": "500"
+            },
             {
               "name": "filtering",
               "value": "[{\"field\":\"impressions\",\"operator\":\"GREATER_THAN\",\"value\":\"0\"}]"
             }
           ]
         },
-        "options": {
-          "pagination": {
-            "pagination": {
-              "paginationMode": "responseContainsNextURL",
-              "nextURL": "={{ $response.body.paging?.next }}",
-              "limitPagesFetched": false
-            }
-          },
-          "response": {
-            "response": {
-              "fullResponse": false
-            }
-          }
-        }
+        "options": {}
       },
-      "id": "e3a-back-0001-b001-000000000005",
-      "name": "Fetch Meta Ads (chunk)",
+      "id": "ac148945-0dab-441e-a705-66940bff8262",
+      "name": "Fetch Meta Ads",
       "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [1120, 460],
+      "typeVersion": 4.4,
+      "position": [
+        1120,
+        464
+      ],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "META_ADS_CREDENTIAL_ID",
-          "name": "Meta Ads API"
+          "id": "PLACEHOLDER",
+          "name": "Meta Ads Token"
+        },
+        "httpQueryAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Query Auth account"
         }
-      },
-      "notes": "time_increment=1 → Meta devuelve una fila por (ad, día).\nPaginación automática: sigue `paging.next` hasta agotar."
+      }
     },
     {
       "parameters": {
-        "jsCode": "// DUPLICADO con E3A_Meta_Ads_Daily_Sync.json — el bloque de mapeo debe mantenerse idéntico (guard: scripts/check-transform-ads-sync.sh). 'fecha' diverge a propósito.\n// Aplana resultados de todas las páginas del chunk y mapea al formato\n// esperado por upsert_meta_ads(). Usa ad.date_start como `fecha`.\nconst items = $input.all();\nconst ads = [];\nfor (const it of items) {\n  const data = it.json?.data || [];\n  for (const ad of data) ads.push(ad);\n}\n\nif (ads.length === 0) {\n  return [{ json: { ads_data: [], count: 0 } }];\n}\n\nconst mapped = ads.map(ad => {\n  const actions = ad.actions || [];\n  const actionValues = ad.action_values || [];\n\n  const findAction = (type) => {\n    const found = actions.find(a => a.action_type === type);\n    return found ? parseInt(found.value) || 0 : 0;\n  };\n  const findActionValue = (type) => {\n    const found = actionValues.find(a => a.action_type === type);\n    return found ? parseFloat(found.value) || 0 : 0;\n  };\n\n  return {\n    fecha: ad.date_start,\n    ad_id: ad.ad_id,\n    ad_name: ad.ad_name,\n    adset_id: ad.adset_id,\n    adset_name: ad.adset_name,\n    campaign_id: ad.campaign_id,\n    campaign_name: ad.campaign_name,\n    creative_asset_id: null,\n    es_pagado: true,\n    objetivo: ad.objective || null,\n    audiencia: ad.adset_name || null,\n    impresiones: parseInt(ad.impressions) || 0,\n    alcance: parseInt(ad.reach) || 0,\n    clics: parseInt(ad.clicks) || 0,\n    clics_link: parseInt(ad.inline_link_clicks) || 0,\n    gasto: parseFloat(ad.spend) || 0,\n    compras: findAction('purchase'),\n    valor_compras: findActionValue('purchase'),\n    agrega_carrito: findAction('add_to_cart'),\n    inicia_checkout: findAction('initiate_checkout'),\n    vistas_contenido: findAction('view_content'),\n    headline: null,\n    body_copy: null,\n    cta: null,\n    meta_raw_json: ad\n  };\n});\n\nreturn [{ json: { ads_data: mapped, count: mapped.length } }];"
+        "jsCode": "const fecha = $('Loop Days').item.json.fecha;\nconst items = $input.all();\nconst ads = [];\nfor (const it of items) {\n  const data = (it.json && it.json.data) || [];\n  for (const ad of data) ads.push(ad);\n}\nif (ads.length === 0) {\n  return [{ json: { ads_data: [], count: 0 } }];\n}\nconst findAction = (arr, type) => {\n  const f = (arr || []).find(a => a.action_type === type);\n  return f ? parseInt(f.value) || 0 : 0;\n};\nconst findActionValue = (arr, type) => {\n  const f = (arr || []).find(a => a.action_type === type);\n  return f ? parseFloat(f.value) || 0 : 0;\n};\nconst mapped = ads.map(ad => ({\n  fecha: fecha,\n  ad_id: ad.ad_id,\n  ad_name: ad.ad_name,\n  adset_id: ad.adset_id,\n  adset_name: ad.adset_name,\n  campaign_id: ad.campaign_id,\n  campaign_name: ad.campaign_name,\n  creative_asset_id: null,\n  es_pagado: true,\n  objetivo: ad.objective || null,\n  audiencia: ad.adset_name || null,\n  impresiones: parseInt(ad.impressions) || 0,\n  alcance: parseInt(ad.reach) || 0,\n  clics: parseInt(ad.clicks) || 0,\n  clics_link: parseInt(ad.inline_link_clicks) || 0,\n  gasto: parseFloat(ad.spend) || 0,\n  compras: findAction(ad.actions, 'purchase'),\n  valor_compras: findActionValue(ad.action_values, 'purchase'),\n  agrega_carrito: findAction(ad.actions, 'add_to_cart'),\n  inicia_checkout: findAction(ad.actions, 'initiate_checkout'),\n  vistas_contenido: findAction(ad.actions, 'view_content'),\n  headline: null,\n  body_copy: null,\n  cta: null,\n  meta_raw_json: ad\n}));\nreturn [{ json: { ads_data: mapped, count: mapped.length } }];"
       },
-      "id": "e3a-back-0001-b001-000000000006",
+      "id": "db304801-801d-4109-afd0-b7928683a4d4",
       "name": "Transform Ads Data",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1380, 460]
+      "position": [
+        1392,
+        464
+      ]
     },
     {
       "parameters": {
@@ -135,11 +159,12 @@
           "options": {
             "caseSensitive": true,
             "leftValue": "",
-            "typeValidation": "strict"
+            "typeValidation": "strict",
+            "version": 1
           },
           "conditions": [
             {
-              "id": "has-rows",
+              "id": "c1",
               "leftValue": "={{ $json.count }}",
               "rightValue": 0,
               "operator": {
@@ -152,11 +177,14 @@
         },
         "options": {}
       },
-      "id": "e3a-back-0001-b001-000000000007",
+      "id": "ba45860a-294c-4b86-abf0-640f5e4af5cb",
       "name": "If Rows > 0",
       "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
-      "position": [1600, 460]
+      "typeVersion": 2.3,
+      "position": [
+        1600,
+        464
+      ]
     },
     {
       "parameters": {
@@ -167,8 +195,14 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Content-Type", "value": "application/json" },
-            { "name": "Prefer", "value": "return=representation" }
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
           ]
         },
         "sendBody": true,
@@ -176,15 +210,18 @@
         "jsonBody": "={{ JSON.stringify({ ads_data: $json.ads_data }) }}",
         "options": {}
       },
-      "id": "e3a-back-0001-b001-000000000008",
+      "id": "84ce5da8-4a63-419e-8f71-c584ffabc857",
       "name": "Upsert Meta Ads",
       "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [1820, 380],
+      "typeVersion": 4.4,
+      "position": [
+        1824,
+        384
+      ],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "SUPABASE_CREDENTIAL_ID",
-          "name": "Supabase API"
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Supabase"
         }
       }
     },
@@ -197,79 +234,193 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Content-Type", "value": "application/json" },
-            { "name": "Prefer", "value": "return=minimal" }
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ evento: 'e3a_meta_ads_backfill', entidad: 'meta_ads_performance', estado: 'ok', detalle: { since: $('Loop Chunks').item.json.since, until: $('Loop Chunks').item.json.until, chunk: $('Loop Chunks').item.json.chunk_index + '/' + $('Loop Chunks').item.json.chunk_total, rows: $('Transform Ads Data').item.json.count } }) }}",
+        "jsonBody": "={{ JSON.stringify({ evento: \"e3a_meta_ads_backfill\", entidad: \"meta_ads_performance\", entidad_id: $(\"Loop Days\").item.json.fecha, estado: \"ok\" }) }}",
         "options": {}
       },
-      "id": "e3a-back-0001-b001-000000000009",
-      "name": "Log Sync (chunk)",
+      "id": "364ce8e6-544b-44e3-a98e-7f3354533c51",
+      "name": "Log Sync",
       "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [2040, 380],
+      "typeVersion": 4.4,
+      "position": [
+        2048,
+        384
+      ],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "SUPABASE_CREDENTIAL_ID",
-          "name": "Supabase API"
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Supabase"
         }
       }
     },
     {
       "parameters": {
-        "amount": 3,
-        "unit": "seconds"
+        "amount": 2
       },
-      "id": "e3a-back-0001-b001-000000000010",
-      "name": "Wait (rate limit)",
+      "id": "b77ceb57-5f63-49ad-ad8c-60acc5abd2bb",
+      "name": "Wait",
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
-      "position": [2260, 460],
-      "webhookId": "e3a-back-wait-rate-limit"
+      "position": [
+        2272,
+        464
+      ],
+      "webhookId": "c50bf996-7fbc-4101-a8db-a1dacb3ccc20"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "4b974a73-9847-4435-86b2-aa264a8d7567",
+      "name": "Loop Days",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        880,
+        464
+      ]
     }
   ],
   "connections": {
     "Manual Trigger": {
-      "main": [[{ "node": "Set Config", "type": "main", "index": 0 }]]
-    },
-    "Set Config": {
-      "main": [[{ "node": "Generate Chunks", "type": "main", "index": 0 }]]
-    },
-    "Generate Chunks": {
-      "main": [[{ "node": "Loop Chunks", "type": "main", "index": 0 }]]
-    },
-    "Loop Chunks": {
       "main": [
-        [],
-        [{ "node": "Fetch Meta Ads (chunk)", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Set Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Fetch Meta Ads (chunk)": {
-      "main": [[{ "node": "Transform Ads Data", "type": "main", "index": 0 }]]
+    "Set Config": {
+      "main": [
+        [
+          {
+            "node": "Generate Days",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Days": {
+      "main": [
+        [
+          {
+            "node": "Loop Days",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Meta Ads": {
+      "main": [
+        [
+          {
+            "node": "Transform Ads Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Transform Ads Data": {
-      "main": [[{ "node": "If Rows > 0", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "If Rows > 0",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "If Rows > 0": {
       "main": [
-        [{ "node": "Upsert Meta Ads", "type": "main", "index": 0 }],
-        [{ "node": "Wait (rate limit)", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Upsert Meta Ads",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Upsert Meta Ads": {
-      "main": [[{ "node": "Log Sync (chunk)", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Log Sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
-    "Log Sync (chunk)": {
-      "main": [[{ "node": "Wait (rate limit)", "type": "main", "index": 0 }]]
+    "Log Sync": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
-    "Wait (rate limit)": {
-      "main": [[{ "node": "Loop Chunks", "type": "main", "index": 0 }]]
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Loop Days",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Days": {
+      "main": [
+        [
+          {
+            "node": "Done",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fetch Meta Ads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "binaryMode": "separate"
   }
 }

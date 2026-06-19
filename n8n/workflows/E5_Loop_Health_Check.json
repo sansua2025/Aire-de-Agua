@@ -5,8 +5,10 @@
   "description": "E5-F · Cron diario 9am COT (0 14 * * * UTC). GET v_loop_system_health → si dias_desde_weekly>8 manda alerta por email. Siempre log a ai_analysis_log.",
   "settings": {
     "executionOrder": "v1",
-    "errorWorkflow": "ErrorHandlerGlobal01",
-    "availableInMCP": true
+    "availableInMCP": true,
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner"
   },
   "nodes": [
     {
@@ -57,7 +59,7 @@
       "credentials": {
         "httpHeaderAuth": {
           "id": "PLACEHOLDER",
-          "name": "Supabase AdeA"
+          "name": "Header Auth Supabase"
         }
       }
     },
@@ -95,7 +97,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const h = $json;\nconst subject = '⚠️ Aire de Agua · Loop weekly stale (' + h.dias_desde_weekly + ' días)';\nconst html = '<!doctype html><html><body style=\"margin:0;background:#fff5f5;padding:24px\"><h2 style=\"color:#b3261e\">Loop semanal stale</h2><p>El Loop - Weekly Analysis no ha corrido exitosamente hace <b>' + String(h.dias_desde_weekly) + '</b> días</p><p>Último weekly OK: ' + String(h.ultimo_weekly_ok || '—') + '</p><p>Insights vigentes: ' + String(h.insights_vigentes) + ' (alta confianza: ' + String(h.alta_confianza) + ')</p><p>Cobertura loop: ' + (h.cobertura_loop_pct != null ? String(h.cobertura_loop_pct) + '%' : '—') + '</p></body></html>';\nreturn [{ json: { subject: subject, html: html, dias_desde_weekly: h.dias_desde_weekly } }];"
+        "jsCode": "const h = $json;\nfunction escapeHtml(s) { if (s == null) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }\n\nconst html = '<!doctype html><html><body style=\"margin:0;background:#fff5f5;padding:24px;font-family:Inter,Arial,sans-serif\"><div style=\"max-width:640px;margin:0 auto;background:#fff;border-radius:8px;padding:32px;box-shadow:0 1px 3px rgba(0,0,0,0.1);border-left:6px solid #b3261e\"><h2 style=\"color:#b3261e;margin:0 0 4px\">⚠️ Loop semanal stale</h2><p style=\"color:#666;margin:0 0 24px;font-size:14px\">El workflow Loop - Weekly Analysis no ha corrido exitosamente hace ' + escapeHtml(String(h.dias_desde_weekly)) + ' días</p><table style=\"width:100%;border-collapse:collapse;font-size:14px;color:#333\"><tr><td style=\"padding:10px 0;border-bottom:1px solid #eee\"><b>Último weekly OK</b></td><td style=\"padding:10px 0;border-bottom:1px solid #eee;text-align:right\">' + escapeHtml(String(h.ultimo_weekly_ok || '—')) + '</td></tr><tr><td style=\"padding:10px 0;border-bottom:1px solid #eee\"><b>Días desde último weekly</b></td><td style=\"padding:10px 0;border-bottom:1px solid #eee;text-align:right;color:#b3261e\"><b>' + escapeHtml(String(h.dias_desde_weekly)) + '</b></td></tr><tr><td style=\"padding:10px 0;border-bottom:1px solid #eee\"><b>Insights vigentes</b></td><td style=\"padding:10px 0;border-bottom:1px solid #eee;text-align:right\">' + escapeHtml(String(h.insights_vigentes)) + '</td></tr><tr><td style=\"padding:10px 0;border-bottom:1px solid #eee\"><b>Alta confianza (>0.8)</b></td><td style=\"padding:10px 0;border-bottom:1px solid #eee;text-align:right\">' + escapeHtml(String(h.alta_confianza)) + '</td></tr><tr><td style=\"padding:10px 0\"><b>Cobertura loop</b></td><td style=\"padding:10px 0;text-align:right\">' + (h.cobertura_loop_pct != null ? escapeHtml(String(h.cobertura_loop_pct)) + '%' : '—') + '</td></tr></table><p style=\"margin-top:24px;color:#444;font-size:14px;line-height:1.6\">Acciones sugeridas: revisar el workflow Loop - Weekly Analysis en n8n, mirar el último ai_analysis_log para entender por qué no corrió, o disparar manualmente.</p></div></body></html>';\n\nconst subject = '⚠️ Aire de Agua · Loop weekly stale (' + h.dias_desde_weekly + ' días)';\n\nreturn [{ json: { subject: subject, html: html, dias_desde_weekly: h.dias_desde_weekly } }];"
       },
       "id": "988bfcae-7cf3-4d74-9d73-33cf1b438e0f",
       "name": "Render Alert Email",
@@ -128,7 +130,7 @@
       "credentials": {
         "gmailOAuth2": {
           "id": "PLACEHOLDER",
-          "name": "Gmail AdeA"
+          "name": "Gmail account"
         }
       }
     },
@@ -167,7 +169,7 @@
       "credentials": {
         "httpHeaderAuth": {
           "id": "PLACEHOLDER",
-          "name": "Supabase AdeA"
+          "name": "Header Auth Supabase"
         }
       }
     }

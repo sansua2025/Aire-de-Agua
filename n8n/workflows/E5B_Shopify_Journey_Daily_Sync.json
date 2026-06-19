@@ -5,7 +5,8 @@
   "description": "Cron diario 7am COT. Sincroniza journeys de Shopify a Supabase para órdenes web sin journey o con ready=false. Usa batches de 10 con wait 2s para respetar rate limit.",
   "settings": {
     "executionOrder": "v1",
-    "availableInMCP": true
+    "availableInMCP": true,
+    "binaryMode": "separate"
   },
   "nodes": [
     {
@@ -27,41 +28,6 @@
         0,
         400
       ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/rpc/get_orders_pending_journey",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "{}",
-        "options": {}
-      },
-      "id": "f0f44960-8d54-43f7-adee-de2b99c7637f",
-      "name": "Get Pending Orders",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.4,
-      "position": [
-        240,
-        400
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "PLACEHOLDER",
-          "name": "Supabase AdeA"
-        }
-      }
     },
     {
       "parameters": {
@@ -123,21 +89,46 @@
     },
     {
       "parameters": {
-        "batchSize": 10,
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"evento\":\"e5b_journey_daily_sync\",\"entidad\":\"shopify_customer_journeys\",\"estado\":\"ok\"}",
         "options": {}
       },
-      "id": "5a78c812-ab6a-41b5-a2ca-b0d4ce138f4e",
-      "name": "Loop Batches of 10",
-      "type": "n8n-nodes-base.splitInBatches",
-      "typeVersion": 3,
+      "id": "0850c011-50ff-4e59-a786-6e61eabbabff",
+      "name": "Log Sync Complete",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
       "position": [
-        1200,
-        304
-      ]
+        1440,
+        512
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Supabase"
+        }
+      }
     },
     {
       "parameters": {
-        "jsCode": "\nconst items = $input.all();\nconst orderIds = items.map(i => i.json.shopify_order_id);\nconst fragments = orderIds.map((id, idx) => {\n  const gid = `gid://shopify/Order/${id}`;\n  return `o${idx}: order(id: \"${gid}\") {\n    id name\n    customerJourneySummary {\n      ready customerOrderIndex daysToConversion\n      momentsCount { count precision }\n      firstVisit {\n        occurredAt sourceType landingPage referrerUrl\n        utmParameters { source medium campaign content term }\n        marketingEvent { id }\n      }\n      lastVisit {\n        occurredAt sourceType landingPage referrerUrl\n        utmParameters { source medium campaign content term }\n      }\n      moments(first: 50) {\n        edges { node { ... on CustomerVisit { id occurredAt sourceType landingPage referrerUrl utmParameters { source medium campaign content term } } } }\n      }\n    }\n  }`;\n}).join(\"\\n\");\nreturn [{ json: { query: `query BatchJourneys {\\n${fragments}\\n}`, batch_size: orderIds.length } }];\n"
+        "jsCode": "\nconst items = $input.all();\nconst orderIds = items.map(i => i.json.shopify_order_id);\nconst fragments = orderIds.map((id, idx) => {\n  const gid = \"gid://shopify/Order/\" + id;\n  return `o${idx}: order(id: \"${gid}\") {\n    id name\n    customerJourneySummary {\n      ready customerOrderIndex daysToConversion\n      momentsCount { count precision }\n      firstVisit {\n        occurredAt sourceType landingPage referrerUrl\n        utmParameters { source medium campaign content term }\n        marketingEvent { id }\n      }\n      lastVisit {\n        occurredAt sourceType landingPage referrerUrl\n        utmParameters { source medium campaign content term }\n      }\n      moments(first: 50) {\n        edges { node { ... on CustomerVisit { id occurredAt sourceType landingPage referrerUrl utmParameters { source medium campaign content term } } } }\n      }\n    }\n  }`;\n}).join(\"\\n\");\nreturn [{ json: { query: \"query BatchJourneys {\\n\" + fragments + \"\\n}\", batch_size: orderIds.length } }];\n"
       },
       "id": "e59d08f3-e4f1-4306-b842-56d03197c1de",
       "name": "Build GraphQL Query",
@@ -179,7 +170,7 @@
       "credentials": {
         "shopifyAccessTokenApi": {
           "id": "PLACEHOLDER",
-          "name": "Shopify AdeA"
+          "name": "Shopify Access Token account"
         }
       }
     },
@@ -231,7 +222,7 @@
       "credentials": {
         "httpHeaderAuth": {
           "id": "PLACEHOLDER",
-          "name": "Supabase AdeA"
+          "name": "Header Auth Supabase"
         }
       }
     },
@@ -251,42 +242,17 @@
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
-            {
-              "name": "Prefer",
-              "value": "return=minimal"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "{\"evento\":\"e5b_journey_daily_sync\",\"entidad\":\"shopify_customer_journeys\",\"estado\":\"ok\"}",
+        "batchSize": 10,
         "options": {}
       },
-      "id": "0850c011-50ff-4e59-a786-6e61eabbabff",
-      "name": "Log Sync Complete",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.4,
+      "id": "5a78c812-ab6a-41b5-a2ca-b0d4ce138f4e",
+      "name": "Loop Batches of 10",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
       "position": [
-        1440,
-        512
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "PLACEHOLDER",
-          "name": "Supabase AdeA"
-        }
-      }
+        1200,
+        304
+      ]
     },
     {
       "parameters": {
@@ -323,7 +289,42 @@
       "credentials": {
         "httpHeaderAuth": {
           "id": "PLACEHOLDER",
-          "name": "Supabase AdeA"
+          "name": "Header Auth Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/rpc/get_orders_pending_journey",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{}",
+        "options": {}
+      },
+      "id": "f0f44960-8d54-43f7-adee-de2b99c7637f",
+      "name": "Get Pending Orders",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        240,
+        400
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Supabase"
         }
       }
     }
@@ -334,17 +335,6 @@
         [
           {
             "node": "Get Pending Orders",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get Pending Orders": {
-      "main": [
-        [
-          {
-            "node": "Check Has Pending",
             "type": "main",
             "index": 0
           }
@@ -385,24 +375,6 @@
         [
           {
             "node": "Loop Batches of 10",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Loop Batches of 10": {
-      "main": [
-        [
-          {
-            "node": "Log Sync Complete",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Build GraphQL Query",
             "type": "main",
             "index": 0
           }
@@ -458,6 +430,35 @@
         [
           {
             "node": "Loop Batches of 10",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Batches of 10": {
+      "main": [
+        [
+          {
+            "node": "Log Sync Complete",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build GraphQL Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Pending Orders": {
+      "main": [
+        [
+          {
+            "node": "Check Has Pending",
             "type": "main",
             "index": 0
           }
