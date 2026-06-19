@@ -3,59 +3,384 @@
   "name": "E4E-C - Creative Product Matcher",
   "active": true,
   "description": "AIR-50. Match semantico creative_visuals -> producto_id usando embedding del description vs product_images.embedding_visual. Threshold 0.82 dentro de RPC. Schedule diario 8am COT.",
-  "settings": { "executionOrder": "v1", "availableInMCP": true, "binaryMode": "separate", "timeSavedMode": "fixed", "callerPolicy": "workflowsFromSameOwner" },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "PV9L4Y58E3JLvflt"
+  },
   "nodes": [
-    { "parameters": {}, "id": "95881e50-af59-468a-a557-d4e8b7044193", "name": "Run Bulk Match", "type": "n8n-nodes-base.manualTrigger", "typeVersion": 1, "position": [-304, 80] },
     {
-      "parameters": { "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/creative_visuals", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendQuery": true, "queryParameters": { "parameters": [{ "name": "select", "value": "asset_id,asset_type,origen,description" }, { "name": "producto_id", "value": "is.null" }, { "name": "description", "value": "not.is.null" }, { "name": "limit", "value": "200" }] }, "options": {} },
-      "id": "f1f01dba-8600-4566-9e9d-b8eacb89a831", "name": "Fetch Creative Candidates", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [-64, 192], "alwaysOutputData": true,
-      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+      "parameters": {},
+      "id": "95881e50-af59-468a-a557-d4e8b7044193",
+      "name": "Run Bulk Match",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -304,
+        80
+      ]
     },
     {
-      "parameters": { "jsCode": "const first = $input.first()?.json;\nlet rows = [];\nif (Array.isArray(first)) rows = first;\nelse if (Array.isArray(first?.body)) rows = first.body;\nelse rows = $input.all().map(i => i.json).filter(o => o && o.asset_id);\nconst valid = rows.filter(r => r && r.asset_id && r.description && r.description.trim().length > 10);\nif (valid.length === 0) return [];\nconst sanitize = (s) => String(s).replace(/[\\x00-\\x1F]/g, ' ').substring(0, 3000);\nconst texts = valid.map(r => sanitize(r.description));\nconst metadata = valid.map(r => ({ asset_id: r.asset_id, asset_type: r.asset_type, origen: r.origen }));\nreturn [{ json: { texts, metadata, count: valid.length }}];" },
-      "id": "d0ae11ad-119c-40e2-a0b5-e7133db86aa4", "name": "Build Embedding Input", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [192, 192]
+      "parameters": {
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/creative_visuals",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "select",
+              "value": "asset_id,asset_type,origen,description"
+            },
+            {
+              "name": "producto_id",
+              "value": "is.null"
+            },
+            {
+              "name": "description",
+              "value": "not.is.null"
+            },
+            {
+              "name": "limit",
+              "value": "200"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f1f01dba-8600-4566-9e9d-b8eacb89a831",
+      "name": "Fetch Creative Candidates",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -64,
+        192
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Supabase AdeA"
+        }
+      }
     },
     {
-      "parameters": { "method": "POST", "url": "https://api.openai.com/v1/embeddings", "authentication": "predefinedCredentialType", "nodeCredentialType": "openAiApi", "sendHeaders": true, "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }] }, "sendBody": true, "specifyBody": "json", "jsonBody": "={{ JSON.stringify({ model: \"text-embedding-3-small\", input: $json.texts }) }}", "options": {} },
-      "id": "f71295ae-59c2-4cc1-a0d1-72a9ece6f17a", "name": "OpenAI Embeddings", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [432, 192],
-      "credentials": { "openAiApi": { "id": "PLACEHOLDER", "name": "OpenAI AdeA" } }
+      "parameters": {
+        "jsCode": "const first = $input.first()?.json;\nlet rows = [];\nif (Array.isArray(first)) rows = first;\nelse if (Array.isArray(first?.body)) rows = first.body;\nelse rows = $input.all().map(i => i.json).filter(o => o && o.asset_id);\nconst valid = rows.filter(r => r && r.asset_id && r.description && r.description.trim().length > 10);\nif (valid.length === 0) return [];\nconst sanitize = (s) => String(s).replace(/[\\x00-\\x1F]/g, ' ').substring(0, 3000);\nconst texts = valid.map(r => sanitize(r.description));\nconst metadata = valid.map(r => ({ asset_id: r.asset_id, asset_type: r.asset_type, origen: r.origen }));\nreturn [{ json: { texts, metadata, count: valid.length }}];"
+      },
+      "id": "d0ae11ad-119c-40e2-a0b5-e7133db86aa4",
+      "name": "Build Embedding Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        192,
+        192
+      ]
     },
     {
-      "parameters": { "jsCode": "const resp = $input.first()?.json;\nif (!resp || !Array.isArray(resp.data) || resp.data.length === 0) return [{ json: { payload: [], count: 0 }}];\nconst meta = $('Build Embedding Input').first().json.metadata;\nconst sorted = resp.data.slice().sort((a, b) => a.index - b.index);\nconst payload = meta.map((m, i) => ({\n  asset_id: m.asset_id,\n  embedding: sorted[i] && sorted[i].embedding\n})).filter(x => Array.isArray(x.embedding) && x.embedding.length === 1536);\nreturn [{ json: { payload, count: payload.length }}];" },
-      "id": "4d152a97-11a6-41b6-b0ee-f2f1c9713d34", "name": "Build Match Payload", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [672, 192]
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/embeddings",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: \"text-embedding-3-small\", input: $json.texts }) }}",
+        "options": {}
+      },
+      "id": "f71295ae-59c2-4cc1-a0d1-72a9ece6f17a",
+      "name": "OpenAI Embeddings",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        432,
+        192
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "PLACEHOLDER",
+          "name": "OpenAI AdeA"
+        }
+      }
     },
     {
-      "parameters": { "method": "POST", "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/rpc/match_creatives_visuals_to_products", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendHeaders": true, "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }] }, "sendBody": true, "specifyBody": "json", "jsonBody": "={{ JSON.stringify({ payload: $json.payload }) }}", "options": { "timeout": 120000 } },
-      "onError": "continueErrorOutput",
-      "id": "6640fc4e-aec9-4747-a3ef-5d608bf897ab", "name": "Match Creatives RPC", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [912, 192],
-      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+      "parameters": {
+        "jsCode": "const resp = $input.first()?.json;\nif (!resp || !Array.isArray(resp.data) || resp.data.length === 0) return [{ json: { payload: [], count: 0 }}];\nconst meta = $('Build Embedding Input').first().json.metadata;\nconst sorted = resp.data.slice().sort((a, b) => a.index - b.index);\nconst payload = meta.map((m, i) => ({\n  asset_id: m.asset_id,\n  embedding: sorted[i] && sorted[i].embedding\n})).filter(x => Array.isArray(x.embedding) && x.embedding.length === 1536);\nreturn [{ json: { payload, count: payload.length }}];"
+      },
+      "id": "4d152a97-11a6-41b6-b0ee-f2f1c9713d34",
+      "name": "Build Match Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        192
+      ]
     },
     {
-      "parameters": { "method": "POST", "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendHeaders": true, "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "Prefer", "value": "return=minimal" }] }, "sendBody": true, "specifyBody": "json", "jsonBody": "={{ JSON.stringify({ evento: \"creative_product_match_error\", entidad: \"creative_visuals\", estado: \"error\", error_mensaje: String((($json.error && ($json.error.message || $json.error)) || $json.message || \"match RPC failed\")).replace(/[\\u0000-\\u001F\\u007F]/g, \" \").substring(0, 1000) }) }}", "options": {} },
-      "id": "e4ec-err-log-0001-000000000001", "name": "Log Match Error", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [1152, 384],
-      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/rpc/match_creatives_visuals_to_products",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ payload: $json.payload }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "id": "6640fc4e-aec9-4747-a3ef-5d608bf897ab",
+      "name": "Match Creatives RPC",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        912,
+        192
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Supabase AdeA"
+        }
+      },
+      "onError": "continueErrorOutput"
     },
     {
-      "parameters": { "jsCode": "const first = $input.first()?.json;\nlet rows = [];\nif (Array.isArray(first)) rows = first;\nelse if (Array.isArray(first?.body)) rows = first.body;\nelse rows = $input.all().map(i => i.json).filter(o => o && o.asset_id);\nconst matched = rows.filter(r => r && r.matched === true);\nconst unmatched = rows.filter(r => r && r.matched === false);\nconst avgScore = matched.length > 0 ? (matched.reduce((s, r) => s + Number(r.match_score || 0), 0) / matched.length) : 0;\nconst maxScore = matched.length > 0 ? Math.max.apply(null, matched.map(r => Number(r.match_score || 0))) : 0;\nconst minScore = matched.length > 0 ? Math.min.apply(null, matched.map(r => Number(r.match_score || 0))) : 0;\nconst belowThresholdAvg = unmatched.length > 0 ? (unmatched.reduce((s, r) => s + Number(r.match_score || 0), 0) / unmatched.length) : 0;\nreturn [{ json: {\n  total_evaluados: rows.length,\n  matched: matched.length,\n  unmatched: unmatched.length,\n  avg_score_matched: Number(avgScore.toFixed(4)),\n  max_score_matched: Number(maxScore.toFixed(4)),\n  min_score_matched: Number(minScore.toFixed(4)),\n  avg_score_below_threshold: Number(belowThresholdAvg.toFixed(4))\n}}];" },
-      "id": "216a467c-75b4-4568-af2b-47865dbab031", "name": "Summarize Results", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [1152, 192]
+      "parameters": {
+        "jsCode": "const first = $input.first()?.json;\nlet rows = [];\nif (Array.isArray(first)) rows = first;\nelse if (Array.isArray(first?.body)) rows = first.body;\nelse rows = $input.all().map(i => i.json).filter(o => o && o.asset_id);\nconst matched = rows.filter(r => r && r.matched === true);\nconst unmatched = rows.filter(r => r && r.matched === false);\nconst avgScore = matched.length > 0 ? (matched.reduce((s, r) => s + Number(r.match_score || 0), 0) / matched.length) : 0;\nconst maxScore = matched.length > 0 ? Math.max.apply(null, matched.map(r => Number(r.match_score || 0))) : 0;\nconst minScore = matched.length > 0 ? Math.min.apply(null, matched.map(r => Number(r.match_score || 0))) : 0;\nconst belowThresholdAvg = unmatched.length > 0 ? (unmatched.reduce((s, r) => s + Number(r.match_score || 0), 0) / unmatched.length) : 0;\nreturn [{ json: {\n  total_evaluados: rows.length,\n  matched: matched.length,\n  unmatched: unmatched.length,\n  avg_score_matched: Number(avgScore.toFixed(4)),\n  max_score_matched: Number(maxScore.toFixed(4)),\n  min_score_matched: Number(minScore.toFixed(4)),\n  avg_score_below_threshold: Number(belowThresholdAvg.toFixed(4))\n}}];"
+      },
+      "id": "216a467c-75b4-4568-af2b-47865dbab031",
+      "name": "Summarize Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1152,
+        192
+      ]
     },
     {
-      "parameters": { "method": "POST", "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendHeaders": true, "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "Prefer", "value": "return=minimal" }] }, "sendBody": true, "specifyBody": "json", "jsonBody": "={{ JSON.stringify({ evento: \"creative_product_matched\", entidad: \"creative_visuals\", estado: \"ok\", entidad_id: \"matched=\" + String($json.matched) + \"/\" + String($json.total_evaluados) + \" avg_score=\" + String($json.avg_score_matched) }) }}", "options": {} },
-      "id": "9bd465f8-89c3-4f13-91b2-0a8531052321", "name": "Log Match Results", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [1392, 192],
-      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ evento: \"creative_product_matched\", entidad: \"creative_visuals\", estado: \"ok\", entidad_id: \"matched=\" + String($json.matched) + \"/\" + String($json.total_evaluados) + \" avg_score=\" + String($json.avg_score_matched) }) }}",
+        "options": {}
+      },
+      "id": "9bd465f8-89c3-4f13-91b2-0a8531052321",
+      "name": "Log Match Results",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1392,
+        192
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Supabase AdeA"
+        }
+      }
     },
-    { "parameters": { "rule": { "interval": [{ "triggerAtHour": 13 }] } }, "id": "b66cbfb1-157e-4849-ba13-c98dbff020b1", "name": "Schedule Diario 8am COT", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.3, "position": [-304, 304] }
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 13
+            }
+          ]
+        }
+      },
+      "id": "b66cbfb1-157e-4849-ba13-c98dbff020b1",
+      "name": "Schedule Diario 8am COT",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -304,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ evento: \"creative_product_match_error\", entidad: \"creative_visuals\", estado: \"error\", error_mensaje: String((($json.error && ($json.error.message || $json.error)) || $json.message || \"match RPC failed\")).replace(/[\\u0000-\\u001F\\u007F]/g, \" \").substring(0, 1000) }) }}",
+        "options": {}
+      },
+      "id": "e4ec-err-log-0001-000000000001",
+      "name": "Log Match Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1152,
+        384
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Supabase AdeA"
+        }
+      }
+    }
   ],
   "connections": {
-    "Run Bulk Match": { "main": [[{ "node": "Fetch Creative Candidates", "type": "main", "index": 0 }]] },
-    "Fetch Creative Candidates": { "main": [[{ "node": "Build Embedding Input", "type": "main", "index": 0 }]] },
-    "Build Embedding Input": { "main": [[{ "node": "OpenAI Embeddings", "type": "main", "index": 0 }]] },
-    "OpenAI Embeddings": { "main": [[{ "node": "Build Match Payload", "type": "main", "index": 0 }]] },
-    "Build Match Payload": { "main": [[{ "node": "Match Creatives RPC", "type": "main", "index": 0 }]] },
-    "Match Creatives RPC": { "main": [[{ "node": "Summarize Results", "type": "main", "index": 0 }], [{ "node": "Log Match Error", "type": "main", "index": 0 }]] },
-    "Summarize Results": { "main": [[{ "node": "Log Match Results", "type": "main", "index": 0 }]] },
-    "Schedule Diario 8am COT": { "main": [[{ "node": "Fetch Creative Candidates", "type": "main", "index": 0 }]] }
+    "Run Bulk Match": {
+      "main": [
+        [
+          {
+            "node": "Fetch Creative Candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Creative Candidates": {
+      "main": [
+        [
+          {
+            "node": "Build Embedding Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Embedding Input": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Embeddings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Embeddings": {
+      "main": [
+        [
+          {
+            "node": "Build Match Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Match Payload": {
+      "main": [
+        [
+          {
+            "node": "Match Creatives RPC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Match Creatives RPC": {
+      "main": [
+        [
+          {
+            "node": "Summarize Results",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Match Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize Results": {
+      "main": [
+        [
+          {
+            "node": "Log Match Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Diario 8am COT": {
+      "main": [
+        [
+          {
+            "node": "Fetch Creative Candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
   "tags": [],
-  "meta": { "aiBuilderAssisted": true }
+  "meta": {
+    "aiBuilderAssisted": true
+  }
 }
