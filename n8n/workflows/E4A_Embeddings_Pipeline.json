@@ -6,7 +6,8 @@
   "settings": {
     "executionOrder": "v1",
     "availableInMCP": true,
-    "binaryMode": "separate"
+    "binaryMode": "separate",
+    "errorWorkflow": "PV9L4Y58E3JLvflt"
   },
   "nodes": [
     {

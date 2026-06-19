@@ -2,16 +2,35 @@
   "id": "xuxjBhMssAXSLJju",
   "name": "E2 - Retry Huerfanos",
   "active": true,
-  "description": "AIR-63 Capa 2: diario 7:30am COT (30 min despues del E4F COGS Sync) invoca retry_huerfanos_pendientes para auto-recuperar venta_items con variante_id NULL.",
-  "settings": { "executionOrder": "v1", "availableInMCP": true, "binaryMode": "separate" },
+  "description": "AIR-63 Capa 2: diario 7:30am COT (30 min después del E4F COGS Sync) invoca retry_huerfanos_pendientes para auto-recuperar venta_items con variante_id NULL.",
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "PV9L4Y58E3JLvflt"
+  },
   "nodes": [
     {
-      "parameters": { "rule": { "interval": [{ "field": "cronExpression", "expression": "30 12 * * *" }] } },
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 12 * * *"
+            }
+          ]
+        }
+      },
       "id": "f74dd0cf-f6f8-4efb-bd26-13e1f2989b51",
       "name": "Daily 7:30am COT",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [240, 304]
+      "position": [
+        240,
+        304
+      ]
     },
     {
       "parameters": {
@@ -20,7 +39,14 @@
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }] },
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({}) }}",
@@ -30,13 +56,33 @@
       "name": "Retry Huerfanos RPC",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [544, 304],
-      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+      "position": [
+        544,
+        304
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Supabase"
+        }
+      }
     }
   ],
   "connections": {
-    "Daily 7:30am COT": { "main": [[{ "node": "Retry Huerfanos RPC", "type": "main", "index": 0 }]] }
+    "Daily 7:30am COT": {
+      "main": [
+        [
+          {
+            "node": "Retry Huerfanos RPC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
   "tags": [],
-  "meta": { "aiBuilderAssisted": true }
+  "meta": {
+    "aiBuilderAssisted": true
+  }
 }

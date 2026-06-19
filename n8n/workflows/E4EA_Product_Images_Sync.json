@@ -8,7 +8,8 @@
     "availableInMCP": true,
     "binaryMode": "separate",
     "timeSavedMode": "fixed",
-    "callerPolicy": "workflowsFromSameOwner"
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "PV9L4Y58E3JLvflt"
   },
   "nodes": [
     {
