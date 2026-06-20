@@ -3,17 +3,35 @@
   "name": "E2 - Webhook Shopify Customers",
   "active": true,
   "description": "Recibe webhook de Shopify customers/create y customers/update, sanitiza datos y sincroniza a Supabase.",
-  "settings": { "executionOrder": "v1", "availableInMCP": true, "binaryMode": "separate" },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "PV9L4Y58E3JLvflt"
+  },
   "nodes": [
     {
-      "parameters": { "authentication": "accessToken", "topic": "customers/create" },
+      "parameters": {
+        "authentication": "accessToken",
+        "topic": "customers/create"
+      },
       "id": "3562fccc-63a8-4a47-955d-53e489832bf2",
       "name": "Customer Created",
       "type": "n8n-nodes-base.shopifyTrigger",
       "typeVersion": 1,
-      "position": [0, 208],
+      "position": [
+        0,
+        208
+      ],
       "webhookId": "8e60d6ce-6d52-4028-a1df-15d31c809d3d",
-      "credentials": { "shopifyOAuth2Api": { "id": "PLACEHOLDER", "name": "Shopify AdeA" } }
+      "credentials": {
+        "shopifyAccessTokenApi": {
+          "id": "PLACEHOLDER",
+          "name": "Shopify Access Token account"
+        }
+      }
     },
     {
       "parameters": {
@@ -23,7 +41,10 @@
       "name": "Sanitize Customer Data",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [400, 352]
+      "position": [
+        400,
+        352
+      ]
     },
     {
       "parameters": {
@@ -32,7 +53,14 @@
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }] },
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ customer_data: $json }) }}",
@@ -42,25 +70,76 @@
       "name": "Upsert Customer RPC",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [704, 352],
-      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+      "position": [
+        704,
+        352
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Supabase"
+        }
+      }
     },
     {
-      "parameters": { "authentication": "accessToken", "topic": "customers/update" },
+      "parameters": {
+        "authentication": "accessToken",
+        "topic": "customers/update"
+      },
       "id": "502318b6-9300-4ef7-81c9-f3d5ed6ea3d3",
       "name": "Customer Updated",
       "type": "n8n-nodes-base.shopifyTrigger",
       "typeVersion": 1,
-      "position": [0, 512],
+      "position": [
+        0,
+        512
+      ],
       "webhookId": "99cc2526-d488-48cf-8902-0f2f87361f01",
-      "credentials": { "shopifyOAuth2Api": { "id": "PLACEHOLDER", "name": "Shopify AdeA" } }
+      "credentials": {
+        "shopifyAccessTokenApi": {
+          "id": "PLACEHOLDER",
+          "name": "Shopify Access Token account"
+        }
+      }
     }
   ],
   "connections": {
-    "Customer Created": { "main": [[{ "node": "Sanitize Customer Data", "type": "main", "index": 0 }]] },
-    "Sanitize Customer Data": { "main": [[{ "node": "Upsert Customer RPC", "type": "main", "index": 0 }]] },
-    "Customer Updated": { "main": [[{ "node": "Sanitize Customer Data", "type": "main", "index": 0 }]] }
+    "Customer Created": {
+      "main": [
+        [
+          {
+            "node": "Sanitize Customer Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sanitize Customer Data": {
+      "main": [
+        [
+          {
+            "node": "Upsert Customer RPC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Customer Updated": {
+      "main": [
+        [
+          {
+            "node": "Sanitize Customer Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
   "tags": [],
-  "meta": { "aiBuilderAssisted": true }
+  "meta": {
+    "aiBuilderAssisted": true
+  }
 }
