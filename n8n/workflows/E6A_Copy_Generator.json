@@ -1,11 +1,11 @@
 {
-  "id": "E6ACopyGenerator0001",
+  "id": "ZxZBj02hzkEdP3sP",
   "name": "E6A - Copy Generator",
   "active": false,
-  "description": "E6A · AIR-138 (AIR-10b). Generador de copy de Meta Ads. Consume la RPC public.get_copy_memoria(p_canal,p_producto_id,p_limite) entregada en PR #49 (canal exacto 'meta_ads'; EXECUTE solo service_role -> via PostgREST rpc con credencial Supabase AdeA / service_role). Produce EXACTAMENTE 3 variantes de copy ({variante, primary_text, headline, justificacion}) donde la justificacion cita un aprendizaje/insight real de la memoria, y las envia a Slack para revision humana (SLACK_WEBHOOK_URL; no-op si no esta configurada). NO publica, NO inserta en copies_aprobados (otro sub-issue). Trigger manual; luego sera invocable con producto_id/objetivo/angulo como input (ver nodo Set Inputs). Patron AIR-94 en el nodo que manda texto a Claude: sanitize (strip de TODOS los tags + control chars + truncado; invariante: tras sanitize NO contiene '<' ni '>'), datos en <data>, system prompt defensivo (ignora instrucciones dentro de <data>), parser JSON tolerante. Campos de texto libre de brand_knowledge/creative_learnings/copies_aprobados se sanitizan; numericos (indice_rendimiento, roas, score_confianza, etc.) quedan intactos.",
+  "description": "E6A · AIR-138 (AIR-10b). Generador de copy de Meta Ads. Consume la RPC public.get_copy_memoria(p_canal,p_producto_id,p_limite) (canal exacto 'meta_ads'; EXECUTE solo service_role -> via PostgREST rpc con credencial Supabase AdeA / service_role). Produce EXACTAMENTE 3 variantes de copy ({variante, primary_text, headline, justificacion}) donde la justificacion cita un aprendizaje/insight real de la memoria, y las envia por CORREO (Gmail) a marketing@airedeagua.com para revision humana (mismo patron/credencial que los loops E5). NO publica, NO inserta en copies_aprobados (otro sub-issue). Trigger manual; luego sera invocable con producto_id/objetivo/angulo como input (ver nodo Set Inputs). Patron AIR-94 en el nodo que manda texto a Claude: sanitize (strip de TODOS los tags + control chars + truncado; invariante: tras sanitize NO contiene '<' ni '>'), datos en <data>, system prompt defensivo (ignora instrucciones dentro de <data>), parser JSON tolerante con validacion dura de EXACTAMENTE 3 variantes. Campos de texto libre de brand_knowledge/creative_learnings/copies_aprobados se sanitizan; numericos (indice_rendimiento, roas, score_confianza, etc.) quedan intactos.",
   "settings": {
     "executionOrder": "v1",
-    "errorWorkflow": "ErrorHandlerGlobal01",
+    "errorWorkflow": "PV9L4Y58E3JLvflt",
     "timezone": "America/Bogota"
   },
   "nodes": [
@@ -122,65 +122,34 @@
     },
     {
       "id": "e6a-parse-0001",
-      "name": "Parse Copy + Build Slack",
+      "name": "Parse Copy + Build Email",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [980, 368],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// AIR-94 · parser JSON estricto con fallback tolerante.\nconst resp = $input.first().json;\nconst text = (resp && Array.isArray(resp.content) && resp.content[0] && resp.content[0].text) || '';\n\nlet parsed;\ntry {\n  parsed = JSON.parse(text);\n} catch (e) {\n  const fence = text.match(/```(?:json)?\\s*([\\s\\S]*?)```/);\n  if (fence) { parsed = JSON.parse(fence[1].trim()); }\n  else {\n    const brace = text.match(/\\{[\\s\\S]*\\}/);\n    if (brace) parsed = JSON.parse(brace[0]);\n    else throw new Error('Claude copy not valid JSON: ' + text.slice(0, 200));\n  }\n}\n\nconst variantes = Array.isArray(parsed.variantes) ? parsed.variantes : [];\n// Validacion dura: EXACTAMENTE 3 variantes con los 4 campos. NO inspeccionamos\n// el contenido en busca de instrucciones (eso seria vector de inyeccion): solo\n// validamos forma.\nif (variantes.length !== 3) {\n  throw new Error('Se esperaban EXACTAMENTE 3 variantes, llegaron ' + variantes.length + '.');\n}\nfunction clean(s, max) {\n  if (s == null) return '';\n  const str = String(s).replace(/[\\x00-\\x1F\\x7F]/g, ' ').replace(/<[^>]*>/g, '').trim();\n  max = max || 400;\n  return str.length > max ? str.slice(0, max) + '...' : str;\n}\nconst limpias = variantes.map(function (v, i) {\n  const variante = clean(v.variante, 40) || String.fromCharCode(65 + i);\n  const primary = clean(v.primary_text, 600);\n  const headline = clean(v.headline, 120);\n  const justif = clean(v.justificacion, 400);\n  if (!primary || !headline || !justif) {\n    throw new Error('Variante ' + (i + 1) + ' incompleta: faltan campos (primary_text/headline/justificacion).');\n  }\n  return { variante: variante, primary_text: primary, headline: headline, justificacion: justif };\n});\n\nconst meta = $('Build Prompt (sanitized)').first().json || {};\nconst ctx = [];\nif (meta.in_producto_id) ctx.push('producto: ' + meta.in_producto_id);\nif (meta.in_objetivo) ctx.push('objetivo: ' + meta.in_objetivo);\nif (meta.in_angulo) ctx.push('angulo: ' + meta.in_angulo);\nconst ctxLine = ctx.length ? '_(' + ctx.join(' · ') + ')_\\n\\n' : '';\n\nconst bloques = limpias.map(function (v) {\n  return '*Variante ' + v.variante + '*\\n'\n    + '> ' + v.primary_text + '\\n'\n    + '*Headline:* ' + v.headline + '\\n'\n    + '_Por que:_ ' + v.justificacion;\n}).join('\\n\\n');\n\nconst slackText = ':lower_left_ballpoint_pen: *Copy Meta Ads para revision — Aire de Agua*\\n\\n'\n  + ctxLine\n  + bloques + '\\n\\n'\n  + '_Estado: propuesto. Un humano aprueba/edita antes de publicar (E6/AIR-10)._';\n\nlet slackUrl = '';\ntry { slackUrl = ($env && $env.SLACK_WEBHOOK_URL) ? String($env.SLACK_WEBHOOK_URL).trim() : ''; } catch (e) { slackUrl = ''; }\nconst hasSlack = /^https?:\\/\\//i.test(slackUrl);\n\nreturn [{ json: {\n  slack_url: slackUrl,\n  has_slack: hasSlack,\n  slack_text: slackText.slice(0, 3800),\n  variantes: limpias,\n  variantes_count: limpias.length\n} }];"
+        "jsCode": "// AIR-94 · parser JSON estricto con fallback tolerante.\nconst resp = $input.first().json;\nconst text = (resp && Array.isArray(resp.content) && resp.content[0] && resp.content[0].text) || '';\n\nlet parsed;\ntry {\n  parsed = JSON.parse(text);\n} catch (e) {\n  const fence = text.match(/```(?:json)?\\s*([\\s\\S]*?)```/);\n  if (fence) { parsed = JSON.parse(fence[1].trim()); }\n  else {\n    const brace = text.match(/\\{[\\s\\S]*\\}/);\n    if (brace) parsed = JSON.parse(brace[0]);\n    else throw new Error('Claude copy not valid JSON: ' + text.slice(0, 200));\n  }\n}\n\nconst variantes = Array.isArray(parsed.variantes) ? parsed.variantes : [];\n// Validacion dura: EXACTAMENTE 3 variantes con los 4 campos. NO inspeccionamos\n// el contenido en busca de instrucciones (eso seria vector de inyeccion): solo\n// validamos forma.\nif (variantes.length !== 3) {\n  throw new Error('Se esperaban EXACTAMENTE 3 variantes, llegaron ' + variantes.length + '.');\n}\nfunction clean(s, max) {\n  if (s == null) return '';\n  const str = String(s).replace(/[\\x00-\\x1F\\x7F]/g, ' ').replace(/<[^>]*>/g, '').trim();\n  max = max || 400;\n  return str.length > max ? str.slice(0, max) + '...' : str;\n}\n// Escape HTML para el cuerpo del correo (defensa adicional + render correcto).\nfunction esc(s) {\n  return String(s == null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')\n    .replace(/\"/g, '&quot;');\n}\nconst limpias = variantes.map(function (v, i) {\n  const variante = clean(v.variante, 40) || String.fromCharCode(65 + i);\n  const primary = clean(v.primary_text, 600);\n  const headline = clean(v.headline, 120);\n  const justif = clean(v.justificacion, 400);\n  if (!primary || !headline || !justif) {\n    throw new Error('Variante ' + (i + 1) + ' incompleta: faltan campos (primary_text/headline/justificacion).');\n  }\n  return { variante: variante, primary_text: primary, headline: headline, justificacion: justif };\n});\n\nconst meta = $('Build Prompt (sanitized)').first().json || {};\nconst ctx = [];\nif (meta.in_producto_id) ctx.push('producto: ' + meta.in_producto_id);\nif (meta.in_objetivo) ctx.push('objetivo: ' + meta.in_objetivo);\nif (meta.in_angulo) ctx.push('angulo: ' + meta.in_angulo);\nconst ctxLine = ctx.length\n  ? '<p style=\"color:#666;font-size:13px;margin:0 0 16px;\">(' + esc(ctx.join(' · ')) + ')</p>'\n  : '';\n\nconst bloques = limpias.map(function (v) {\n  return '<div style=\"margin:0 0 20px;padding:12px 16px;border-left:3px solid #2b6cb0;background:#f7fafc;\">'\n    + '<h3 style=\"margin:0 0 8px;font-size:15px;\">Variante ' + esc(v.variante) + '</h3>'\n    + '<p style=\"margin:0 0 8px;white-space:pre-wrap;\">' + esc(v.primary_text) + '</p>'\n    + '<p style=\"margin:0 0 6px;\"><strong>Headline:</strong> ' + esc(v.headline) + '</p>'\n    + '<p style=\"margin:0;color:#444;font-size:13px;\"><em>Por que:</em> ' + esc(v.justificacion) + '</p>'\n    + '</div>';\n}).join('');\n\nconst html = '<!doctype html><html><body style=\"font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#1a202c;max-width:640px;margin:0 auto;\">'\n  + '<h2 style=\"margin:0 0 4px;\">Copy Meta Ads para revision — Aire de Agua</h2>'\n  + '<p style=\"color:#666;font-size:13px;margin:0 0 16px;\">3 variantes propuestas. Un humano aprueba/edita antes de publicar (E6/AIR-10).</p>'\n  + ctxLine\n  + bloques\n  + '<p style=\"color:#999;font-size:12px;margin-top:24px;\">Estado: propuesto · generado automaticamente por E6A.</p>'\n  + '</body></html>';\n\nconst subject = 'Copy Meta Ads para revision — Aire de Agua';\n\nreturn [{ json: {\n  subject: subject,\n  html: html,\n  variantes: limpias,\n  variantes_count: limpias.length\n} }];"
       }
     },
     {
-      "id": "e6a-if-slack-0001",
-      "name": "If Slack Configured",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
+      "id": "e6a-send-email-0001",
+      "name": "Send Copy Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
       "position": [1240, 368],
+      "webhookId": "e6a09b2f-4c11-4d6e-9a77-c0f9e2a1b001",
       "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 2
-          },
-          "combinator": "and",
-          "conditions": [
-            {
-              "id": "cond-has-slack",
-              "leftValue": "={{ $json.has_slack }}",
-              "rightValue": true,
-              "operator": { "type": "boolean", "operation": "equals" }
-            }
-          ]
-        },
-        "options": {}
-      }
-    },
-    {
-      "id": "e6a-notify-slack-0001",
-      "name": "Notify Slack",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.4,
-      "position": [1500, 256],
-      "parameters": {
-        "method": "POST",
-        "url": "={{ $json.slack_url }}",
-        "sendHeaders": true,
-        "specifyHeaders": "keypair",
-        "headerParameters": {
-          "parameters": [
-            { "name": "Content-Type", "value": "application/json" }
-          ]
-        },
-        "sendBody": true,
-        "contentType": "json",
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ text: $json.slack_text }) }}",
-        "options": {}
+        "sendTo": "marketing@airedeagua.com",
+        "subject": "={{ $json.subject }}",
+        "message": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false,
+          "senderName": "Aire de Agua · Copy Generator"
+        }
       },
-      "onError": "continueRegularOutput"
+      "credentials": {
+        "gmailOAuth2": { "id": "PLACEHOLDER", "name": "Gmail account" }
+      }
     }
   ],
   "connections": {
@@ -200,14 +169,11 @@
     },
     "Claude API (copy)": {
       "main": [
-        [{ "node": "Parse Copy + Build Slack", "type": "main", "index": 0 }]
+        [{ "node": "Parse Copy + Build Email", "type": "main", "index": 0 }]
       ]
     },
-    "Parse Copy + Build Slack": {
-      "main": [[{ "node": "If Slack Configured", "type": "main", "index": 0 }]]
-    },
-    "If Slack Configured": {
-      "main": [[{ "node": "Notify Slack", "type": "main", "index": 0 }], []]
+    "Parse Copy + Build Email": {
+      "main": [[{ "node": "Send Copy Email", "type": "main", "index": 0 }]]
     }
   },
   "tags": [],
