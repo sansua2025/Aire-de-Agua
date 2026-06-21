@@ -30,7 +30,7 @@
       },
       "credentials": {
         "httpHeaderAuth": {
-          "id": "PLACEHOLDER",
+          "id": "R1gvcFqRbgctuPP5",
           "name": "Header Auth Supabase"
         }
       }
@@ -82,7 +82,7 @@
       },
       "credentials": {
         "openAiApi": {
-          "id": "PLACEHOLDER",
+          "id": "QMuUnR5DRiRiUk8s",
           "name": "OpenAi account"
         }
       }
@@ -138,7 +138,7 @@
       },
       "credentials": {
         "httpHeaderAuth": {
-          "id": "PLACEHOLDER",
+          "id": "R1gvcFqRbgctuPP5",
           "name": "Header Auth Supabase"
         }
       }
@@ -223,7 +223,7 @@
       },
       "credentials": {
         "openAiApi": {
-          "id": "PLACEHOLDER",
+          "id": "QMuUnR5DRiRiUk8s",
           "name": "OpenAi account"
         }
       }
@@ -279,7 +279,7 @@
       },
       "credentials": {
         "httpHeaderAuth": {
-          "id": "PLACEHOLDER",
+          "id": "R1gvcFqRbgctuPP5",
           "name": "Header Auth Supabase"
         }
       }

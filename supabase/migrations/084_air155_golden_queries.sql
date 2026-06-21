@@ -186,7 +186,7 @@ SELECT
   'AIR-155',
   1.0,
   true,
-  encode(digest(regexp_replace(lower(trim(s.pregunta)), '\s+', ' ', 'g'), 'sha256'), 'hex')
+  encode(extensions.digest(regexp_replace(lower(trim(s.pregunta)), '\s+', ' ', 'g'), 'sha256'), 'hex')
 FROM (VALUES
   (
     '¿Cuánto vendimos en mayo 2026?',
