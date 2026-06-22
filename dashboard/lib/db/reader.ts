@@ -83,10 +83,19 @@ function getPool(): Pool {
     idleTimeoutMillis: 10_000,
     connectionTimeoutMillis: 5_000,
     // SSL en producción (Supabase exige TLS); en local se puede deshabilitar.
+    // rejectUnauthorized: true valida el certificado del servidor → evita MITM
+    // (la conexión lleva la credencial de el_cerebro_login). Supabase usa CAs
+    // públicas válidas, así que conecta sin anclar CA. Si se provee
+    // SUPABASE_DB_CA_CERT (pem), se ancla esa CA explícitamente.
     ssl:
       process.env.CEREBRO_READER_SSL === 'disable'
         ? undefined
-        : { rejectUnauthorized: false },
+        : {
+            rejectUnauthorized: true,
+            ...(process.env.SUPABASE_DB_CA_CERT
+              ? { ca: process.env.SUPABASE_DB_CA_CERT }
+              : {}),
+          },
   })
 
   // Al conectar cada cliente físico del pool: degradar al rol gobernado y blindar
@@ -95,7 +104,7 @@ function getPool(): Pool {
     client
       .query(
         `SET ROLE el_cerebro_reader;
-         SET statement_timeout = '${STATEMENT_TIMEOUT_MS}';
+         SET statement_timeout TO ${STATEMENT_TIMEOUT_MS};
          SET default_transaction_read_only = on;`
       )
       .catch((err) => {
@@ -144,6 +153,10 @@ export async function callRpc<T extends QueryResultRow = QueryResultRow>(
   let client: PoolClient | undefined
   try {
     client = await pool.connect()
+    // Defensa por-checkout (BAJO-1): re-aplicar el rol gobernado en cada uso del
+    // cliente, no solo en on('connect'). Evita una race donde un cliente del pool
+    // sirviera una query antes de que el SET ROLE inicial se completara.
+    await client.query('SET ROLE el_cerebro_reader')
     const res = await client.query<T>(sql, args)
     return { rows: res.rows, rowCount: res.rowCount ?? res.rows.length }
   } finally {

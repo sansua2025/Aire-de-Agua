@@ -50,10 +50,12 @@ para que sea swappable.
    con `CEREBRO_READ_SCOPE` en `lib/mcp/oauth-provider.ts`.)
 5. Configura el **consent/login** (qué usuarios pueden autorizar: típicamente solo
    el owner / correos allowlisted de AdeA).
-6. (Opcional) Si configuras un **audience** explícito para los tokens, anótalo
-   para `DESCOPE_AUDIENCE` (debe ser el resource identifier del MCP server, p.ej.
-   `https://dashboard.airedeagua.com/api/mcp`). Si no lo configuras, deja
-   `DESCOPE_AUDIENCE` vacío y la verificación no chequea `aud`.
+6. **(Requerido)** Configura un **Audience** explícito para los tokens en el
+   Inbound App (debe ser el resource identifier del MCP server, p.ej.
+   `https://dashboard.airedeagua.com/api/mcp`). Anótalo para `DESCOPE_AUDIENCE`.
+   La verificación de tokens **siempre** valida el claim `aud` contra este valor
+   (defensa contra token confusion): sin `DESCOPE_AUDIENCE` el servidor no arranca
+   la verificación (fail-closed).
 
 ### URLs que usa nuestro servidor (derivadas del Project ID)
 
@@ -81,9 +83,10 @@ plantilla completa en `dashboard/.env.local.example`.
 | `DESCOPE_PROJECT_ID` | sí | Project ID de Descope |
 | `DESCOPE_ISSUER` | no | solo si issuer custom (ver arriba) |
 | `DESCOPE_JWKS_URI` | no | solo si JWKS custom |
-| `DESCOPE_AUDIENCE` | no | solo si configuraste audience en Descope |
+| `DESCOPE_AUDIENCE` | sí | resource id del MCP server (= Audience del Inbound App), p.ej. `https://dashboard.airedeagua.com/api/mcp` |
 | `CEREBRO_READER_DATABASE_URL` | sí | connection string del rol `el_cerebro_login` (ver §3) |
-| `CEREBRO_READER_SSL` | no | `disable` solo en local; en prod dejar vacío (SSL on) |
+| `CEREBRO_READER_SSL` | no | `disable` solo en local; en prod dejar vacío (SSL on, valida certificado) |
+| `SUPABASE_DB_CA_CERT` | no | CA pem para pinning explícito; normalmente innecesario (Supabase usa CAs públicas) |
 
 No hay secretos OAuth de cliente que setear: con DCR, Claude.ai se registra solo
 contra Descope. No pongas client_secret en el repo ni en Vercel.

@@ -15,7 +15,7 @@ import {
  * VERIFICAMOS el bearer JWT que Claude.ai presenta:
  *   - firma valida contra el JWKS publico del AS,
  *   - `iss` == issuer del AS,
- *   - `aud` == audience configurado (si se configuro),
+ *   - `aud` == audience configurado (DESCOPE_AUDIENCE, requerido → siempre se valida),
  *   - no expirado,
  *   - incluye el scope/permission cerebro:read.
  *
@@ -75,7 +75,7 @@ export async function verifyCerebroToken(
   try {
     const { payload } = await jwtVerify(bearerToken, getJwks(provider), {
       issuer: provider.issuer,
-      ...(provider.audience ? { audience: provider.audience } : {}),
+      audience: provider.audience,
       // `jwtVerify` ya valida exp/nbf con tolerancia 0 por defecto.
     })
 

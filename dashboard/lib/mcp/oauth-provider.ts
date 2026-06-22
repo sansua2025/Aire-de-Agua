@@ -33,10 +33,11 @@ export interface OAuthProvider {
   /** URL del JWKS publico del AS para verificar la firma del JWT. */
   readonly jwksUri: string
   /**
-   * audience esperado en el claim `aud` del token. Para MCP suele ser el resource
-   * identifier (nuestra URL del recurso protegido). undefined ⇒ no se valida aud.
+   * audience esperado en el claim `aud` del token. Para MCP es el resource
+   * identifier (nuestra URL del recurso protegido). REQUERIDO: jwtVerify SIEMPRE
+   * valida el claim `aud` contra este valor (defensa contra token confusion).
    */
-  readonly audience?: string
+  readonly audience: string
 }
 
 /** Lee una env var requerida o lanza (fail-closed: sin config no hay auth). */
@@ -60,7 +61,8 @@ function requireEnv(name: string): string {
  *
  * Ambas se pueden sobreescribir (DESCOPE_ISSUER / DESCOPE_JWKS_URI) por si el
  * proyecto usa un dominio custom de Descope. El audience (DESCOPE_AUDIENCE) es
- * opcional: si se setea, debe ser el resource identifier de este servidor MCP.
+ * REQUERIDO: debe ser el resource identifier de este servidor MCP, para que
+ * jwtVerify siempre valide el claim `aud` (defensa contra token confusion).
  */
 function buildDescopeProvider(): OAuthProvider {
   const projectId = requireEnv('DESCOPE_PROJECT_ID')
@@ -70,7 +72,7 @@ function buildDescopeProvider(): OAuthProvider {
   const jwksUri =
     process.env.DESCOPE_JWKS_URI?.trim() ||
     `https://api.descope.com/${projectId}/.well-known/jwks.json`
-  const audience = process.env.DESCOPE_AUDIENCE?.trim() || undefined
+  const audience = requireEnv('DESCOPE_AUDIENCE')
   return { issuer, jwksUri, audience }
 }
 
