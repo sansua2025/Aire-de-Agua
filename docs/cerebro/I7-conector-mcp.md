@@ -20,6 +20,15 @@ Claude.ai presenta (firma contra el JWKS de Descope + `iss`/`aud`/exp + scope
 `cerebro:read`). El proveedor está aislado en `dashboard/lib/mcp/oauth-provider.ts`
 para que sea swappable.
 
+**Puerta de acceso = `ALLOWED_EMAILS` (AIR-157b).** Descope autentica cualquier
+cuenta Google que pase su login; eso NO basta para entrar al Cerebro. El control
+de acceso real es la **misma allowlist de email que gatea el login del dashboard**:
+la env var `ALLOWED_EMAILS`. `verifyCerebroToken` lee el claim `email` del JWT y
+exige que esté en esa lista (helper compartido `dashboard/lib/auth/allowlist.ts`,
+fuente única de verdad). Descope **no** necesita mantener su propia allowlist; basta
+con que **incluya el claim `email` en el token** (ver §1.6). Si el token no trae
+`email`, o el email no está en `ALLOWED_EMAILS` → 401 (fail-closed).
+
 ### Flujo completo (lo que pasa solo, una vez configurado)
 
 1. Claude.ai llama `/api/mcp` sin token → **401** con
@@ -29,8 +38,10 @@ para que sea swappable.
    **PKCE**, **authorize** (login del humano en Descope), **token**.
 4. Descope emite un access token JWT con permiso `cerebro:read`.
 5. Claude.ai reintenta `/api/mcp` con `Authorization: Bearer <jwt>`.
-6. `verifyCerebroToken` valida el JWT contra el JWKS de Descope y exige
-   `cerebro:read` → **autorizado** → las 7 tools quedan disponibles.
+6. `verifyCerebroToken` valida el JWT contra el JWKS de Descope, exige
+   `cerebro:read` y exige que el claim `email` del token esté en `ALLOWED_EMAILS`
+   → **autorizado** → las 7 tools quedan disponibles. (Email ausente o no
+   allowlisted → 401, aunque el JWT sea válido y tenga el scope.)
 
 ---
 
@@ -48,9 +59,19 @@ para que sea swappable.
 4. Define un **scope/permission** llamado exactamente `cerebro:read` y márcalo como
    el permiso que se concede al autorizar el conector. (El nombre debe coincidir
    con `CEREBRO_READ_SCOPE` en `lib/mcp/oauth-provider.ts`.)
-5. Configura el **consent/login** (qué usuarios pueden autorizar: típicamente solo
-   el owner / correos allowlisted de AdeA).
-6. **(Requerido)** Configura un **Audience** explícito para los tokens en el
+5. Configura el **consent/login**. No hace falta una allowlist propia en Descope:
+   la puerta de acceso real es nuestra `ALLOWED_EMAILS` (ver §1.6 y §0). Puedes
+   dejar que cualquier cuenta Google complete el login de Descope; quien no esté en
+   `ALLOWED_EMAILS` recibirá 401 del conector. (Restringir también en Descope es
+   defensa en profundidad opcional, no requisito.)
+6. **(Requerido) Incluye el claim `email` en el access token del Inbound App.**
+   Nuestro conector lee `payload.email` (claim estándar OIDC) y lo compara contra
+   `ALLOWED_EMAILS`. En Descope: habilita los scopes `openid email` y/o añade el
+   `email` del usuario como claim del token de la Inbound App (token customization
+   / claim mapping). **Si el token no trae `email`, el conector rechaza a todos
+   (fail-closed)** — no hay forma de pasar la puerta sin email. Ver troubleshooting
+   en §8.
+7. **(Requerido)** Configura un **Audience** explícito para los tokens en el
    Inbound App (debe ser el resource identifier del MCP server, p.ej.
    `https://dashboard.airedeagua.com/api/mcp`). Anótalo para `DESCOPE_AUDIENCE`.
    La verificación de tokens **siempre** valida el claim `aud` contra este valor
@@ -84,6 +105,7 @@ plantilla completa en `dashboard/.env.local.example`.
 | `DESCOPE_ISSUER` | no | solo si issuer custom (ver arriba) |
 | `DESCOPE_JWKS_URI` | no | solo si JWKS custom |
 | `DESCOPE_AUDIENCE` | sí | resource id del MCP server (= Audience del Inbound App), p.ej. `https://dashboard.airedeagua.com/api/mcp` |
+| `ALLOWED_EMAILS` | sí | **misma env var que el login del dashboard** — allowlist de emails (coma-separados) que pueden usar el conector. El claim `email` del token debe estar aquí o se devuelve 401. Fuente única de verdad (AIR-157b). |
 | `CEREBRO_READER_DATABASE_URL` | sí | connection string del rol `el_cerebro_login` (ver §3) |
 | `CEREBRO_READER_SSL` | no | `disable` solo en local; en prod dejar vacío (SSL on, valida certificado) |
 | `SUPABASE_DB_CA_CERT` | no | CA pem para pinning explícito; normalmente innecesario (Supabase usa CAs públicas) |
@@ -146,8 +168,9 @@ Por persona autorizada, en su **Proyecto** de Claude.ai:
 4. La persona inicia sesión en Descope y **autoriza** el scope `cerebro:read`.
 5. Hecho: las 7 tools del Cerebro aparecen disponibles en el Proyecto.
 
-> Solo usuarios que Descope permita autorizar (consent configurado en §1.5)
-> obtendrán un token con `cerebro:read`. El resto recibe 401/insufficient_scope.
+> Doble puerta: (a) Descope emite el token con `cerebro:read` y el claim `email`;
+> (b) el conector exige que ese `email` esté en `ALLOWED_EMAILS`. Aunque alguien
+> complete el login de Descope, si su correo no está en la allowlist recibe 401.
 
 ---
 
@@ -164,10 +187,42 @@ Todo lo específico de Descope vive en `dashboard/lib/mcp/oauth-provider.ts`
 ## 7. Notas de seguridad
 
 - `verifyCerebroToken` es **fail-closed**: sin config, sin token, firma inválida,
-  `iss`/`aud` mal, expirado, JWKS inalcanzable, o sin `cerebro:read` → `undefined`
-  → 401. No hay path fail-open (el atajo dev-bearer fue eliminado).
+  `iss`/`aud` mal, expirado, JWKS inalcanzable, sin `cerebro:read`, sin claim
+  `email`, o email no allowlisted → `undefined` → 401. No hay path fail-open (el
+  atajo dev-bearer fue eliminado).
+- **Control de acceso = `ALLOWED_EMAILS` (AIR-157b).** Misma allowlist que el
+  dashboard, parseada por el helper compartido `dashboard/lib/auth/allowlist.ts`.
+  Cambiar quién entra al conector = editar esa env var en Vercel (no toca código ni
+  Descope). Descope solo necesita poner el `email` en el token.
 - El servidor nunca ve el client_secret de Claude.ai (DCR + PKCE).
 - El rol Postgres es read-only, NOINHERIT, con timeouts; el conector solo puede
   ejecutar las 7 RPCs whitelisted en `lib/db/reader.ts`. No hay `execute_sql` (I9).
 - El password del rol y el connection string viven solo en Vercel env, nunca en el
   repo.
+
+---
+
+## 8. Troubleshooting
+
+**Síntoma: el login de Descope funciona pero Claude.ai sigue dando 401 / "las tools
+no aparecen".** Casi siempre es el claim `email`:
+
+1. **El token no incluye `email`.** Es el caso más común. El conector exige
+   `payload.email` y, sin él, rechaza a todos (fail-closed). Solución: en la Inbound
+   App de Descope, habilita los scopes `openid email` y/o añade `email` como claim
+   del access token (token customization / claim mapping). Confirma decodificando el
+   JWT (jwt.io) que el payload tenga `"email": "..."`.
+2. **El email del token no está en `ALLOWED_EMAILS`.** Revisa la env var en Vercel
+   (Production): coma-separada, sin espacios obligatorios (se hace trim), comparación
+   case-insensitive. El email del token debe aparecer exactamente (ignorando
+   mayúsculas).
+3. **`ALLOWED_EMAILS` vacía o ausente en Vercel.** Lista vacía ⇒ nadie pasa
+   (fail-closed). Setea la misma lista que usa el login del dashboard.
+
+Los logs del servidor (Vercel → Functions) muestran
+`[mcp-auth] rejected: email ... not in allowlist` (o `(missing in token)`) sin
+exponer el token, útil para distinguir el caso 1 del 2.
+
+> Nota: el claim leído es el `email` estándar OIDC. Si Descope expusiera el correo
+> bajo otro claim en tu proyecto, ajústalo en su token customization para emitirlo
+> como `email` (preferido) — el código lee únicamente `payload.email`.

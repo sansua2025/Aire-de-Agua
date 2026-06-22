@@ -1,6 +1,7 @@
 import 'server-only'
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js'
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose'
+import { isAllowedEmail } from '../auth/allowlist'
 import {
   CEREBRO_READ_SCOPE,
   getOAuthProvider,
@@ -17,7 +18,11 @@ import {
  *   - `iss` == issuer del AS,
  *   - `aud` == audience configurado (DESCOPE_AUDIENCE, requerido → siempre se valida),
  *   - no expirado,
- *   - incluye el scope/permission cerebro:read.
+ *   - incluye el scope/permission cerebro:read,
+ *   - el claim `email` del token esta en ALLOWED_EMAILS (misma env var que gatea el
+ *     login del dashboard — AIR-157b: fuente unica de verdad). Descope autentica a
+ *     cualquier cuenta Google; ESTA allowlist es la puerta real. Si el token no trae
+ *     `email`, o el email no esta en la lista → fail-closed.
  *
  * Devuelve el AuthInfo que espera withMcpAuth, o `undefined` (⇒ 401 fail-closed)
  * ante CUALQUIER error o token invalido. No confiamos en headers no firmados.
@@ -82,6 +87,19 @@ export async function verifyCerebroToken(
     const scopes = extractScopes(payload)
     if (!scopes.includes(CEREBRO_READ_SCOPE)) {
       // Token valido pero sin permiso de lectura del Cerebro.
+      return undefined
+    }
+
+    // Puerta de acceso real: el email del token debe estar en ALLOWED_EMAILS
+    // (misma allowlist que el dashboard). Descope autentica cualquier Google;
+    // aqui filtramos. Claim `email` estandar OIDC.
+    const email = typeof payload.email === 'string' ? payload.email : null
+    if (!isAllowedEmail(email)) {
+      // Sin email en el token, o email no autorizado → fail-closed.
+      // No logueamos el token; el email es PII minima util para diagnostico.
+      console.warn(
+        `[mcp-auth] rejected: email ${email ?? '(missing in token)'} not in allowlist`
+      )
       return undefined
     }
 
