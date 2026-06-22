@@ -38,6 +38,18 @@ export interface OAuthProvider {
    * valida el claim `aud` contra este valor (defensa contra token confusion).
    */
   readonly audience: string
+  /**
+   * URL del Authorization Server que se ANUNCIA en el metadata de recurso
+   * protegido (`authorization_servers` de RFC 9728) para DCR/descubrimiento.
+   *
+   * OJO: NO es necesariamente el `issuer`. Descope expone DCR
+   * (`registration_endpoint`) solo en la URL "agentic" del MCP Server
+   * (https://api.descope.com/v1/apps/agentic/<projectId>/<mcpServerId>), no en la
+   * forma de proyecto. Pero los tokens que emite llevan `iss` en forma de proyecto.
+   * Por eso separamos: `authServerUrl` = descubrimiento/DCR; `issuer`/`jwksUri` =
+   * validacion del token (ver lib/mcp/auth.ts, que NO usa este campo).
+   */
+  readonly authServerUrl: string
 }
 
 /** Lee una env var requerida o lanza (fail-closed: sin config no hay auth). */
@@ -63,6 +75,16 @@ function requireEnv(name: string): string {
  * proyecto usa un dominio custom de Descope. El audience (DESCOPE_AUDIENCE) es
  * REQUERIDO: debe ser el resource identifier de este servidor MCP, para que
  * jwtVerify siempre valide el claim `aud` (defensa contra token confusion).
+ *
+ * authServerUrl (lo que se anuncia para DCR/descubrimiento) NO es el issuer:
+ *   authServerUrl = https://api.descope.com/v1/apps/agentic/<projectId>/<mcpServerId>
+ * Esa URL agentic es la unica cuyo `.well-known/oauth-authorization-server`
+ * expone `registration_endpoint` (DCR). Sin ella Claude.ai falla con
+ * "Automatic client registration isn't supported". Por eso DESCOPE_MCP_SERVER_ID
+ * (el id del MCP Server agentic en Descope, p.ej. RS3FVPGYHTgNlDGQ6Z2xBJ66iri31)
+ * es REQUERIDO para que DCR funcione. El token sigue llevando `iss` en forma de
+ * proyecto ⇒ issuer/jwksUri NO cambian (la validacion en auth.ts es la misma).
+ * DESCOPE_AUTH_SERVER_URL permite sobreescribir la URL agentic completa.
  */
 function buildDescopeProvider(): OAuthProvider {
   const projectId = requireEnv('DESCOPE_PROJECT_ID')
@@ -73,7 +95,16 @@ function buildDescopeProvider(): OAuthProvider {
     process.env.DESCOPE_JWKS_URI?.trim() ||
     `https://api.descope.com/${projectId}/.well-known/jwks.json`
   const audience = requireEnv('DESCOPE_AUDIENCE')
-  return { issuer, jwksUri, audience }
+  const mcpServerId = process.env.DESCOPE_MCP_SERVER_ID?.trim()
+  const authServerUrl =
+    process.env.DESCOPE_AUTH_SERVER_URL?.trim() ||
+    (mcpServerId
+      ? `https://api.descope.com/v1/apps/agentic/${projectId}/${mcpServerId}`
+      : // Fallback al issuer de proyecto; pero ese AS NO expone DCR ⇒ Claude.ai
+        // fallara con "Automatic client registration isn't supported".
+        // DESCOPE_MCP_SERVER_ID es necesario para que DCR funcione.
+        issuer)
+  return { issuer, jwksUri, audience, authServerUrl }
 }
 
 /**

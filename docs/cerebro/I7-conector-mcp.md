@@ -33,9 +33,12 @@ con que **incluya el claim `email` en el token** (ver §1.6). Si el token no tra
 
 1. Claude.ai llama `/api/mcp` sin token → **401** con
    `WWW-Authenticate: Bearer ... resource_metadata="https://dashboard.airedeagua.com/.well-known/oauth-protected-resource"`.
-2. Claude.ai lee ese metadata → descubre `authorization_servers: [<issuer Descope>]`.
-3. Claude.ai lee el metadata RFC 8414 de Descope → **DCR** (se registra solo),
-   **PKCE**, **authorize** (login del humano en Descope), **token**.
+2. Claude.ai lee ese metadata → descubre `authorization_servers: [<authServerUrl
+   agentic de Descope>]`. **OJO:** esa URL agentic NO es el issuer del token; es la
+   única cuyo `.well-known/oauth-authorization-server` expone `registration_endpoint`
+   (DCR). Se deriva de `DESCOPE_MCP_SERVER_ID` (ver §1 y §2).
+3. Claude.ai lee el metadata RFC 8414 de esa URL agentic → **DCR** (se registra
+   solo), **PKCE**, **authorize** (login del humano en Descope), **token**.
 4. Descope emite un access token JWT con permiso `cerebro:read`.
 5. Claude.ai reintenta `/api/mcp` con `Authorization: Bearer <jwt>`.
 6. `verifyCerebroToken` valida el JWT contra el JWKS de Descope, exige
@@ -56,6 +59,12 @@ con que **incluya el claim `email` en el token** (ver §1.6). Si el token no tra
    uso es "MCP server auth"). Esto activa:
    - **Dynamic Client Registration (DCR)** — para que Claude.ai se registre solo.
    - El endpoint de metadata OAuth del proyecto (RFC 8414).
+   - **Copia el id del MCP Server agentic** (consola Descope → MCP Servers, p.ej.
+     `RS3FVPGYHTgNlDGQ6Z2xBJ66iri31`). Lo necesitarás para `DESCOPE_MCP_SERVER_ID`.
+     **Es la pieza que habilita DCR para Claude.ai:** solo el metadata de la URL
+     agentic (`.../v1/apps/agentic/<PROJECT_ID>/<MCP_SERVER_ID>`) expone
+     `registration_endpoint`. Sin él, Claude.ai falla con *"Automatic client
+     registration isn't supported"* (anunciaríamos un AS sin DCR).
 4. Define un **scope/permission** llamado exactamente `cerebro:read` y márcalo como
    el permiso que se concede al autorizar el conector. (El nombre debe coincidir
    con `CEREBRO_READ_SCOPE` en `lib/mcp/oauth-provider.ts`.)
@@ -83,14 +92,25 @@ con que **incluya el claim `email` en el token** (ver §1.6). Si el token no tra
 Por defecto el código deriva:
 
 ```
-issuer  = https://api.descope.com/v1/apps/<DESCOPE_PROJECT_ID>
-jwksUri = https://api.descope.com/<DESCOPE_PROJECT_ID>/.well-known/jwks.json
+issuer        = https://api.descope.com/v1/apps/<DESCOPE_PROJECT_ID>
+jwksUri       = https://api.descope.com/<DESCOPE_PROJECT_ID>/.well-known/jwks.json
+authServerUrl = https://api.descope.com/v1/apps/agentic/<DESCOPE_PROJECT_ID>/<DESCOPE_MCP_SERVER_ID>
 ```
+
+`issuer` / `jwksUri` son **forma de proyecto** y se usan para **validar el token**
+(`iss` + firma del JWT; ver `lib/mcp/auth.ts`). `authServerUrl` es **forma agentic**
+y es lo que se **anuncia para DCR/descubrimiento** en
+`/.well-known/oauth-protected-resource`. Son distintos a propósito: ambos AS de
+Descope emiten tokens con el **mismo** `iss` (forma de proyecto), pero solo el
+agentic expone `registration_endpoint` (DCR). Por eso separar `authServerUrl` del
+`issuer` arregla el *"Automatic client registration isn't supported"* sin tocar la
+validación del token.
 
 **Verifica estos valores en la consola de Descope** (Inbound App → discovery /
 well-known). Si tu proyecto usa un dominio custom o un issuer distinto,
-sobreescribe con `DESCOPE_ISSUER` / `DESCOPE_JWKS_URI`. El `issuer` configurado
-DEBE coincidir exactamente con el claim `iss` de los tokens que emite Descope.
+sobreescribe con `DESCOPE_ISSUER` / `DESCOPE_JWKS_URI`; para la URL agentic
+completa hay override con `DESCOPE_AUTH_SERVER_URL`. El `issuer` configurado DEBE
+coincidir exactamente con el claim `iss` de los tokens que emite Descope.
 
 ---
 
@@ -102,6 +122,8 @@ plantilla completa en `dashboard/.env.local.example`.
 | Variable | Requerida | Valor |
 |---|---|---|
 | `DESCOPE_PROJECT_ID` | sí | Project ID de Descope |
+| `DESCOPE_MCP_SERVER_ID` | sí (para DCR) | id del MCP Server agentic (Descope → MCP Servers, p.ej. `RS3FVPGYHTgNlDGQ6Z2xBJ66iri31`). Deriva el `authServerUrl` agentic que se anuncia para DCR. Sin él Claude.ai falla con *"Automatic client registration isn't supported"*. No cambia issuer/jwksUri. |
+| `DESCOPE_AUTH_SERVER_URL` | no | override de la URL agentic completa (si no basta derivarla del MCP Server ID) |
 | `DESCOPE_ISSUER` | no | solo si issuer custom (ver arriba) |
 | `DESCOPE_JWKS_URI` | no | solo si JWKS custom |
 | `DESCOPE_AUDIENCE` | sí | resource id del MCP server (= Audience del Inbound App), p.ej. `https://dashboard.airedeagua.com/api/mcp` |
@@ -150,7 +172,13 @@ password NUNCA va al repo. El owner lo setea fuera de banda:
    ```
    curl https://dashboard.airedeagua.com/.well-known/oauth-protected-resource
    ```
-   Debe listar `authorization_servers` con el issuer de Descope.
+   Debe listar `authorization_servers` con la **URL agentic** de Descope
+   (`.../v1/apps/agentic/<PROJECT_ID>/<MCP_SERVER_ID>`), NO la forma de proyecto.
+   Confirma que esa URL expone DCR:
+   ```
+   curl https://api.descope.com/v1/apps/agentic/<PROJECT_ID>/<MCP_SERVER_ID>/.well-known/oauth-authorization-server
+   ```
+   debe traer `registration_endpoint`.
 5. Verifica que el MCP exige auth (debe responder 401 con `WWW-Authenticate`):
    ```
    curl -i https://dashboard.airedeagua.com/api/mcp -X POST
