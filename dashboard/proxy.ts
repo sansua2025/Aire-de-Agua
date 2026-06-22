@@ -13,6 +13,14 @@ export default auth((req) => {
     pathname === '/api/revalidate' ||
     pathname === '/api/health' ||
     pathname.startsWith('/api/auth/') ||
+    // Conector MCP el-cerebro (AIR-157): NO lo protege la cookie del dashboard.
+    // Su auth es bearer/OAuth via withMcpAuth en la propia route. Las rutas MCP
+    // (/api/mcp, /api/sse, /api/message) caen bajo /app/api/[transport]/route.ts.
+    pathname.startsWith('/api/mcp') ||
+    pathname.startsWith('/api/sse') ||
+    pathname.startsWith('/api/message') ||
+    // Metadata de OAuth protected-resource (descubrimiento del cliente MCP).
+    pathname.startsWith('/.well-known/') ||
     pathname.startsWith('/_next/') ||
     pathname === '/favicon.ico'
 
