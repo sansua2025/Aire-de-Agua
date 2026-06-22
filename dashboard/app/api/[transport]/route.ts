@@ -9,9 +9,11 @@ import { verifyCerebroToken } from '@/lib/mcp/auth'
  * tools gobernadas de lib/mcp/tools.ts (6 analytics.* + buscar_golden_queries).
  * NO incluye execute_sql (eso es I9).
  *
- * Auth: envuelto con withMcpAuth + verifyCerebroToken. HOY verifyCerebroToken es
- * fail-closed (rechaza todo salvo un dev bearer opcional) — la integracion OAuth
- * queda pendiente de la decision A/B del owner. Ver lib/mcp/auth.ts.
+ * Auth: envuelto con withMcpAuth + verifyCerebroToken (valida el JWT emitido por
+ * Descope contra su JWKS + scope cerebro:read). En 401, WWW-Authenticate apunta a
+ * /.well-known/oauth-protected-resource (resourceMetadataPath) para que Claude.ai
+ * descubra el AS (Descope) y haga DCR/PKCE/token. Ver lib/mcp/auth.ts y
+ * lib/mcp/oauth-provider.ts.
  *
  * Esta ruta NO la protege la cookie del dashboard: se excluye en proxy.ts y la
  * autenticacion la hace withMcpAuth (bearer token), no NextAuth.
@@ -53,10 +55,13 @@ const baseHandler = createMcpHandler(
   }
 )
 
-// withMcpAuth: required=true ⇒ sin token valido responde 401 + WWW-Authenticate.
+// withMcpAuth: required=true ⇒ sin token valido responde 401. El header
+// WWW-Authenticate incluye resource_metadata apuntando a resourceMetadataPath,
+// para que Claude.ai descubra el Authorization Server (Descope) via RFC 9728.
 const handler = withMcpAuth(baseHandler, verifyCerebroToken, {
   required: true,
   requiredScopes: ['cerebro:read'],
+  resourceMetadataPath: '/.well-known/oauth-protected-resource',
 })
 
 export { handler as GET, handler as POST, handler as DELETE }
