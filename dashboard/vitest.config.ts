@@ -6,6 +6,13 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
   test: {
     environment: 'node',
-    include: ['lib/**/*.test.ts', 'lib/**/*.test.tsx', 'components/**/*.test.tsx'],
+    include: [
+      'lib/**/*.test.ts',
+      'lib/**/*.test.tsx',
+      'components/**/*.test.tsx',
+      // AIR-156 — eval set del Cerebro (graders deterministas + gate >=95%).
+      // reconcile.test.ts hace skip si faltan las env vars de Supabase.
+      'evals/**/*.test.ts',
+    ],
   },
 })

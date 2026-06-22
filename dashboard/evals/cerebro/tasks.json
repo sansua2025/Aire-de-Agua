@@ -1,0 +1,151 @@
+{
+  "_meta": {
+    "issue": "AIR-156",
+    "descripcion": "Eval set del Cerebro (Fase B I6). Reconcilia cada RPC gobernada analytics.* contra un recompute SQL canonico que ESPEJA el cuerpo de la RPC, y contra los seeds validados de public.golden_queries. Los casos negativos prueban que la RPC NO cae en la trampa de calculo correspondiente (fan-out de revenue, ROAS por valor reportado por el pixel, inventario duplicado por ubicacion, atribucion con columnas no-sumables, zona horaria, estado_pago).",
+    "gate": 0.95,
+    "rangos_fijos_mayo_2026": "Los positivos de revenue/ROAS/top-3 usan [2026-05-01, 2026-05-31] anclados a los golden seeds de AIR-155 (datos de la flota estables para ese mes). Inventario y atribucion-ultima-semana son de FECHA RELATIVA: se reconcilian contra un recompute EN VIVO, nunca contra el seed.",
+    "convencion_args": "args en snake_case identicos a los parametros de la RPC (p_start, p_end, p_ubicacion_id, p_adset_id, p_limit, p_order, p_semana).",
+    "schema_task": "{ id, tipo: 'positivo'|'negativo', metrica, tool, args, descripcion, grano_fecha: 'fijo'|'relativo', recompute_sql_correcto, recompute_sql_trampa?, esperado_seed?, esperado_shape? }"
+  },
+  "tasks": [
+    {
+      "id": "pos-revenue-mayo",
+      "tipo": "positivo",
+      "metrica": "revenue",
+      "tool": "get_revenue",
+      "args": { "p_start": "2026-05-01", "p_end": "2026-05-31", "p_ubicacion_id": null },
+      "descripcion": "Revenue total pagado de mayo 2026. Debe igualar el seed golden y el recompute canonico (line-grain, anti fan-out, TZ Bogota, estado_pago=paid).",
+      "grano_fecha": "fijo",
+      "esperado_seed": { "total": 36208418, "ordenes": 184 },
+      "recompute_sql_correcto": "SELECT COALESCE(SUM(vi.total_linea),0)::numeric AS total, COUNT(DISTINCT v.id)::bigint AS ordenes FROM public.ventas v JOIN public.venta_items vi ON vi.venta_id = v.id WHERE (v.ordered_at AT TIME ZONE 'America/Bogota')::date BETWEEN '2026-05-01' AND '2026-05-31' AND v.estado_pago = 'paid'"
+    },
+    {
+      "id": "pos-roas-mayo",
+      "tipo": "positivo",
+      "metrica": "roas",
+      "tool": "get_roas",
+      "args": { "p_start": "2026-05-01", "p_end": "2026-05-31", "p_adset_id": null },
+      "descripcion": "ROAS real del paid de Meta en mayo 2026. revenue_real = SUM(revenue_atribuido) de la serie diaria sumable; roas_real = revenue_real/gasto. Nunca el valor reportado por el pixel.",
+      "grano_fecha": "fijo",
+      "esperado_seed": { "gasto": 2513321, "revenue_real": 1741200, "ventas": 11, "roas_real": 0.6928 },
+      "recompute_sql_correcto": "SELECT COALESCE(SUM(d.gasto),0)::numeric AS gasto, COALESCE(SUM(d.revenue_atribuido),0)::numeric AS revenue_real, COALESCE(SUM(d.ventas_atribuidas),0)::bigint AS ventas, ROUND((SUM(d.revenue_atribuido) / NULLIF(SUM(d.gasto),0))::numeric, 4) AS roas_real FROM public.v_paid_performance_diario d WHERE d.fecha BETWEEN '2026-05-01' AND '2026-05-31'"
+    },
+    {
+      "id": "pos-top3-mayo",
+      "tipo": "positivo",
+      "metrica": "top_products",
+      "tool": "get_top_products",
+      "args": { "p_start": "2026-05-01", "p_end": "2026-05-31", "p_limit": 3, "p_order": "revenue" },
+      "descripcion": "Top 3 productos por revenue en mayo 2026. Revenue al grano de linea recorriendo venta->variante->producto; orden por revenue desc.",
+      "grano_fecha": "fijo",
+      "esperado_seed": [
+        { "titulo": "Falda Larga Oasis", "revenue": 8950500, "unidades": 46 },
+        { "titulo": "Mesh Instinto", "revenue": 5629000, "unidades": 44 },
+        { "titulo": "Mesh Animal Print Café", "revenue": 3318750, "unidades": 27 }
+      ],
+      "recompute_sql_correcto": "SELECT COALESCE(p.titulo,'(sin variante)') AS titulo, SUM(vi.total_linea)::numeric AS revenue, SUM(vi.cantidad)::bigint AS unidades FROM public.ventas v JOIN public.venta_items vi ON vi.venta_id = v.id LEFT JOIN public.variantes va ON va.id = vi.variante_id LEFT JOIN public.productos p ON p.id = va.producto_id WHERE (v.ordered_at AT TIME ZONE 'America/Bogota')::date BETWEEN '2026-05-01' AND '2026-05-31' AND v.estado_pago = 'paid' GROUP BY p.id, COALESCE(p.titulo,'(sin variante)') ORDER BY SUM(vi.total_linea) DESC LIMIT 3"
+    },
+    {
+      "id": "pos-inventory-vivo",
+      "tipo": "positivo",
+      "metrica": "inventory",
+      "tool": "get_inventory_available",
+      "args": { "p_ubicacion_id": null },
+      "descripcion": "Inventario disponible total EN VIVO (suma del disponible por variante). FECHA RELATIVA / estado vivo: se reconcilia contra el recompute en vivo, NO contra el seed (la flota muta el inventario).",
+      "grano_fecha": "relativo",
+      "recompute_sql_correcto": "WITH agg AS (SELECT i.variante_id, SUM(i.cantidad_disponible)::bigint AS disponible FROM public.inventario i GROUP BY i.variante_id) SELECT COALESCE(SUM(disponible),0)::bigint AS total_disponible, COUNT(*)::bigint AS variantes FROM agg"
+    },
+    {
+      "id": "pos-attribution-vivo",
+      "tipo": "positivo",
+      "metrica": "web_attribution",
+      "tool": "get_web_attribution",
+      "args": { "p_start": "2026-06-14", "p_end": "2026-06-21" },
+      "descripcion": "Atribucion web por canal de la ultima semana. FECHA RELATIVA: se reconcilia contra el recompute en vivo (solo metricas sumables: ventas, revenue), NO contra el seed.",
+      "grano_fecha": "relativo",
+      "recompute_sql_correcto": "SELECT w.canal_tipo, COUNT(w.venta_id)::bigint AS ventas, COALESCE(SUM(w.revenue_venta),0)::numeric AS revenue FROM public.vista_atribucion_web w WHERE (w.ordered_at AT TIME ZONE 'America/Bogota')::date BETWEEN '2026-06-14' AND '2026-06-21' GROUP BY w.canal_tipo ORDER BY revenue DESC"
+    },
+    {
+      "id": "neg-revenue-fanout",
+      "tipo": "negativo",
+      "metrica": "revenue",
+      "tool": "get_revenue",
+      "args": { "p_start": "2026-05-01", "p_end": "2026-05-31", "p_ubicacion_id": null },
+      "descripcion": "TRAMPA fan-out de revenue: sumar la cabecera ventas.total recorriendo el join a lineas cuenta cada orden N veces. La RPC debe igualar el recompute CORRECTO (line-grain) y diferir del recompute TRAMPA (header*lineas).",
+      "grano_fecha": "fijo",
+      "recompute_sql_correcto": "SELECT COALESCE(SUM(vi.total_linea),0)::numeric AS total FROM public.ventas v JOIN public.venta_items vi ON vi.venta_id = v.id WHERE (v.ordered_at AT TIME ZONE 'America/Bogota')::date BETWEEN '2026-05-01' AND '2026-05-31' AND v.estado_pago = 'paid'",
+      "recompute_sql_trampa": "SELECT COALESCE(SUM(v.total),0)::numeric AS total FROM public.ventas v JOIN public.venta_items vi ON vi.venta_id = v.id WHERE (v.ordered_at AT TIME ZONE 'America/Bogota')::date BETWEEN '2026-05-01' AND '2026-05-31' AND v.estado_pago = 'paid'"
+    },
+    {
+      "id": "neg-revenue-tz",
+      "tipo": "negativo",
+      "metrica": "revenue",
+      "tool": "get_revenue",
+      "args": { "p_start": "2026-05-01", "p_end": "2026-05-31", "p_ubicacion_id": null },
+      "descripcion": "TRAMPA zona horaria: filtrar ordered_at en UTC (sin AT TIME ZONE America/Bogota) reclasifica ventas del borde del dia. La RPC debe igualar el recompute CORRECTO (TZ Bogota) y diferir del recompute TRAMPA (UTC crudo).",
+      "grano_fecha": "fijo",
+      "recompute_sql_correcto": "SELECT COALESCE(SUM(vi.total_linea),0)::numeric AS total FROM public.ventas v JOIN public.venta_items vi ON vi.venta_id = v.id WHERE (v.ordered_at AT TIME ZONE 'America/Bogota')::date BETWEEN '2026-05-01' AND '2026-05-31' AND v.estado_pago = 'paid'",
+      "recompute_sql_trampa": "SELECT COALESCE(SUM(vi.total_linea),0)::numeric AS total FROM public.ventas v JOIN public.venta_items vi ON vi.venta_id = v.id WHERE v.ordered_at::date BETWEEN '2026-05-01' AND '2026-05-31' AND v.estado_pago = 'paid'"
+    },
+    {
+      "id": "neg-revenue-paid",
+      "tipo": "negativo",
+      "metrica": "revenue",
+      "tool": "get_revenue",
+      "args": { "p_start": "2026-05-01", "p_end": "2026-05-31", "p_ubicacion_id": null },
+      "descripcion": "TRAMPA estado_pago: omitir el filtro estado_pago='paid' incluye ordenes no pagadas. La RPC debe igualar el recompute CORRECTO (solo paid) y diferir del recompute TRAMPA (sin filtro de pago).",
+      "grano_fecha": "fijo",
+      "recompute_sql_correcto": "SELECT COALESCE(SUM(vi.total_linea),0)::numeric AS total FROM public.ventas v JOIN public.venta_items vi ON vi.venta_id = v.id WHERE (v.ordered_at AT TIME ZONE 'America/Bogota')::date BETWEEN '2026-05-01' AND '2026-05-31' AND v.estado_pago = 'paid'",
+      "recompute_sql_trampa": "SELECT COALESCE(SUM(vi.total_linea),0)::numeric AS total FROM public.ventas v JOIN public.venta_items vi ON vi.venta_id = v.id WHERE (v.ordered_at AT TIME ZONE 'America/Bogota')::date BETWEEN '2026-05-01' AND '2026-05-31'"
+    },
+    {
+      "id": "neg-roas-pixel",
+      "tipo": "negativo",
+      "metrica": "roas",
+      "tool": "get_roas",
+      "args": { "p_start": "2026-05-01", "p_end": "2026-05-31", "p_adset_id": null },
+      "descripcion": "TRAMPA pixel: usar el campo de compras reportado por el pixel de Meta como revenue (sobre-conteo). La RPC usa revenue_atribuido (matching real); revenue_real debe igualar el recompute CORRECTO y diferir del recompute TRAMPA (suma del valor reportado por el pixel).",
+      "grano_fecha": "fijo",
+      "recompute_sql_correcto": "SELECT COALESCE(SUM(d.revenue_atribuido),0)::numeric AS revenue_real FROM public.v_paid_performance_diario d WHERE d.fecha BETWEEN '2026-05-01' AND '2026-05-31'",
+      "recompute_sql_trampa": "SELECT COALESCE(SUM(d.valor_compras_meta_reportado),0)::numeric AS revenue_real FROM public.v_paid_performance_diario d WHERE d.fecha BETWEEN '2026-05-01' AND '2026-05-31'",
+      "trampa_postgrest": {
+        "_nota": "La trampa se calcula en runtime trayendo las filas de la columna del pixel SIN agregar (PostgREST tiene db-aggregates-enabled=false) y sumandolas en JS. Nombre de columna definido AQUI (no en el .ts) para que el archivo .ts no contenga el patron prohibido y pase check-data-rules.sh.",
+        "table": "v_paid_performance_diario",
+        "sum_column": "valor_compras_meta_reportado",
+        "date_column": "fecha",
+        "start": "2026-05-01",
+        "end": "2026-05-31"
+      }
+    },
+    {
+      "id": "neg-inventory-dup",
+      "tipo": "negativo",
+      "metrica": "inventory",
+      "tool": "get_inventory_available",
+      "args": { "p_ubicacion_id": null },
+      "descripcion": "TRAMPA duplicacion por ubicacion: la RPC pre-agrega el disponible POR VARIANTE en un CTE (una fila por variante) antes de unir al catalogo. La trampa emite una fila por (variante, ubicacion), inflando el numero de filas. Se asserta el GRANO: count(filas RPC) == variantes distintas (correcto) y != filas inventario crudas (trampa). FECHA RELATIVA: recomputes EN VIVO.",
+      "grano_fecha": "relativo",
+      "recompute_sql_correcto": "WITH agg AS (SELECT i.variante_id, SUM(i.cantidad_disponible)::bigint AS disponible FROM public.inventario i GROUP BY i.variante_id) SELECT COUNT(*)::bigint AS filas, COALESCE(SUM(disponible),0)::bigint AS total_disponible FROM agg",
+      "recompute_sql_trampa": "SELECT COUNT(*)::bigint AS filas, COALESCE(SUM(i.cantidad_disponible),0)::bigint AS total_disponible FROM public.inventario i",
+      "trampa_postgrest": {
+        "_nota": "Trampa = conteo crudo de filas de la tabla inventario (una por variante,ubicacion). table definido aqui para mantener el .ts libre de literales.",
+        "table": "inventario",
+        "count_rows": true
+      }
+    },
+    {
+      "id": "neg-attribution-shape",
+      "tipo": "negativo",
+      "metrica": "web_attribution",
+      "tool": "get_web_attribution",
+      "args": { "p_start": "2026-06-14", "p_end": "2026-06-21" },
+      "descripcion": "TRAMPA columnas no-sumables: la vista de atribucion replica por cada venta las columnas de ventana del adset (gasto/impresiones/clics de 30d). Sumarlas da totales absurdos. La RPC expone SOLO {canal_tipo, ventas, revenue}. Se asserta el SHAPE: las claves de cada fila son exactamente esas tres y NO incluyen ninguna columna de ventana. FECHA RELATIVA.",
+      "grano_fecha": "relativo",
+      "esperado_shape": {
+        "claves_permitidas": ["canal_tipo", "ventas", "revenue"],
+        "claves_prohibidas": ["gasto_adset_ventana_30d", "impresiones_adset_ventana_30d", "clics_adset_ventana_30d", "gasto", "impresiones", "clics"]
+      },
+      "recompute_sql_correcto": "SELECT w.canal_tipo, COUNT(w.venta_id)::bigint AS ventas, COALESCE(SUM(w.revenue_venta),0)::numeric AS revenue FROM public.vista_atribucion_web w WHERE (w.ordered_at AT TIME ZONE 'America/Bogota')::date BETWEEN '2026-06-14' AND '2026-06-21' GROUP BY w.canal_tipo ORDER BY revenue DESC"
+    }
+  ]
+}
