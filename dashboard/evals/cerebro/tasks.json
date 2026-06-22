@@ -107,11 +107,11 @@
       "descripcion": "TRAMPA pixel: usar el campo de compras reportado por el pixel de Meta como revenue (sobre-conteo). La RPC usa revenue_atribuido (matching real); revenue_real debe igualar el recompute CORRECTO y diferir del recompute TRAMPA (suma del valor reportado por el pixel).",
       "grano_fecha": "fijo",
       "recompute_sql_correcto": "SELECT COALESCE(SUM(d.revenue_atribuido),0)::numeric AS revenue_real FROM public.v_paid_performance_diario d WHERE d.fecha BETWEEN '2026-05-01' AND '2026-05-31'",
-      "recompute_sql_trampa": "SELECT COALESCE(SUM(m.valor_compras),0)::numeric AS revenue_real FROM public.meta_ads_performance m WHERE m.fecha BETWEEN '2026-05-01' AND '2026-05-31'",
+      "recompute_sql_trampa": "SELECT COALESCE(SUM(d.valor_compras_meta_reportado),0)::numeric AS revenue_real FROM public.v_paid_performance_diario d WHERE d.fecha BETWEEN '2026-05-01' AND '2026-05-31'",
       "trampa_postgrest": {
-        "_nota": "La trampa se calcula en runtime via agregado PostgREST sobre la tabla base; nombre de columna definido AQUI (no en el .ts) para que el archivo .ts no contenga el patron prohibido y pase check-data-rules.sh.",
-        "table": "meta_ads_performance",
-        "sum_column": "valor_compras",
+        "_nota": "La trampa se calcula en runtime trayendo las filas de la columna del pixel SIN agregar (PostgREST tiene db-aggregates-enabled=false) y sumandolas en JS. Nombre de columna definido AQUI (no en el .ts) para que el archivo .ts no contenga el patron prohibido y pase check-data-rules.sh.",
+        "table": "v_paid_performance_diario",
+        "sum_column": "valor_compras_meta_reportado",
         "date_column": "fecha",
         "start": "2026-05-01",
         "end": "2026-05-31"

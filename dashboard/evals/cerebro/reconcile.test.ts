@@ -206,16 +206,20 @@ describeDb('Eval Cerebro — reconciliacion RPC ↔ recompute ↔ golden (AIR-15
     const rpc = firstRow(await callRpc('get_roas', t.args))
     const correcto = (await recompute(t.id, 'correcto')) as Record<string, unknown>
     // Trap de UNA tabla: tabla/columna se leen de tasks.json (no literales en este .ts,
-    // asi check-data-rules.sh no marca falso positivo de R1). El select PostgREST se
-    // arma en runtime: "<alias>:<columna>.sum()".
+    // asi check-data-rules.sh no marca falso positivo de R1). Esta instancia de PostgREST
+    // tiene db-aggregates-enabled=false, asi que NO se puede pedir SUM via REST: se traen
+    // las filas de la columna del pixel sin agregar y se suman client-side.
     const tp = (t as TaskWithPg).trampa_postgrest!
     const { data, error } = await getPublicClient()
       .from(tp.table)
-      .select(`agg:${tp.sum_column}.sum()`)
+      .select(tp.sum_column as string)
       .gte(tp.date_column as string, tp.start as string)
       .lte(tp.date_column as string, tp.end as string)
     if (error) throw new Error(`trap pixel fallo: ${error.message}`)
-    const trapVal = Number((firstRow(data) as Record<string, unknown>).agg ?? 0)
+    const trapVal = rows(data).reduce(
+      (acc, r) => acc + Number(r[tp.sum_column as string] ?? 0),
+      0
+    )
     const ok =
       numEq(rpc.revenue_real, correcto.revenue_real) && !numEq(rpc.revenue_real, trapVal)
     record(t.id, ok, `rpc=${rpc.revenue_real} correcto=${correcto.revenue_real} trampa=${trapVal}`)
