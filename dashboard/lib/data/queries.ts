@@ -120,6 +120,19 @@ export const getCreativeLearnings = unstable_cache(
   { tags: ['weekly'], revalidate: CACHE_FALLBACK_SECONDS }
 )
 
+// Productos sin COGS — alerta que sesga el ROAS-margen (AIR-65)
+export const getCogsFaltante = unstable_cache(
+  async () => {
+    const { data, error } = await supabase
+      .from('view_dashboard_cogs_faltante')
+      .select('*')
+    if (error) throw error
+    return data ?? []
+  },
+  ['cogs_faltante'],
+  { tags: ['paid', 'producto'], revalidate: CACHE_FALLBACK_SECONDS }
+)
+
 // =============================================================================
 // Producto y Comercial
 // =============================================================================

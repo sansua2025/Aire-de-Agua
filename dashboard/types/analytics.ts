@@ -42,6 +42,9 @@ type ViewWeeklyKpi = ReadOnlyView<{
   roas_meta_atribuido: number | null
   revenue_paid_atribuido: number | null
   mix_canal_web: unknown | null
+  // AIR-65: métricas primarias de margen
+  roas_margen_atribuido: number | null
+  margen_paid_atribuido: number | null
 }>
 
 type ViewKpiHistory = ReadOnlyView<{
@@ -101,10 +104,19 @@ type ViewPaid = ReadOnlyView<{
   gasto: number | null
   compras: number | null
   valor_compras: number | null
+  ventas_atribuidas: number | null
+  revenue_atribuido: number | null
+  margen_atribuido: number | null
+  // AIR-65: métricas de margen
+  roas_margen: number | null
+  roas_revenue: number | null
+  roas: number | null
   ctr_pct: number | null
   cpc: number | null
-  roas: number | null
   cpa: number | null
+  pixel_value_bug: boolean | null
+  recomendacion: string | null
+  cobertura_cogs_pct: number | null
 }>
 
 type ViewTopAds = ReadOnlyView<{
@@ -345,8 +357,23 @@ type ViewCustomerPanel = ReadOnlyView<{
   ultima_actualizacion: string | null
 }>
 
+type ViewCogsFaltante = ReadOnlyView<{
+  producto_id: string
+  producto_titulo: string | null
+  tipo: string | null
+  estado_producto: string | null
+  variantes_sin_cogs: number | null
+  precio_promedio: number | null
+  ventas_90d: number | null
+  unidades_90d: number | null
+  revenue_90d: number | null
+  en_ssot: boolean | null
+  diagnostico: string | null
+  accion: string | null
+}>
+
 /**
- * Tipo Database scopeado al schema `analytics` con las 15 views dashboard.
+ * Tipo Database scopeado al schema `analytics` con las 16 views dashboard.
  */
 export type AnalyticsDatabase = {
   analytics: {
@@ -366,6 +393,7 @@ export type AnalyticsDatabase = {
       view_dashboard_inventory_health: ViewInventoryHealth
       view_dashboard_discount_mix: ViewDiscountMix
       view_dashboard_customer_panel: ViewCustomerPanel
+      view_dashboard_cogs_faltante: ViewCogsFaltante
     }
     Views: Record<string, never>
     Functions: Record<string, never>
