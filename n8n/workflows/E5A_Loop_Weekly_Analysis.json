@@ -124,7 +124,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/rpc/analytics_compute_weekly_snapshot_v2",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/rpc/analytics_compute_weekly_snapshot_v3",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
