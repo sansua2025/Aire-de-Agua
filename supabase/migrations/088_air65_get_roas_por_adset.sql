@@ -361,12 +361,17 @@ GRANT EXECUTE ON FUNCTION analytics.eval_recompute(text, text) TO service_role;
 
 -- Desactivar el seed viejo de get_roas mayo (revenue_real deflactado a 1.741.200 por
 -- el anclaje de fecha). Se identifica por su tool_call->>tool y el rango de mayo.
+-- Idempotencia: se EXCLUYE la fila corregida (fuente='seed_air65') que el INSERT de
+-- abajo siembra. Sin esta guarda, un re-run de la migracion desactivaria la propia
+-- fila corregida (matchea tool+rango), el INSERT caeria en ON CONFLICT DO NOTHING y
+-- quedaria CERO golden get_roas activo. IS DISTINCT FROM ademas cubre fuente NULL.
 UPDATE public.golden_queries
 SET activo = false
 WHERE activo = true
   AND tool_call->>'tool' = 'get_roas'
   AND tool_call->'args'->>'p_start' = '2026-05-01'
-  AND tool_call->'args'->>'p_end'   = '2026-05-31';
+  AND tool_call->'args'->>'p_end'   = '2026-05-31'
+  AND fuente IS DISTINCT FROM 'seed_air65';
 
 -- Sembrar el golden corregido (embedding NULL: n8n lo vectoriza en 2a fase, igual
 -- que mig 084). pregunta NUEVA -> pregunta_hash NUEVO -> sin colision con la vieja.
