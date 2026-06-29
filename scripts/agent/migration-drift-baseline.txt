@@ -2,7 +2,7 @@
 # Slugs normalizados (sin prefijo NNN[b]_, minusculas) que componen la diferencia
 # simetrica git<->PROD reconciliada a esta fecha: estado BENDECIDO. El analizador
 # solo alerta sobre divergencias NUEVAS que no esten aqui. Lineas # y vacias se ignoran.
-# Revisar aparte (posible forward drift real, no funcional): 007b producto_sync_trigger.
+# (007b producto_sync_trigger: borrador abandonado nunca aplicado, removido en esta rama.)
 #
 add_archived_to_variantes_estado_check
 add_dondy_whatsapp_canal_normalizado
@@ -102,7 +102,6 @@ normalizar_ciudades_retiro_lacalera
 poblar_rfm_clientes_moda
 poblar_tallas_colores_tipos_clientes
 primer_batch_insights_cerebro
-producto_sync_trigger
 public_mirrors_for_dashboard_views
 recreate_vista_atribucion_web_v2
 replace_shortcode_index_with_constraint
