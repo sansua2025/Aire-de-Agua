@@ -16,6 +16,8 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+      - name: Self-test del linter (carve-out AIR-161 no debilita la detección)
+        run: bash scripts/agent/check-data-rules.selftest.sh
       - name: Reglas críticas de datos sobre el diff
         run: |
           git fetch origin main --quiet || true

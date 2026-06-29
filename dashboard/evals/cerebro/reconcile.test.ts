@@ -226,6 +226,18 @@ describeDb('Eval Cerebro — reconciliacion RPC ↔ recompute ↔ golden (AIR-15
     expect(ok).toBe(true)
   })
 
+  it('neg-roas-fecha-anclada — RPC agrega por adset, NO el SUM diario anclado por fecha', async () => {
+    const t = byId('neg-roas-fecha-anclada')
+    const rpc = firstRow(await callRpc('get_roas', t.args))
+    const correcto = (await recompute(t.id, 'correcto')) as Record<string, unknown>
+    const trampa = (await recompute(t.id, 'trampa')) as Record<string, unknown>
+    const ok =
+      numEq(rpc.revenue_real, correcto.revenue_real) &&
+      !numEq(rpc.revenue_real, trampa.revenue_real)
+    record(t.id, ok, `rpc=${rpc.revenue_real} correcto=${correcto.revenue_real} trampa=${trampa.revenue_real}`)
+    expect(ok).toBe(true)
+  })
+
   it('neg-inventory-dup — RPC pre-agrega por variante (NO una fila por ubicacion)', async () => {
     const t = byId('neg-inventory-dup')
     const rpc = rows(await callRpc('get_inventory_available', t.args))
