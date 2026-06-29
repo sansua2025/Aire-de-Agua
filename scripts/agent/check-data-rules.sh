@@ -26,6 +26,20 @@ FAILS=0; WARNS=0
 fail() { echo "FAIL  $1"; FAILS=$((FAILS+1)); }
 warn() { echo "WARN  $1"; WARNS=$((WARNS+1)); }
 
+# Allowlist de migraciones-respaldo ya APLICADAS en PROD (AIR-161).
+# check-data-rules está pensado para queries/analytics NUEVAS; estas migraciones
+# son respaldo fiel inmutable (AIR-90, no se edita el .sql) y ya viven en PROD,
+# así que disparan falsos positivos sobre patrones históricos legítimos (p.ej.
+# una columna 'roas' LEGACY documentada con comentario, o un ordered_at::date
+# de una vista vieja). Si el basename del archivo está aquí, se salta ENTERO
+# (análogo al skip de tipos generados de Supabase más abajo).
+# Formato: un basename de migración por línea; '#' inicia comentario.
+ALLOWLIST_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/data-rules-allowlist.txt"
+is_allowlisted() {
+  [ -f "$ALLOWLIST_FILE" ] || return 1
+  grep -vE '^[[:space:]]*#' "$ALLOWLIST_FILE" | grep -qxF "$1"
+}
+
 # scan_text "<archivo>": superficie sobre la que se evalúa el GATILLO de cada regla.
 #   --file: el archivo completo (feedback al editar en vivo, sin ruido de diff).
 #   --diff: SOLO las líneas AÑADIDAS del PR para este archivo. Así una regla solo
@@ -45,6 +59,9 @@ scan_text() {
 
 for f in ${FILES[@]+"${FILES[@]}"}; do
   [ -f "$f" ] || continue
+  # Respaldo de PROD inmutable y ya aplicado: no le aplicamos reglas pensadas
+  # para queries NUEVAS (AIR-161). Skip por basename, antes de cualquier scan.
+  if is_allowlisted "$(basename "$f")"; then continue; fi
   ADDED="$(scan_text "$f")"
   # Los workflows n8n (.json) entran SOLO para R1 (valor_compras): el bug de E8B
   # demostró que el grep de revenue de pixel debe cubrirlos. R2/R3/R4 son
@@ -70,10 +87,18 @@ for f in ${FILES[@]+"${FILES[@]}"}; do
   # R2 — ventas siempre en hora de Bogotá (+ estado_pago='paid')
   # Multi-línea (gatillo presente Y complemento ausente). Para no falsear por
   # contexto preexistente NI perder detección cuando el complemento legítimo ya
-  # estaba en una línea no-añadida: el GATILLO ('ordered_at') se evalúa sobre
-  # $ADDED (solo dispara si el PR lo introduce), pero el COMPLEMENTO
-  # ('America/Bogota') se evalúa sobre el ARCHIVO COMPLETO ("$f").
-  if printf '%s' "$ADDED" | grep -qiE 'ordered_at' && ! grep -qiE 'America/Bogota' "$f"; then
+  # estaba en una línea no-añadida: el GATILLO se evalúa sobre $ADDED (solo
+  # dispara si el PR lo introduce), pero el COMPLEMENTO ('America/Bogota') se
+  # evalúa sobre el ARCHIVO COMPLETO ("$f").
+  # El gatillo ya NO es 'ordered_at' a secas (AIR-161): eso falseaba en
+  # contextos de ESCRITURA — 'ordered_at' como nombre de columna en la lista de
+  # un INSERT, o como destino de un valor (...)::timestamptz que se inserta. La
+  # regla apunta a LECTURAS/FILTROS/BUCKET-por-día: solo dispara si 'ordered_at'
+  # cae en una línea con ::date, DATE()/date_trunc, WHERE/GROUP/HAVING/BETWEEN o
+  # una comparación (< > =). Esos son los usos que necesitan AT TIME ZONE.
+  if printf '%s' "$ADDED" | grep -iE 'ordered_at' \
+       | grep -qiE '::[[:space:]]*date|date[[:space:]]*\(|date_trunc|where|group|having|between|[<>=]' \
+     && ! grep -qiE 'America/Bogota' "$f"; then
     fail "$f — 'ordered_at' sin AT TIME ZONE 'America/Bogota' (y filtra estado_pago='paid')."
   fi
 
