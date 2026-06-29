@@ -1,28 +1,46 @@
 -- 089_air65_eval_recompute_fecha_anclada.sql
--- Cerebro Fase B · I6 — Oracle de reconciliacion: cobertura de neg-roas-fecha-anclada
+-- Cerebro Fase B · I6 — Re-aplica forward-only el cuerpo VIGENTE de eval_recompute (088)
 -- Linear: AIR-160 (https://linear.app/airedeagua/issue/AIR-160) · tarea AIR-65
 --
--- Por que existe
--- --------------
--- El PR #92 anadio la tarea `neg-roas-fecha-anclada` a dashboard/evals/cerebro/tasks.json
--- y su it() en reconcile.test.ts, pero NO extendio el despachador whitelisted
--- analytics.eval_recompute (086_air156_eval_recompute.sql). Sin rama para ese task_id,
--- la RPC cae en el RAISE EXCEPTION final (P0001 'combinacion no soportada'), el harness
--- corre 11/12 y falla `expect(results.length).toBe(12)`, tumbando el gate CI `evals`.
+-- Por que existe (diagnostico CORREGIDO — drift split de 088)
+-- ----------------------------------------------------------
+-- 088_air65_get_roas_por_adset.sql (mergeado en main via PR #92) hizo DOS CREATE OR
+-- REPLACE: (1) analytics.get_roas con agregacion por-adset, y (2) analytics.eval_recompute
+-- con el MISMO patron por-adset para pos-roas-mayo / neg-roas-pixel MAS las dos ramas
+-- nuevas neg-roas-fecha-anclada (correcto/trampa). En PROD quedo un estado SPLIT: el
+-- get_roas de 088 SI se aplico, pero su eval_recompute NO. Verificado read-only contra
+-- PROD el 2026-06-28:
+--   * analytics.eval_recompute('pos-roas-mayo','correcto')  -> {revenue_real:1741200, ventas:11}
+--     (el viejo SUM diario anclado de 086 — NO el por-adset de 088)
+--   * analytics.eval_recompute('neg-roas-pixel','correcto') -> {revenue_real:1741200}
+--   * analytics.eval_recompute('neg-roas-fecha-anclada',*)  -> P0001 'combinacion no soportada'
+-- Es decir: en PROD eval_recompute sigue siendo el cuerpo de 086. Por eso el harness
+-- lanza P0001 en neg-roas-fecha-anclada, corre 11/12 y tumba el gate CI `evals`.
 --
--- Este CREATE OR REPLACE reproduce el cuerpo VIGENTE de 086 y agrega DOS ramas nuevas
--- para `neg-roas-fecha-anclada` (correcto + trampa), insertadas tras `neg-roas-pixel`
--- y antes de la seccion TOP PRODUCTS. La logica ROAS se copia 1:1 de los campos
--- `recompute_sql_correcto` y `recompute_sql_trampa` de la tarea en tasks.json:
---   * correcto -> agregacion POR ADSET (FULL OUTER JOIN gasto<->revenue) = 3716968
---   * trampa   -> SUM diario anclado a fecha del gasto                   = 1741200
+-- La premisa anterior de esta migracion ("PR #92 NO extendio eval_recompute") era FALSA:
+-- 088 SI lo extendio en el repo; lo que ocurrio es que esa porcion del DDL nunca llego a
+-- PROD (drift split). Esta migracion 089 NO inventa logica nueva: re-aplica forward-only
+-- a PROD, byte-identico, el cuerpo de eval_recompute que 088 dejo sin aplicar.
 --
--- Convencion AIR-90: 086 es respaldo fiel de PROD y no se edita in-place. Esta migracion
--- nueva usa CREATE OR REPLACE FUNCTION (idempotente, safe-to-rerun). No toca grants,
--- SECURITY DEFINER ni search_path respecto a 086.
+-- Que reproduce (1:1 de 088, sin cambios)
+--   * pos-roas-mayo / correcto  -> por-adset (gasto-adset FULL OUTER JOIN revenue-adset) = 3716968
+--   * neg-roas-pixel / correcto -> por-adset                                              = 3716968
+--   * neg-roas-fecha-anclada / correcto -> por-adset                                      = 3716968
+--   * neg-roas-fecha-anclada / trampa   -> viejo SUM diario anclado por fecha             = 1741200
+-- Las cuatro ramas ROAS espejan 1:1 recompute_sql_correcto/trampa de
+-- dashboard/evals/cerebro/tasks.json (contrato). No se toca tasks.json ni reconcile.test.ts.
+--
+-- Solo eval_recompute. NO se re-aplica get_roas: ya esta correcto en PROD (088, PR #92).
+--
+-- Gobernanza (AIR-90)
+-- -------------------
+-- NO se edita 086 ni 088 in-place (respaldo inmutable de PROD). El cambio DDL va aqui via
+-- CREATE OR REPLACE FUNCTION (idempotente, safe-to-rerun). No altera firma (text, text),
+-- SECURITY DEFINER, search_path ni grants respecto a 088.
 
 -- =============================================================================
 -- analytics.eval_recompute(p_task_id text, p_variant text) -> jsonb
+--   Cuerpo BYTE-identico al de 088_air65_get_roas_por_adset.sql (porcion eval_recompute).
 -- =============================================================================
 CREATE OR REPLACE FUNCTION analytics.eval_recompute(
   p_task_id text,
@@ -103,59 +121,84 @@ BEGIN
   END IF;
 
   -- ---------------------------------------------------------------------------
-  -- ROAS — mayo 2026 (rango fijo)
-  -- correcto: SUM(revenue_atribuido) de la serie diaria sumable; roas redondeado 4d
+  -- ROAS — mayo 2026 (rango fijo) — CORREGIDO (AIR-65): agregacion por adset
+  -- correcto: gasto-por-adset (meta_ads_performance) FULL OUTER JOIN
+  --           revenue-por-adset (vista_atribucion_web_con_margen, paid). NO suma la
+  --           serie diaria anclada (eso subcuenta ~2x por conversion diferida).
   -- (la variante trampa "pixel" la calcula el test via PostgREST sobre la tabla base)
   -- ---------------------------------------------------------------------------
   IF p_task_id = 'pos-roas-mayo' AND p_variant = 'correcto' THEN
-    SELECT jsonb_build_object(
-      'gasto', COALESCE(SUM(d.gasto), 0),
-      'revenue_real', COALESCE(SUM(d.revenue_atribuido), 0),
-      'ventas', COALESCE(SUM(d.ventas_atribuidas), 0),
-      'roas_real', ROUND((SUM(d.revenue_atribuido) / NULLIF(SUM(d.gasto), 0))::numeric, 4)
-    ) INTO v
-    FROM public.v_paid_performance_diario d
-    WHERE d.fecha BETWEEN DATE '2026-05-01' AND DATE '2026-05-31';
-    RETURN v;
-  END IF;
-
-  IF p_task_id = 'neg-roas-pixel' AND p_variant = 'correcto' THEN
-    SELECT jsonb_build_object('revenue_real', COALESCE(SUM(d.revenue_atribuido), 0)) INTO v
-    FROM public.v_paid_performance_diario d
-    WHERE d.fecha BETWEEN DATE '2026-05-01' AND DATE '2026-05-31';
-    RETURN v;
-  END IF;
-
-  -- ---------------------------------------------------------------------------
-  -- ROAS — TRAMPA fecha anclada (AIR-65) — mayo 2026 (rango fijo)
-  -- correcto: agrega POR ADSET sobre la ventana completa (FULL OUTER JOIN gasto<->revenue);
-  --           el revenue por conversion diferida NO se pierde aunque caiga en fechas sin
-  --           gasto del adset. Espejo 1:1 de recompute_sql_correcto en tasks.json. => 3716968
-  -- trampa:   SUM diario de v_paid_performance_diario WHERE fecha BETWEEN ancla el revenue a
-  --           la fecha del gasto; con conversion diferida subcuenta (~2x). => 1741200
-  -- ---------------------------------------------------------------------------
-  IF p_task_id = 'neg-roas-fecha-anclada' AND p_variant = 'correcto' THEN
     WITH gasto_adset AS (
       SELECT m.adset_id, SUM(m.gasto) AS gasto
       FROM public.meta_ads_performance m
       WHERE m.fecha BETWEEN DATE '2026-05-01' AND DATE '2026-05-31'
         AND m.adset_id IS NOT NULL
       GROUP BY m.adset_id
-    ), rev_adset AS (
+    ),
+    rev_adset AS (
+      SELECT w.adset_id, COUNT(*) AS ventas, SUM(w.revenue_venta) AS revenue
+      FROM public.vista_atribucion_web_con_margen w
+      WHERE (w.ordered_at AT TIME ZONE 'America/Bogota')::date BETWEEN DATE '2026-05-01' AND DATE '2026-05-31'
+        AND w.canal_tipo = 'paid' AND w.adset_id IS NOT NULL
+      GROUP BY w.adset_id
+    )
+    SELECT jsonb_build_object(
+      'gasto', COALESCE(SUM(g.gasto), 0),
+      'revenue_real', COALESCE(SUM(r.revenue), 0),
+      'ventas', COALESCE(SUM(r.ventas), 0),
+      'roas_real', ROUND((SUM(r.revenue) / NULLIF(SUM(g.gasto), 0))::numeric, 4)
+    ) INTO v
+    FROM gasto_adset g
+    FULL OUTER JOIN rev_adset r ON r.adset_id = g.adset_id;
+    RETURN v;
+  END IF;
+
+  IF p_task_id = 'neg-roas-pixel' AND p_variant = 'correcto' THEN
+    -- CORREGIDO (AIR-65): el "correcto" del trap-pixel pasa al patron por-adset.
+    WITH gasto_adset AS (
+      SELECT m.adset_id, SUM(m.gasto) AS gasto
+      FROM public.meta_ads_performance m
+      WHERE m.fecha BETWEEN DATE '2026-05-01' AND DATE '2026-05-31'
+        AND m.adset_id IS NOT NULL
+      GROUP BY m.adset_id
+    ),
+    rev_adset AS (
       SELECT w.adset_id, SUM(w.revenue_venta) AS revenue
       FROM public.vista_atribucion_web_con_margen w
       WHERE (w.ordered_at AT TIME ZONE 'America/Bogota')::date BETWEEN DATE '2026-05-01' AND DATE '2026-05-31'
-        AND w.canal_tipo = 'paid'
-        AND w.adset_id IS NOT NULL
+        AND w.canal_tipo = 'paid' AND w.adset_id IS NOT NULL
       GROUP BY w.adset_id
     )
-    SELECT jsonb_build_object('revenue_real', COALESCE(SUM(r.revenue), 0)::numeric) INTO v
+    SELECT jsonb_build_object('revenue_real', COALESCE(SUM(r.revenue), 0)) INTO v
+    FROM gasto_adset g
+    FULL OUTER JOIN rev_adset r ON r.adset_id = g.adset_id;
+    RETURN v;
+  END IF;
+
+  IF p_task_id = 'neg-roas-fecha-anclada' AND p_variant = 'correcto' THEN
+    -- CORRECTO = patron por-adset (lo que la RPC corregida produce).
+    WITH gasto_adset AS (
+      SELECT m.adset_id, SUM(m.gasto) AS gasto
+      FROM public.meta_ads_performance m
+      WHERE m.fecha BETWEEN DATE '2026-05-01' AND DATE '2026-05-31'
+        AND m.adset_id IS NOT NULL
+      GROUP BY m.adset_id
+    ),
+    rev_adset AS (
+      SELECT w.adset_id, SUM(w.revenue_venta) AS revenue
+      FROM public.vista_atribucion_web_con_margen w
+      WHERE (w.ordered_at AT TIME ZONE 'America/Bogota')::date BETWEEN DATE '2026-05-01' AND DATE '2026-05-31'
+        AND w.canal_tipo = 'paid' AND w.adset_id IS NOT NULL
+      GROUP BY w.adset_id
+    )
+    SELECT jsonb_build_object('revenue_real', COALESCE(SUM(r.revenue), 0)) INTO v
     FROM gasto_adset g
     FULL OUTER JOIN rev_adset r ON r.adset_id = g.adset_id;
     RETURN v;
   END IF;
   IF p_task_id = 'neg-roas-fecha-anclada' AND p_variant = 'trampa' THEN
-    SELECT jsonb_build_object('revenue_real', COALESCE(SUM(d.revenue_atribuido), 0)::numeric) INTO v
+    -- TRAMPA = el BUG que esta PR corrige: SUM de la serie diaria anclada por fecha.
+    SELECT jsonb_build_object('revenue_real', COALESCE(SUM(d.revenue_atribuido), 0)) INTO v
     FROM public.v_paid_performance_diario d
     WHERE d.fecha BETWEEN DATE '2026-05-01' AND DATE '2026-05-31';
     RETURN v;
@@ -221,16 +264,31 @@ END;
 $function$;
 
 COMMENT ON FUNCTION analytics.eval_recompute(text, text) IS
-  'AIR-156/AIR-160. Oracle read-only del eval set del Cerebro. Despachador whitelisted (sin SQL dinamico) que recomputa, por task_id de tasks.json, el resultado correcto que cada RPC analytics.* debe reproducir. Cubre neg-roas-fecha-anclada (AIR-65). Solo lectura. EXECUTE solo a service_role.';
+  'AIR-156 + AIR-65. Oracle read-only del eval set del Cerebro. Despachador whitelisted (sin SQL dinamico) que recomputa, por task_id de tasks.json, el resultado correcto que cada RPC analytics.* debe reproducir. AIR-65: pos-roas-mayo y neg-roas-pixel/correcto usan el patron por-adset (gasto-adset FULL OUTER JOIN revenue-adset); nueva rama neg-roas-fecha-anclada cuya trampa es el viejo SUM diario anclado. Solo lectura. EXECUTE solo a service_role.';
 
--- Grants: solo el harness (service_role) + postgres. Nada de PUBLIC/anon/auth/reader.
 REVOKE ALL ON FUNCTION analytics.eval_recompute(text, text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION analytics.eval_recompute(text, text) TO service_role;
 
 -- =============================================================================
--- Rollback (manual, comentado)
+-- Reconciliacion (read-only contra PROD, sin DDL — verificable tras aplicar 089)
 -- =============================================================================
--- Revertir a la version de 086 (sin las ramas neg-roas-fecha-anclada): re-aplicar
--- el cuerpo de 086_air156_eval_recompute.sql via CREATE OR REPLACE FUNCTION
+-- SELECT analytics.eval_recompute('pos-roas-mayo','correcto');
+--   ESPERADO: {"gasto":2513321.00,"revenue_real":3716968.00,"ventas":22,"roas_real":1.4789}
+-- SELECT analytics.eval_recompute('neg-roas-pixel','correcto');
+--   ESPERADO: {"revenue_real":3716968.00}
+-- SELECT analytics.eval_recompute('neg-roas-fecha-anclada','correcto');
+--   ESPERADO: {"revenue_real":3716968.00}
+-- SELECT analytics.eval_recompute('neg-roas-fecha-anclada','trampa');
+--   ESPERADO: {"revenue_real":1741200.00}  (viejo SUM diario anclado — debe DIFERIR del correcto)
+-- Invariante: pos-roas-mayo.revenue_real == neg-roas-pixel.revenue_real ==
+--             neg-roas-fecha-anclada(correcto).revenue_real == get_roas(...).revenue_real == 3716968.
+
+-- =============================================================================
+-- ROLLBACK (comentado — ejecutar manualmente si se requiere)
+-- =============================================================================
+-- Re-aplicar el cuerpo PREVIO de eval_recompute (el de 086_air156_eval_recompute.sql,
+-- que es el estado que tenia PROD antes de 089) via CREATE OR REPLACE FUNCTION
 -- analytics.eval_recompute(text, text) ... (idempotente). NO usar DROP FUNCTION:
--- otras migraciones/grants dependen de la firma (text, text).
+-- otras migraciones/grants dependen de la firma (text, text). Nota: revertir 089
+-- reintroduce el drift split (get_roas por-adset vs eval_recompute anclado) y vuelve a
+-- romper los graders pos-roas-mayo / neg-roas-pixel — solo para diagnostico puntual.
