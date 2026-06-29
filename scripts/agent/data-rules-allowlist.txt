@@ -1,0 +1,18 @@
+# Allowlist de check-data-rules.sh (AIR-161)
+# ------------------------------------------------------------------
+# Migraciones-respaldo YA APLICADAS en PROD. Por AIR-90 el .sql es respaldo
+# fiel inmutable (nunca se edita). check-data-rules.sh apunta a queries y
+# analytics NUEVAS, no a SQL histórico ya vivo, por lo que estos archivos
+# disparan falsos positivos sobre patrones legítimos preexistentes. El script
+# los salta ENTERO por basename (un archivo por línea; '#' = comentario).
+#
+# Antes de añadir algo aquí: confirma que el SQL YA está aplicado en PROD y es
+# respaldo inmutable. NO uses esta allowlist para silenciar queries nuevas:
+# para esas, corrige la query. NO añadas migraciones nuevas aún no aplicadas.
+#
+# PR #90 (AIR-65a — reconciliar drift). 'roas' es una columna LEGACY documentada
+# con comentario (R1 valor_compras) y hay ordered_at::date en vistas históricas
+# (R2). SQL vivo en PROD desde el merge de #90.
+049b_roas_margen_primario.sql
+050_fix_roas_margen_calculo.sql
+051_alerta_cogs_faltante.sql

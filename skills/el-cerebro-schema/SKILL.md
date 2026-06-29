@@ -45,7 +45,7 @@ El nombre "intuitivo" casi nunca es el nombre real. Verificado en vivo:
 | Canal / ubicación de la venta | `ventas.ubicacion_id` — **uuid** (no bigint) | `ubicacion_id` NULL = canal **web**; el canal POS sí trae ubicación. |
 | Nombre del producto | `productos.titulo` (NOT NULL) | La columna `nombre` **no existe**. |
 | Variante de la línea | `venta_items.variante_id` — uuid **NULLABLE** | Líneas sin variante enlazada existen; las RPCs las agrupan aparte, no las pierden. |
-| ROAS real | `revenue_atribuido` de `v_paid_performance_diario` (métrica gobernada `roas_real`) | NUNCA uses el campo de compras reportado por el pixel de Meta como revenue: tiene un bug de sobre-conteo. |
+| ROAS real | agregación POR ADSET sobre `vista_atribucion_web_con_margen` (paid) cruzada con gasto por adset de `meta_ads_performance` (métrica gobernada `roas_real`) | NUNCA uses el campo de compras reportado por el pixel de Meta como revenue: tiene un bug de sobre-conteo. NO sumes `v_paid_performance_diario` (su columna `revenue_atribuido` ancla revenue↔fecha y subcuenta ~2x por conversión diferida; esa serie diaria sirve solo para tendencia por adset, no para totales). |
 
 ---
 
@@ -92,9 +92,13 @@ filtra esa ubicación.
 
 ### `analytics.get_roas(p_start date, p_end date, p_adset_id text DEFAULT NULL)`
 Devuelve `(gasto numeric, revenue_real numeric, ventas bigint, roas_real numeric)`.
-ROAS real del paid de Meta sobre la serie diaria sumable `v_paid_performance_diario`. `revenue_real`
-es la suma de `revenue_atribuido` por matching real de ventas; `roas_real = revenue_real / gasto`.
-El revenue se toma de la atribución real, **nunca** del valor reportado por el pixel de Meta.
+ROAS real del paid de Meta agregando **POR ADSET** sobre la ventana completa: gasto por adset de
+`meta_ads_performance` cruzado (FULL OUTER JOIN por `adset_id`) con revenue por adset de
+`vista_atribucion_web_con_margen` (`canal_tipo='paid'`). `revenue_real` es la suma de `revenue_venta`
+atribuido a cada adset; `roas_real = revenue_real / gasto`. El revenue se toma de la atribución real,
+**nunca** del valor reportado por el pixel de Meta. **NO suma `v_paid_performance_diario`**: esa serie
+ancla revenue↔fecha y, con conversión diferida, subcuenta ~2x (AIR-65); úsala solo para tendencia
+diaria por adset, no para este total. No filtra `cobertura_cogs` (devuelve revenue, no margen).
 `p_adset_id` opcional: NULL agrega todos los adsets; con valor, filtra ese adset.
 - **Úsala cuando:** te pidan ROAS, gasto de paid, o revenue atribuido al paid.
 - **NO la uses para:** revenue total de la tienda (→ `get_revenue`).
