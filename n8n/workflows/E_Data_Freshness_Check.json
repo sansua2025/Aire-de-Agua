@@ -1,0 +1,263 @@
+{
+  "name": "E - Data Freshness Check",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 13
+            }
+          ]
+        }
+      },
+      "id": "3f1b8a20-1c44-4e6a-9d11-7a2c5b9e0d01",
+      "name": "Cron diario 8am COT",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        128,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/v_data_source_freshness?select=*",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "5a2c7e31-2d55-4f7b-ae22-8b3d6c0f1e12",
+      "name": "GET data_source_freshness",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        352,
+        368
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// AIR-73: la view v_data_source_freshness ya calcula `stale` por fuente con su umbral.\n// Agregamos conteos + un array estructurado stale_rows para render HTML.\nconst rows = $input.all().map(i => i.json);\nconst staleRows = rows.filter(r => r.stale === true);\nconst resumen = rows\n  .map(r => r.fuente + '=' + (r.dias_desde_ultimo == null ? 'vacia' : r.dias_desde_ultimo + 'd'))\n  .join(', ');\nconst detalleStale = staleRows\n  .map(r => '• ' + r.fuente + ' (' + r.cadencia + '): ' + (r.dias_desde_ultimo == null ? 'tabla vacia' : r.dias_desde_ultimo + ' dias sin datos, umbral ' + r.umbral_dias + 'd') + ', ultima ' + (r.ultima_fecha || '—'))\n  .join('\\n');\nreturn [{ json: {\n  total_fuentes: rows.length,\n  stale_count: staleRows.length,\n  resumen,\n  detalle_stale: detalleStale,\n  stale_rows: staleRows.map(r => ({\n    fuente: r.fuente, cadencia: r.cadencia,\n    dias_desde_ultimo: r.dias_desde_ultimo, umbral_dias: r.umbral_dias,\n    ultima_fecha: r.ultima_fecha\n  }))\n} }];\n"
+      },
+      "id": "6b3d8f42-3e66-4a8c-bf33-9c4e7d102f23",
+      "name": "Agregar Frescura",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        576,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.stale_count }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "7c4e9053-4f77-4b9d-a044-ad5f8e213034",
+      "name": "Hay fuentes stale?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        800,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// AIR-73: render HTML del correo de alerta de frescura (sin LLM, datos controlados).\nconst d = $json;\nconst rows = Array.isArray(d.stale_rows) ? d.stale_rows : [];\nconst esc = (s) => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');\nconst trs = rows.map(r => {\n  const atraso = r.dias_desde_ultimo == null ? 'tabla vacía' : (r.dias_desde_ultimo + ' días');\n  return '<tr>' +\n    '<td style=\"padding:10px 12px;border-bottom:1px solid #eee;font-weight:600;\">' + esc(r.fuente) + '</td>' +\n    '<td style=\"padding:10px 12px;border-bottom:1px solid #eee;color:#555;\">' + esc(r.cadencia) + '</td>' +\n    '<td style=\"padding:10px 12px;border-bottom:1px solid #eee;color:#c0392b;font-weight:700;\">' + esc(atraso) + '</td>' +\n    '<td style=\"padding:10px 12px;border-bottom:1px solid #eee;color:#999;\">umbral ' + esc(r.umbral_dias) + 'd</td>' +\n    '<td style=\"padding:10px 12px;border-bottom:1px solid #eee;color:#999;\">' + esc(r.ultima_fecha || '—') + '</td>' +\n  '</tr>';\n}).join('');\nconst html =\n'<div style=\"margin:0;background:#f4f4f5;padding:24px 0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1a1a1a;\">' +\n  '<div style=\"max-width:640px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;border:1px solid #e5e5e5;\">' +\n    '<div style=\"background:#c0392b;color:#fff;padding:18px 24px;\">' +\n      '<div style=\"font-size:18px;font-weight:700;\">⚠️ Corte de datos detectado</div>' +\n      '<div style=\"font-size:13px;opacity:.9;margin-top:2px;\">Aire de Agua · Sensor de frescura (E_Data_Freshness_Check)</div>' +\n    '</div>' +\n    '<div style=\"padding:22px 24px;\">' +\n      '<p style=\"margin:0 0 16px;font-size:15px;\"><b style=\"color:#c0392b;\">' + esc(d.stale_count) + '</b> de <b>' + esc(d.total_fuentes) + '</b> fuentes sin datos frescos:</p>' +\n      '<table style=\"width:100%;border-collapse:collapse;font-size:13px;\">' +\n        '<thead><tr style=\"text-align:left;color:#888;font-size:11px;text-transform:uppercase;letter-spacing:.04em;border-bottom:2px solid #eee;\">' +\n          '<th style=\"padding:8px 12px;\">Fuente</th><th style=\"padding:8px 12px;\">Cadencia</th>' +\n          '<th style=\"padding:8px 12px;\">Atraso</th><th style=\"padding:8px 12px;\">Umbral</th><th style=\"padding:8px 12px;\">Última</th>' +\n        '</tr></thead><tbody>' + trs + '</tbody>' +\n      '</table>' +\n      '<p style=\"margin:18px 0 0;font-size:12px;color:#999;border-top:1px solid #eee;padding-top:14px;line-height:1.6;\">Todas las fuentes: ' + esc(d.resumen) + '</p>' +\n    '</div>' +\n  '</div>' +\n  '<p style=\"text-align:center;color:#bbb;font-size:11px;margin:14px 0 0;\">Generado automáticamente por n8n · revisar ingesta de la(s) fuente(s) listada(s)</p>' +\n'</div>';\nreturn [{ json: { html, text: d.detalle_stale, stale_count: d.stale_count, total_fuentes: d.total_fuentes, resumen: d.resumen } }];\n"
+      },
+      "id": "8d5f0164-5088-4cae-b155-be6f9f324145",
+      "name": "Render Email HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1024,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ evento: 'data_freshness_check', entidad: 'v_data_source_freshness', estado: ($('Agregar Frescura').first().json.stale_count > 0 ? 'skip' : 'ok'), error_mensaje: 'stale=' + $('Agregar Frescura').first().json.stale_count + '/' + $('Agregar Frescura').first().json.total_fuentes + '; ' + $('Agregar Frescura').first().json.resumen }) }}",
+        "options": {}
+      },
+      "id": "af712386-72aa-4ce0-d377-d0a5b546e367",
+      "name": "Log sync_log",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1248,
+        480
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Supabase"
+        }
+      }
+    },
+    {
+      "id": "email-alert-fresh",
+      "name": "Email Alert",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1248,
+        208
+      ],
+      "parameters": {
+        "sendTo": "marketing@airedeagua.com",
+        "subject": "⚠️ AdeA · Corte de datos detectado",
+        "message": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false,
+          "senderName": "Aire de Agua · Freshness"
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "PLACEHOLDER",
+          "name": "Gmail account"
+        }
+      },
+      "webhookId": "b38f93ad-b274-4461-8745-dc9271888379"
+    }
+  ],
+  "connections": {
+    "Cron diario 8am COT": {
+      "main": [
+        [
+          {
+            "node": "GET data_source_freshness",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET data_source_freshness": {
+      "main": [
+        [
+          {
+            "node": "Agregar Frescura",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agregar Frescura": {
+      "main": [
+        [
+          {
+            "node": "Hay fuentes stale?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hay fuentes stale?": {
+      "main": [
+        [
+          {
+            "node": "Render Email HTML",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log sync_log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Alert": {
+      "main": [
+        [
+          {
+            "node": "Log sync_log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Render Email HTML": {
+      "main": [
+        [
+          {
+            "node": "Email Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "PV9L4Y58E3JLvflt"
+  }
+}

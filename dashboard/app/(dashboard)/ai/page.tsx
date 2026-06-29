@@ -4,11 +4,13 @@ import {
   type InsightDatum,
   type AnomaliaDatum,
   type CohortDatum,
+  type LearningDatum,
 } from '@/components/ai/ai-charts'
 import {
   getColaAgrupada,
   getAnomalias,
   getCustomerPanel,
+  getStrategicLearningsCandidatos,
 } from '@/lib/data/queries'
 import { formatNumber } from '@/lib/format'
 
@@ -18,11 +20,29 @@ function parseNumber(v: unknown): number | null {
   return isNaN(n) ? null : n
 }
 
+/**
+ * Saneo defensivo de texto externo (insights/learnings generados por Claude).
+ * Anti prompt-injection: React ya escapa al renderizar como texto; esto es capa
+ * extra que remueve caracteres de control y colapsa espacios. NO interpreta HTML.
+ * Mismo patrón que sanitizeText del home (AIR-128) y del pipeline E5 (AIR-94).
+ */
+function sanitizeText(s: unknown): string {
+  if (s == null) return ''
+  const out = Array.from(String(s))
+    .map((ch) => {
+      const code = ch.codePointAt(0) ?? 32
+      return code < 32 && ch !== '\t' && ch !== '\n' ? ' ' : ch
+    })
+    .join('')
+  return out.replace(/\s+/g, ' ').trim()
+}
+
 export default async function AiPage() {
-  const [insightsRaw, anomaliasRaw, cohortsRaw] = await Promise.all([
+  const [insightsRaw, anomaliasRaw, cohortsRaw, learningsRaw] = await Promise.all([
     getColaAgrupada().catch(() => []),
     getAnomalias().catch(() => []),
     getCustomerPanel().catch(() => []),
+    getStrategicLearningsCandidatos().catch(() => []),
   ])
 
   const insights: InsightDatum[] = (insightsRaw || []).map((i) => ({
@@ -70,6 +90,21 @@ export default async function AiPage() {
     pct_revenue: parseNumber(c.pct_revenue) ?? 0,
     revenue_segmento: parseNumber(c.revenue_segmento) ?? 0,
     fecha_corte: c.fecha_corte,
+  }))
+
+  // Capa 2 (AIR-61): strategic_learnings candidatos. Textos saneados antiinjection.
+  const learnings: LearningDatum[] = (learningsRaw || []).map((l) => ({
+    id: l.id,
+    titulo: sanitizeText(l.titulo) || '—',
+    sintesis: l.sintesis != null ? sanitizeText(l.sintesis) : null,
+    accion_recomendada:
+      l.accion_recomendada != null ? sanitizeText(l.accion_recomendada) : null,
+    dominio: sanitizeText(l.dominio) || 'general',
+    score_estabilidad: parseNumber(l.score_estabilidad),
+    semanas_activo: parseNumber(l.semanas_activo),
+    primera_observacion: l.primera_observacion ?? null,
+    ultima_observacion: l.ultima_observacion ?? null,
+    created_at: l.created_at ?? null,
   }))
 
   // KPIs agregados
@@ -156,7 +191,12 @@ export default async function AiPage() {
         />
       </div>
 
-      <AiCharts insights={insights} anomalias={anomalias} cohorts={cohorts} />
+      <AiCharts
+        insights={insights}
+        anomalias={anomalias}
+        cohorts={cohorts}
+        learnings={learnings}
+      />
 
       {/* Resumen Cerebro */}
       <div className="grid" style={{ marginTop: 14 }}>

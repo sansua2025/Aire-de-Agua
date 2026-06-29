@@ -5,7 +5,11 @@
   "description": "E5-F · Cron mensual día 1 a las 9am COT (0 14 1 * * UTC). Llama analytics_decay_stale_insights para archivar insights sin reconfirmar en >56d. Log a ai_analysis_log.",
   "settings": {
     "executionOrder": "v1",
-    "availableInMCP": true
+    "availableInMCP": true,
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "PV9L4Y58E3JLvflt"
   },
   "nodes": [
     {
@@ -59,7 +63,7 @@
       "credentials": {
         "httpHeaderAuth": {
           "id": "PLACEHOLDER",
-          "name": "Supabase AdeA"
+          "name": "Header Auth Supabase"
         }
       }
     },
@@ -98,7 +102,7 @@
       "credentials": {
         "httpHeaderAuth": {
           "id": "PLACEHOLDER",
-          "name": "Supabase AdeA"
+          "name": "Header Auth Supabase"
         }
       }
     }

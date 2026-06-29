@@ -5,7 +5,11 @@
   "description": "E5-D · Cron diario 8am COT (0 13 * * * UTC). GET candidatos pending close → loop close_insight_loop por insight → email resumen + log. Si no hay candidatos, log silencioso sin email.",
   "settings": {
     "executionOrder": "v1",
-    "availableInMCP": true
+    "availableInMCP": true,
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "PV9L4Y58E3JLvflt"
   },
   "nodes": [
     {
@@ -59,7 +63,7 @@
       "credentials": {
         "httpHeaderAuth": {
           "id": "PLACEHOLDER",
-          "name": "Supabase AdeA"
+          "name": "Header Auth Supabase"
         }
       }
     },
@@ -126,13 +130,13 @@
       "credentials": {
         "httpHeaderAuth": {
           "id": "PLACEHOLDER",
-          "name": "Supabase AdeA"
+          "name": "Header Auth Supabase"
         }
       }
     },
     {
       "parameters": {
-        "jsCode": "const closures = $input.all().map(function(i){return i.json;});\nconst total = closures.length;\nconst confirmados = closures.filter(function(c){return c.decision === 'confirmado';}).length;\nconst sin_cambio = closures.filter(function(c){return c.decision === 'sin_cambio';}).length;\nconst sin_datos = closures.filter(function(c){return c.decision === 'sin_datos';}).length;\nconst refutados = closures.filter(function(c){return c.decision === 'refutado';}).length;\nfunction fmtPct(n) { if (n == null) return '—'; const sign = n > 0 ? '+' : ''; return sign + Number(n).toFixed(1) + '%'; }\nconst subject = 'Aire de Agua · Loop Closer · ' + total + ' insights evaluados (' + confirmados + ' confirmados, ' + sin_cambio + ' sin cambio)';\nconst html = '<!doctype html><html><body><h2>Loop Closer · Aire de Agua</h2><p>' + total + ' evaluados · ' + confirmados + ' confirmados · ' + sin_cambio + ' sin cambio · ' + sin_datos + ' sin datos · ' + refutados + ' refutados</p></body></html>';\nreturn [{ json: { subject: subject, html: html, total_evaluados: total, confirmados: confirmados, sin_cambio: sin_cambio, sin_datos: sin_datos, refutados: refutados } }];"
+        "jsCode": "const closures = $input.all().map(function(i){return i.json;});\nconst total = closures.length;\nconst confirmados = closures.filter(function(c){return c.decision === 'confirmado';}).length;\nconst sin_cambio = closures.filter(function(c){return c.decision === 'sin_cambio';}).length;\nconst sin_datos = closures.filter(function(c){return c.decision === 'sin_datos';}).length;\nconst refutados = closures.filter(function(c){return c.decision === 'refutado';}).length;\n\nfunction escapeHtml(s) { if (s == null) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;'); }\nfunction fmtPct(n) { if (n == null) return '—'; const sign = n > 0 ? '+' : ''; return sign + Number(n).toFixed(1) + '%'; }\n\nlet listHtml = '<ul style=\"font-family:Inter,Arial,sans-serif;color:#333;font-size:14px;line-height:1.6;padding-left:18px\">';\nfor (const c of closures) {\n  const color = c.decision === 'confirmado' ? '#0a7d2c' : (c.decision === 'refutado' ? '#b3261e' : '#666');\n  listHtml += '<li style=\"margin-bottom:10px\"><b style=\"color:' + color + '\">[' + escapeHtml(c.decision) + ']</b> ' +\n    'metrica=<code>' + escapeHtml(c.metrica_clave || '—') + '</code> · ' +\n    'delta=' + fmtPct(c.delta_eficacia_pct) + ' · ' +\n    'score: ' + (c.score_anterior != null ? Number(c.score_anterior).toFixed(2) : '—') + ' → ' +\n    (c.score_nuevo != null ? Number(c.score_nuevo).toFixed(2) : '—') +\n    '<br><span style=\"color:#888;font-size:12px\">id ' + escapeHtml(c.id) + '</span></li>';\n}\nlistHtml += '</ul>';\n\nconst html = '<!doctype html><html><body style=\"margin:0;background:#f5f5f5;padding:24px;font-family:Inter,Arial,sans-serif\"><div style=\"max-width:640px;margin:0 auto;background:#fff;border-radius:8px;padding:32px;box-shadow:0 1px 3px rgba(0,0,0,0.1)\"><h2 style=\"color:#1a1a1a;margin:0 0 4px\">🔁 Loop Closer · Aire de Agua</h2><p style=\"color:#666;margin:0 0 24px;font-size:14px\">Insights cerrados con evidencia retrospectiva</p><div style=\"background:#fafafa;border-left:4px solid #1a1a1a;padding:14px 18px;margin-bottom:24px;font-size:15px;color:#333\">' + total + ' insights evaluados · <b style=\"color:#0a7d2c\">' + confirmados + ' confirmados</b> · <b>' + sin_cambio + ' sin cambio</b> · <b>' + sin_datos + ' sin datos</b>' + (refutados > 0 ? ' · <b style=\"color:#b3261e\">' + refutados + ' refutados</b>' : '') + '</div>' + listHtml + '<p style=\"margin-top:32px;color:#999;font-size:11px;border-top:1px solid #eee;padding-top:12px\">Generado por Loop Closer · ' + new Date().toISOString() + '</p></div></body></html>';\n\nconst subject = 'Aire de Agua · Loop Closer · ' + total + ' insights evaluados (' + confirmados + ' confirmados, ' + sin_cambio + ' sin cambio)';\n\nreturn [{ json: { subject: subject, html: html, total_evaluados: total, confirmados: confirmados, sin_cambio: sin_cambio, sin_datos: sin_datos, refutados: refutados } }];"
       },
       "id": "275cb758-8ad6-4dae-a11f-3b8b5f3eb22b",
       "name": "Render Closure Email",
@@ -165,7 +169,7 @@
       "credentials": {
         "gmailOAuth2": {
           "id": "PLACEHOLDER",
-          "name": "Gmail AdeA"
+          "name": "Gmail account"
         }
       }
     },
@@ -204,7 +208,7 @@
       "credentials": {
         "httpHeaderAuth": {
           "id": "PLACEHOLDER",
-          "name": "Supabase AdeA"
+          "name": "Header Auth Supabase"
         }
       }
     },
@@ -243,7 +247,7 @@
       "credentials": {
         "httpHeaderAuth": {
           "id": "PLACEHOLDER",
-          "name": "Supabase AdeA"
+          "name": "Header Auth Supabase"
         }
       }
     }

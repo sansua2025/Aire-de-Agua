@@ -6,9 +6,19 @@
       "name": "Domingo 10pm COT",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.3,
-      "position": [-224, 112],
+      "position": [
+        -224,
+        112
+      ],
       "parameters": {
-        "rule": { "interval": [{ "field": "weeks", "triggerAtHour": 22 }] }
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtHour": 22
+            }
+          ]
+        }
       }
     },
     {
@@ -16,14 +26,34 @@
       "name": "Leer Posts Feed",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
-      "position": [0, 0],
+      "position": [
+        0,
+        0
+      ],
       "parameters": {
-        "documentId": { "__rl": true, "mode": "id", "value": "1iTRUildmV6RCdvzQwWqtMNBvsVZ7-zpxACWav5wiy74" },
-        "sheetName": { "__rl": true, "mode": "name", "value": "Post Performance" },
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1iTRUildmV6RCdvzQwWqtMNBvsVZ7-zpxACWav5wiy74"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Post Performance"
+        },
         "options": {
           "outputFormatting": {
-            "values": { "general": "FORMATTED_VALUE", "date": "FORMATTED_STRING" }
+            "values": {
+              "general": "FORMATTED_VALUE",
+              "date": "FORMATTED_STRING"
+            }
           }
+        }
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "PLACEHOLDER",
+          "name": "Google Sheets account 2"
         }
       }
     },
@@ -32,7 +62,10 @@
       "name": "Transformar Posts",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [224, 0],
+      "position": [
+        224,
+        0
+      ],
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
@@ -44,14 +77,34 @@
       "name": "Leer Reels",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
-      "position": [0, 208],
+      "position": [
+        0,
+        208
+      ],
       "parameters": {
-        "documentId": { "__rl": true, "mode": "id", "value": "1iTRUildmV6RCdvzQwWqtMNBvsVZ7-zpxACWav5wiy74" },
-        "sheetName": { "__rl": true, "mode": "name", "value": "Reels" },
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1iTRUildmV6RCdvzQwWqtMNBvsVZ7-zpxACWav5wiy74"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Reels"
+        },
         "options": {
           "outputFormatting": {
-            "values": { "general": "FORMATTED_VALUE", "date": "FORMATTED_STRING" }
+            "values": {
+              "general": "FORMATTED_VALUE",
+              "date": "FORMATTED_STRING"
+            }
           }
+        }
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "PLACEHOLDER",
+          "name": "Google Sheets account 2"
         }
       }
     },
@@ -60,7 +113,10 @@
       "name": "Transformar Reels",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [224, 208],
+      "position": [
+        224,
+        208
+      ],
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
@@ -72,19 +128,27 @@
       "name": "Merge Posts + Reels",
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3,
-      "position": [448, 112],
-      "parameters": { "mode": "append" }
+      "position": [
+        448,
+        112
+      ],
+      "parameters": {
+        "mode": "append"
+      }
     },
     {
       "id": "17fca423-1cc2-47d3-941f-113f89863c71",
       "name": "Split en Batches",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [672, 112],
+      "position": [
+        672,
+        112
+      ],
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "const items = $input.all();\nconst SCHEMA = [\"upsert_key\",\"post_shortcode\",\"post_url\",\"image_url\",\"meta_post_id\",\n  \"plataforma\",\"tipo\",\"fecha_publicacion\",\"caption\",\"alcance\",\"impresiones\",\"likes\",\n  \"comentarios\",\"guardados\",\"engagement_rate\",\"compartidos\",\"visualizaciones\"];\nconst normalized = items.map(it => {\n  const out = {};\n  for (const k of SCHEMA) {\n    const v = it.json[k];\n    if (v !== undefined && v !== null) out[k] = v;\n  }\n  return out;\n});\nconst batchSize = 50;\nconst batches = [];\nfor (let i = 0; i < normalized.length; i += batchSize) {\n  batches.push({ json: { batch: normalized.slice(i, i + batchSize) }});\n}\nreturn batches;"
+        "jsCode": "const items = $input.all();\nconst SCHEMA = [\"upsert_key\",\"post_shortcode\",\"post_url\",\"image_url\",\"meta_post_id\",\n  \"plataforma\",\"tipo\",\"fecha_publicacion\",\"caption\",\"alcance\",\"impresiones\",\"likes\",\n  \"comentarios\",\"guardados\",\"engagement_rate\",\"compartidos\",\"visualizaciones\"];\n// AIR-73: NO rellenar claves ausentes con 0/null (lección AIR-45).\n// La omision de ceros preserva el merge parcial: resolution=merge-duplicates\n// no debe pisar columnas reales con ceros. Se conserva intacta esa logica.\nconst normalized = items.map(it => {\n  const out = {};\n  for (const k of SCHEMA) {\n    const v = it.json[k];\n    if (v !== undefined && v !== null) out[k] = v;\n  }\n  return out;\n});\n// AIR-73: batchSize=1. Cada request lleva UNA sola fila, por lo que PostgREST\n// nunca recibe un array multi-fila con sets de columnas heterogeneos (esa era\n// la causa del HTTP 400 \"All object keys must match\"). El upsert sigue siendo\n// idempotente sobre upsert_key con resolution=merge-duplicates.\nconst batchSize = 1;\nconst batches = [];\nfor (let i = 0; i < normalized.length; i += batchSize) {\n  batches.push({ json: { batch: normalized.slice(i, i + batchSize) }});\n}\nreturn batches;"
       }
     },
     {
@@ -92,20 +156,36 @@
       "name": "Upsert Supabase",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [896, 112],
+      "position": [
+        896,
+        112
+      ],
       "parameters": {
         "method": "POST",
         "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/meta_organic_posts",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendQuery": true,
-        "queryParameters": { "parameters": [{ "name": "on_conflict", "value": "upsert_key" }] },
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "on_conflict",
+              "value": "upsert_key"
+            }
+          ]
+        },
         "sendHeaders": true,
         "specifyHeaders": "keypair",
         "headerParameters": {
           "parameters": [
-            { "name": "Content-Type", "value": "application/json" },
-            { "name": "Prefer", "value": "resolution=merge-duplicates,return=minimal" }
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates,return=minimal"
+            }
           ]
         },
         "sendBody": true,
@@ -113,36 +193,179 @@
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.batch) }}",
         "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Supabase"
+        }
+      }
+    },
+    {
+      "id": "a1f0c3e2-7b44-4d8a-9c11-2f6e5b9a0d31",
+      "name": "Resumen E3",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        112
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// AIR-73: agrega el resultado del upsert por-fila en una sola fila de resumen\n// para dejar traza en sync_log. Antes E3 NO logueaba y el corte fue invisible.\nconst filas = $items('Split en Batches').length;\nreturn [{ json: {\n  evento: 'e3_organic_posts',\n  entidad: 'meta_organic_posts',\n  estado: 'ok',\n  filas: filas\n} }];"
+      }
+    },
+    {
+      "id": "b2e1d4f3-8c55-4e9b-ad22-3a7f6c0b1e42",
+      "name": "Log sync_log",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1344,
+        112
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ evento: $json.evento, entidad: $json.entidad, estado: $json.estado, error_mensaje: 'filas_procesadas=' + $json.filas }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Supabase"
+        }
       }
     }
   ],
   "connections": {
     "Domingo 10pm COT": {
-      "main": [[
-        { "node": "Leer Posts Feed", "type": "main", "index": 0 },
-        { "node": "Leer Reels", "type": "main", "index": 0 }
-      ]]
+      "main": [
+        [
+          {
+            "node": "Leer Posts Feed",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Leer Reels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Leer Posts Feed": {
-      "main": [[{ "node": "Transformar Posts", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Transformar Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Transformar Posts": {
-      "main": [[{ "node": "Merge Posts + Reels", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Merge Posts + Reels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Leer Reels": {
-      "main": [[{ "node": "Transformar Reels", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Transformar Reels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Transformar Reels": {
-      "main": [[{ "node": "Merge Posts + Reels", "type": "main", "index": 1 }]]
+      "main": [
+        [
+          {
+            "node": "Merge Posts + Reels",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
     },
     "Merge Posts + Reels": {
-      "main": [[{ "node": "Split en Batches", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Split en Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Split en Batches": {
-      "main": [[{ "node": "Upsert Supabase", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Upsert Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Supabase": {
+      "main": [
+        [
+          {
+            "node": "Resumen E3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resumen E3": {
+      "main": [
+        [
+          {
+            "node": "Log sync_log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "errorWorkflow": "PV9L4Y58E3JLvflt"
   }
 }

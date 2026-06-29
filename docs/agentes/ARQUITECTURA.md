@@ -167,6 +167,25 @@ flowchart LR
 5. Margen: verificar `cobertura_cogs`
 6. Sin columnas GENERATED STORED en INSERT/UPSERT
 
+### Checks deterministas en CI (Capa 3)
+
+Además del veredicto del reviewer, el job `CI` (`.github/workflows/ci.yml`) corre guardrails determinis­tas que **bloquean el merge** sin juicio LLM:
+
+| Check (job CI) | Script | Qué pesca |
+|----------------|--------|-----------|
+| `data-rules` | `scripts/agent/check-data-rules.sh --diff origin/main` | Las 6 reglas de datos sobre el diff (valor_compras, timezone, joins, GENERATED, …) |
+| `docstring-rpc-loop` | `scripts/agent/check-docstring-rpc-loop.sh --diff origin/main` | Drift docstring↔cuerpo en las RPCs del loop de insights (AIR-135) |
+| `n8n-sync` | `scripts/check-transform-ads-sync.sh` | Bloque de mapeo "Transform Ads Data" idéntico entre Backfill y Daily (AIR-95) |
+| `n8n-graph-parity` | `scripts/agent/check-n8n-graph-parity.sh` | Paridad `nodes` ↔ `activeVersion.nodes` en nodos críticos de seguridad (AIR-140) |
+
+#### `n8n-graph-parity` — patrón `nodes` vs `activeVersion.nodes`
+
+Algunos exports de n8n incluyen una clave top-level `activeVersion: { nodes, connections }` que es una **copia** del grafo además de `w.nodes`/`w.connections`. **n8n EJECUTA `activeVersion.nodes`**, no necesariamente `w.nodes`. Si alguien edita un `jsCode` (o el body de la llamada a Claude) solo en `w.nodes`, la copia que realmente corre queda *stale*.
+
+Para los **nodos críticos de seguridad** (`Build Prompt*`, `Claude*`, `Anthropic*`, `Parse Claude*`, y httpRequest a la API de Anthropic) esa divergencia es una **regresión de prompt-injection silenciosa**: la protección anti-injection puede estar en la copia editada pero NO en la que se ejecuta. Caso real que originó este check: AIR-119 sanitizó el `snapshot` (texto libre de Meta/Shopify) solo en `w.nodes`; `activeVersion.nodes` de `E5A_Loop_Weekly_Analysis.json` quedó inyectando el snapshot CRUDO.
+
+El detector compara byte-a-byte (sha256, JSON canónico) el objeto `parameters` de cada nodo crítico entre ambas copias; falla con `exit 1` y diff legible si divergen o si un nodo crítico existe en solo una copia. **El fix del workflow no pertenece a este check** — el detector solo lo pesca y enruta al issue del workflow (E5A → AIR-119). No debilites el check para pasar verde.
+
 ---
 
 ## 5. Loop de aprendizaje (memoria acumulativa)
@@ -212,6 +231,18 @@ Principio: **cada issue resuelto hace al siguiente más barato.** Si un aprendiz
 
 MCP **acotado por subagente** (frontmatter `mcpServers`) → el hilo principal no carga tools que no usa → prefijo de contexto estable → KV-cache caliente.
 
+> **Restricción verificada en entorno web/remoto (sesión AIR-71/119/67/97):** los subagentes con
+> lista `tools:` positiva (builder, verify, reviewer, retro, fixer) **no reciben herramientas MCP**
+> aunque el frontmatter declare `mcpServers`. Solo los agentes "All tools except…" (issue-analyst,
+> orchestrator — cuyo frontmatter NO usa lista positiva) tienen MCP garantizado. Consecuencia:
+> el ORQUESTADOR ejecuta las operaciones MCP críticas (apply_migration, validate_workflow,
+> get_advisors); el builder solo puede autorar archivos.
+
+> **Restricción de infraestructura (plan Free):** `create_branch` en Supabase devuelve
+> `PaymentRequired` (`vnctmzsgemefgbtjctlo` sin plan Pro). Preview branches no disponibles.
+> Mitigación activa: verificación estática de RPCs via `pg_get_functiondef` + tests sintéticos en
+> el PR para que el humano ejecute al aplicar.
+
 ---
 
 ## 8. Modos de operación
@@ -242,3 +273,6 @@ flowchart LR
 | 7 | Carril `human-gate` formal | ✅ Resuelto — escalera de autonomía: analyst decide → orchestrator etiqueta → gate condición 0 |
 
 Extras de esta rama: contador determinista de reintentos (`attempt.sh`), reglas de datos como fuente única (`check-data-rules.sh`, usada por hook + CI), regla de graduación en `retro`, guard anti prompt-injection en `issue-analyst`. Diseño completo de autonomía: `docs/agentes/AUTONOMIA.md`.
+| 8 | MCP no llega a subagentes con allowlist `tools:` positiva en entorno web/remoto | Documentado — el orquestador ejecuta las ops MCP; builder/verify/reviewer solo autoran archivos. Ver §7. |
+| 9 | Supabase branching deshabilitado (plan Free) | Documentado — mitigación: verificación estática + tests sintéticos en PR. Ver §7. |
+| 10 | Drift docstring/cuerpo en RPCs del loop de insights | Candidato a regla `check-data-rules.sh` (AIR-127) — aún no implementado. |

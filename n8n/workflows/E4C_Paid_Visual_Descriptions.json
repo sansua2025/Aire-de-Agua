@@ -1,103 +1,716 @@
 {
-  "id": "Qi2XfUxioVNknVKB",
   "name": "E4C - Paid Visual Descriptions",
-  "active": true,
-  "description": "Genera descripcion visual de creativos via Claude Sonnet vision. Resuelve URL grande via image_hash o video_id antes de descargar. Cache estable por asset_id. Bulk + diario 9 UTC.",
-  "settings": { "executionOrder": "v1", "availableInMCP": true, "binaryMode": "separate" },
   "nodes": [
-    { "id": "2bdbf5d3-f52b-4df3-b279-04f1fc771491", "name": "Run Bulk Visuals", "type": "n8n-nodes-base.manualTrigger", "typeVersion": 1, "position": [-300, 304], "parameters": {} },
-    { "id": "442681b5-be9d-4b44-8005-a2e8b3501af5", "name": "Schedule Diario Visuals", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.3, "position": [-300, 80], "parameters": { "rule": { "interval": [{ "field": "days", "daysInterval": 1, "triggerAtHour": 9 }] } } },
     {
-      "id": "0ebf6040-bd48-4a00-82a9-689e452c92a2", "name": "Fetch Catalog Context", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [-60, 192],
-      "parameters": { "method": "GET", "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/catalog_summary_for_vision", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendQuery": true, "queryParameters": { "parameters": [{ "name": "select", "value": "catalog_text" }] } },
-      "alwaysOutputData": true, "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+      "id": "2bdbf5d3-f52b-4df3-b279-04f1fc771491",
+      "name": "Run Bulk Visuals",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -300,
+        304
+      ]
     },
     {
-      "id": "a5f4114c-5ad7-4874-bb96-89781c1373fd", "name": "Fetch Visuals Pendientes", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [200, 304],
-      "parameters": { "method": "GET", "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/visuals_pendientes", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendQuery": true, "queryParameters": { "parameters": [{ "name": "select", "value": "asset_id,asset_type,image_url,image_hash,video_id,sample_ad_name" }] } },
-      "alwaysOutputData": true, "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
-    },
-    {
-      "id": "2ce4f57b-17dc-45a7-9a85-7ab903172a47", "name": "Switch by Asset Type", "type": "n8n-nodes-base.switch", "typeVersion": 3.4, "position": [460, 304],
+      "id": "0ebf6040-bd48-4a00-82a9-689e452c92a2",
+      "name": "Fetch Catalog Context",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -60,
+        192
+      ],
       "parameters": {
-        "rules": { "values": [
-          { "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 1 }, "combinator": "and", "conditions": [{ "id": "r0", "leftValue": "={{ $json.asset_type }}", "rightValue": "image_hash", "operator": { "type": "string", "operation": "equals" } }] } },
-          { "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 1 }, "combinator": "and", "conditions": [{ "id": "r1", "leftValue": "={{ $json.asset_type }}", "rightValue": "video_id", "operator": { "type": "string", "operation": "equals" } }] } },
-          { "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 1 }, "combinator": "and", "conditions": [{ "id": "r2", "leftValue": "={{ $json.asset_type }}", "rightValue": "url", "operator": { "type": "string", "operation": "equals" } }] } }
-        ] },
+        "method": "GET",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/catalog_summary_for_vision",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "select",
+              "value": "catalog_text"
+            }
+          ]
+        }
+      },
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Supabase"
+        }
+      }
+    },
+    {
+      "id": "a5f4114c-5ad7-4874-bb96-89781c1373fd",
+      "name": "Fetch Visuals Pendientes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        200,
+        304
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/visuals_pendientes",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "select",
+              "value": "asset_id,asset_type,image_url,image_hash,video_id,sample_ad_name"
+            }
+          ]
+        }
+      },
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Supabase"
+        }
+      }
+    },
+    {
+      "id": "2ce4f57b-17dc-45a7-9a85-7ab903172a47",
+      "name": "Switch by Asset Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        460,
+        304
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "r0",
+                    "leftValue": "={{ $json.asset_type }}",
+                    "rightValue": "image_hash",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "r1",
+                    "leftValue": "={{ $json.asset_type }}",
+                    "rightValue": "video_id",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "r2",
+                    "leftValue": "={{ $json.asset_type }}",
+                    "rightValue": "url",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
         "options": {}
       }
     },
     {
-      "id": "ad757f98-654a-48f6-9c7d-8982aab95988", "name": "Resolve Image Hash", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [720, 80],
-      "parameters": { "method": "GET", "url": "https://graph.facebook.com/v21.0/act_1055160342150593/adimages", "authentication": "genericCredentialType", "genericAuthType": "httpQueryAuth", "sendQuery": true, "queryParameters": { "parameters": [{ "name": "hashes", "value": "={{ JSON.stringify([$json.image_hash]) }}" }, { "name": "fields", "value": "hash,url,permalink_url" }] }, "options": { "response": { "response": { "neverError": true } } } },
-      "credentials": { "httpQueryAuth": { "id": "PLACEHOLDER", "name": "Meta Graph API AdeA" } }
-    },
-    {
-      "id": "e61d899b-3ccc-4970-abe3-9ed3cecb2683", "name": "Extract Image URL", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [980, 80],
-      "parameters": { "mode": "runOnceForEachItem", "jsCode": "const original = $('Fetch Visuals Pendientes').item.json;\nconst resp = $input.item.json;\nlet resolvedUrl = original.image_url;\nif (resp && resp.data) {\n  if (Array.isArray(resp.data) && resp.data.length > 0 && resp.data[0].url) {\n    resolvedUrl = resp.data[0].url;\n  } else if (typeof resp.data === 'object') {\n    const keys = Object.keys(resp.data);\n    if (keys.length && resp.data[keys[0]] && resp.data[keys[0]].url) {\n      resolvedUrl = resp.data[keys[0]].url;\n    }\n  }\n}\nreturn { json: { asset_id: original.asset_id, asset_type: original.asset_type, sample_ad_name: original.sample_ad_name, resolved_url: resolvedUrl } };" }
-    },
-    {
-      "id": "77c63a7c-4012-47b5-bb5f-44cf9db142bd", "name": "Resolve Video Poster", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [720, 304],
-      "parameters": { "method": "GET", "url": "=https://graph.facebook.com/v21.0/{{ $json.video_id }}", "authentication": "genericCredentialType", "genericAuthType": "httpQueryAuth", "sendQuery": true, "queryParameters": { "parameters": [{ "name": "fields", "value": "picture,thumbnails{uri,width,height}" }] }, "options": { "response": { "response": { "neverError": true } } } },
-      "credentials": { "httpQueryAuth": { "id": "PLACEHOLDER", "name": "Meta Graph API AdeA" } }
-    },
-    {
-      "id": "7dd66694-9e51-4f0f-b37a-9ed2716116a8", "name": "Extract Video URL", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [980, 304],
-      "parameters": { "mode": "runOnceForEachItem", "jsCode": "const original = $('Fetch Visuals Pendientes').item.json;\nconst resp = $input.item.json;\nlet resolvedUrl = original.image_url;\nif (resp && resp.thumbnails && Array.isArray(resp.thumbnails.data) && resp.thumbnails.data.length > 0) {\n  const sorted = resp.thumbnails.data.slice().sort((a, b) => (b.width || 0) - (a.width || 0));\n  if (sorted[0] && sorted[0].uri) resolvedUrl = sorted[0].uri;\n} else if (resp && resp.picture) {\n  resolvedUrl = resp.picture;\n}\nreturn { json: { asset_id: original.asset_id, asset_type: original.asset_type, sample_ad_name: original.sample_ad_name, resolved_url: resolvedUrl } };" }
-    },
-    {
-      "id": "742824a6-7e7d-4107-bb18-9601eea99f79", "name": "Passthrough URL", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [720, 528],
-      "parameters": { "mode": "runOnceForEachItem", "jsCode": "const o = $input.item.json;\nreturn { json: { asset_id: o.asset_id, asset_type: o.asset_type, sample_ad_name: o.sample_ad_name, resolved_url: o.image_url } };" }
-    },
-    { "id": "3e9c3c2f-0493-4f0b-9454-950fe40e4df1", "name": "Merge URLs", "type": "n8n-nodes-base.merge", "typeVersion": 3.2, "position": [1240, 304], "parameters": { "numberInputs": 3 } },
-    { "id": "11816ccf-4b2b-47c1-87ac-885b1f1f19b8", "name": "Loop One By One", "type": "n8n-nodes-base.splitInBatches", "typeVersion": 3, "position": [1500, 304], "parameters": { "batchSize": 1 } },
-    { "id": "f51b7f7d-be93-4681-b4e0-438663189d58", "name": "Loop Done", "type": "n8n-nodes-base.set", "typeVersion": 3.4, "position": [1760, 192], "parameters": {} },
-    {
-      "id": "e86c3f81-624d-4568-811c-e05cf03391ac", "name": "Download Image", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [1760, 432],
-      "parameters": { "method": "GET", "url": "={{ $json.resolved_url }}", "options": { "response": { "response": { "neverError": true, "responseFormat": "file" } } } }
-    },
-    {
-      "id": "34296211-5a46-4712-9a06-eb7ee75e96fb", "name": "Build Anthropic Request", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [2020, 432],
+      "id": "ad757f98-654a-48f6-9c7d-8982aab95988",
+      "name": "Resolve Image Hash",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        720,
+        80
+      ],
       "parameters": {
-        "mode": "runOnceForEachItem",
-        "jsCode": "const item = $input.item;\nconst adName = item.json.sample_ad_name || '';\nconst assetId = item.json.asset_id;\nconst assetType = item.json.asset_type;\nconst resolvedUrl = item.json.resolved_url;\nconst bin = item.binary && item.binary.data;\nif (!bin) return null;\nconst buffer = await this.helpers.getBinaryDataBuffer(0, 'data');\nconst base64 = buffer.toString('base64');\nconst rawMime = (bin.mimeType || 'image/jpeg').split(';')[0].trim();\nconst validMimes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];\nconst mimeType = validMimes.indexOf(rawMime) >= 0 ? rawMime : 'image/jpeg';\n\nconst catalogResp = $('Fetch Catalog Context').first()?.json;\nconst catalogText = (catalogResp && (catalogResp.catalog_text || (Array.isArray(catalogResp) && catalogResp[0] && catalogResp[0].catalog_text))) || '';\n\nconst prompt = 'Sos un analista experto en creativos de moda. Te muestro la imagen de un anuncio de la marca colombiana Aire de Agua (moda femenina). El nombre interno del anuncio es: \"' + adName + '\".\\n\\nCATALOGO ACTIVO DE AIRE DE AGUA:\\n' + catalogText + '\\n\\nINSTRUCCIONES:\\n- Si reconoces un producto del catalogo, MENCIONALO POR SU NOMBRE EXACTO.\\n- NUNCA inventes nombres de productos.\\n\\nDescribi el creative en espanol, maximo 200 palabras, 3 bloques:\\n\\nESTILO: tipo, plano, paleta cromatica, mood, iluminacion.\\nELEMENTOS: prenda o producto (nombre exacto si aplica), modelo, fondo, props, texto en imagen.\\nNARRATIVA: lifestyle, UGC, still life, editorial, aspiracional.\\n\\nSe concreto. Sin opiniones.';\n\nreturn {\n  json: {\n    asset_id: assetId, asset_type: assetType, resolved_url: resolvedUrl,\n    request_body: {\n      model: 'claude-sonnet-4-6', max_tokens: 600,\n      messages: [{ role: 'user', content: [\n        { type: 'image', source: { type: 'base64', media_type: mimeType, data: base64 } },\n        { type: 'text', text: prompt }\n      ] }]\n    }\n  }\n};"
+        "method": "GET",
+        "url": "https://graph.facebook.com/v21.0/act_1055160342150593/adimages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "hashes",
+              "value": "={{ JSON.stringify([$json.image_hash]) }}"
+            },
+            {
+              "name": "fields",
+              "value": "hash,url,permalink_url"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Query Auth account"
+        }
       }
     },
     {
-      "id": "fae7522b-d027-4376-94d9-a741d9670d7c", "name": "Describe Image with Claude", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [2280, 432],
-      "parameters": { "method": "POST", "url": "https://api.anthropic.com/v1/messages", "authentication": "predefinedCredentialType", "nodeCredentialType": "anthropicApi", "sendHeaders": true, "headerParameters": { "parameters": [{ "name": "anthropic-version", "value": "2023-06-01" }, { "name": "content-type", "value": "application/json" }] }, "sendBody": true, "contentType": "json", "specifyBody": "json", "jsonBody": "={{ JSON.stringify($json.request_body) }}", "options": { "response": { "response": { "neverError": true } }, "timeout": 60000 } },
-      "credentials": { "anthropicApi": { "id": "PLACEHOLDER", "name": "Anthropic AdeA" } }
+      "id": "e61d899b-3ccc-4970-abe3-9ed3cecb2683",
+      "name": "Extract Image URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        980,
+        80
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const original = $('Fetch Visuals Pendientes').item.json;\nconst resp = $input.item.json;\nlet resolvedUrl = original.image_url;\nif (resp && resp.data) {\n  if (Array.isArray(resp.data) && resp.data.length > 0 && resp.data[0].url) {\n    resolvedUrl = resp.data[0].url;\n  } else if (typeof resp.data === 'object') {\n    const keys = Object.keys(resp.data);\n    if (keys.length && resp.data[keys[0]] && resp.data[keys[0]].url) {\n      resolvedUrl = resp.data[keys[0]].url;\n    }\n  }\n}\nreturn { json: { asset_id: original.asset_id, asset_type: original.asset_type, sample_ad_name: original.sample_ad_name, resolved_url: resolvedUrl } };"
+      }
     },
     {
-      "id": "f701bbd3-6dc8-418c-963e-68bc68286319", "name": "Parse Description", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [2540, 432],
-      "parameters": { "mode": "runOnceForEachItem", "jsCode": "const r = $input.item.json;\nconst built = $('Build Anthropic Request').item.json;\nlet description = null;\nif (r && Array.isArray(r.content)) {\n  const txt = r.content.find(c => c.type === 'text');\n  if (txt) description = txt.text;\n}\nif (!description) return null;\nreturn { json: { asset_id: built.asset_id, asset_type: built.asset_type, resolved_url: built.resolved_url, description: description, modelo: 'claude-sonnet-4-6' } };" }
+      "id": "3e9c3c2f-0493-4f0b-9454-950fe40e4df1",
+      "name": "Merge URLs",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1240,
+        304
+      ],
+      "parameters": {
+        "numberInputs": 3
+      }
     },
     {
-      "id": "6560d953-5128-4c9c-acc6-57f19b371d25", "name": "Save Visual Description", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [2800, 432],
-      "parameters": { "method": "POST", "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/creative_visuals", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendQuery": true, "queryParameters": { "parameters": [{ "name": "on_conflict", "value": "asset_id" }] }, "sendHeaders": true, "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "Prefer", "value": "return=minimal,resolution=merge-duplicates" }] }, "sendBody": true, "contentType": "json", "specifyBody": "json", "jsonBody": "={{ JSON.stringify({ asset_id: $json.asset_id, asset_type: $json.asset_type, description: $json.description, modelo: $json.modelo, resolved_url: $json.resolved_url }) }}" },
-      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+      "id": "77c63a7c-4012-47b5-bb5f-44cf9db142bd",
+      "name": "Resolve Video Poster",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        720,
+        304
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://graph.facebook.com/v21.0/{{ $json.video_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "fields",
+              "value": "picture,thumbnails{uri,width,height}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Query Auth account"
+        }
+      }
+    },
+    {
+      "id": "7dd66694-9e51-4f0f-b37a-9ed2716116a8",
+      "name": "Extract Video URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        980,
+        304
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const original = $('Fetch Visuals Pendientes').item.json;\nconst resp = $input.item.json;\nlet resolvedUrl = original.image_url;\nif (resp && resp.thumbnails && Array.isArray(resp.thumbnails.data) && resp.thumbnails.data.length > 0) {\n  const sorted = resp.thumbnails.data.slice().sort((a, b) => (b.width || 0) - (a.width || 0));\n  if (sorted[0] && sorted[0].uri) resolvedUrl = sorted[0].uri;\n} else if (resp && resp.picture) {\n  resolvedUrl = resp.picture;\n}\nreturn { json: { asset_id: original.asset_id, asset_type: original.asset_type, sample_ad_name: original.sample_ad_name, resolved_url: resolvedUrl } };"
+      }
+    },
+    {
+      "id": "742824a6-7e7d-4107-bb18-9601eea99f79",
+      "name": "Passthrough URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        528
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const o = $input.item.json;\nreturn { json: { asset_id: o.asset_id, asset_type: o.asset_type, sample_ad_name: o.sample_ad_name, resolved_url: o.image_url } };"
+      }
+    },
+    {
+      "id": "f51b7f7d-be93-4681-b4e0-438663189d58",
+      "name": "Loop Done",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1760,
+        192
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "e86c3f81-624d-4568-811c-e05cf03391ac",
+      "name": "Download Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1760,
+        432
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.resolved_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "file"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "34296211-5a46-4712-9a06-eb7ee75e96fb",
+      "name": "Build Anthropic Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2020,
+        432
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const item = $input.item;\nconst adName = item.json.sample_ad_name || '';\nconst assetId = item.json.asset_id;\nconst assetType = item.json.asset_type;\nconst resolvedUrl = item.json.resolved_url;\nconst bin = item.binary && item.binary.data;\nif (!bin) return null;\nconst buffer = await this.helpers.getBinaryDataBuffer(0, 'data');\nconst base64 = buffer.toString('base64');\nconst rawMime = (bin.mimeType || 'image/jpeg').split(';')[0].trim();\nconst validMimes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];\nconst mimeType = validMimes.indexOf(rawMime) >= 0 ? rawMime : 'image/jpeg';\n\nconst catalogResp = $('Fetch Catalog Context').first()?.json;\nconst catalogText = (catalogResp && (catalogResp.catalog_text || (Array.isArray(catalogResp) && catalogResp[0] && catalogResp[0].catalog_text) || (Array.isArray(catalogResp.body) && catalogResp.body[0] && catalogResp.body[0].catalog_text))) || '';\n\nconst prompt = 'Sos un analista experto en creativos de moda. Te muestro la imagen de un anuncio de la marca colombiana Aire de Agua (moda femenina). El nombre interno del anuncio es: \"' + adName + '\".\\n\\nCATALOGO ACTIVO DE AIRE DE AGUA (cuando reconozcas un producto en la imagen, usa EXACTAMENTE su nombre):\\n' + catalogText + '\\n\\nINSTRUCCIONES:\\n- Si reconoces un producto del catalogo en la imagen, MENCIONALO POR SU NOMBRE EXACTO en el bloque ELEMENTOS (ej: \"Camiseta Hot Chisme\", \"Camisa Mesh\").\\n- Si aparecen varios productos identificables, mencionalos todos.\\n- NUNCA inventes nombres de productos que no esten en la lista.\\n- Si una prenda no coincide con ningun producto del catalogo, descibela genericamente sin nombre.\\n\\nDescribi el creative en español, maximo 200 palabras, estructurado en 3 bloques:\\n\\nESTILO: tipo (foto, ilustracion, grafico, frame de video), plano (cerrado/medio/general), paleta cromatica, mood, iluminacion.\\n\\nELEMENTOS: prenda o producto destacado (con NOMBRE EXACTO del catalogo si aplica), modelo (si hay, genero/edad aproximada), fondo, props/accesorios, texto en imagen si lo hay.\\n\\nNARRATIVA: lifestyle, UGC, producto plano (still life), editorial, aspiracional, transformacional.\\n\\nSe concreto y descriptivo. Sin opiniones ni juicios sobre calidad.';\n\nreturn {\n  json: {\n    asset_id: assetId,\n    asset_type: assetType,\n    resolved_url: resolvedUrl,\n    request_body: {\n      model: 'claude-sonnet-4-6',\n      max_tokens: 600,\n      messages: [{\n        role: 'user',\n        content: [\n          { type: 'image', source: { type: 'base64', media_type: mimeType, data: base64 } },\n          { type: 'text', text: prompt }\n        ]\n      }]\n    }\n  }\n};"
+      }
+    },
+    {
+      "id": "fae7522b-d027-4376-94d9-a741d9670d7c",
+      "name": "Describe Image with Claude",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2280,
+        432
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "anthropicApi",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request_body) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Meta Ads Token"
+        },
+        "anthropicApi": {
+          "id": "PLACEHOLDER",
+          "name": "Anthropic account"
+        }
+      }
+    },
+    {
+      "id": "f701bbd3-6dc8-418c-963e-68bc68286319",
+      "name": "Parse Description",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2540,
+        432
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const r = $input.item.json;\nconst built = $('Build Anthropic Request').item.json;\nlet description = null;\nif (r && Array.isArray(r.content)) {\n  const txt = r.content.find(c => c.type === 'text');\n  if (txt) description = txt.text;\n}\nif (!description) return null;\nreturn { json: { asset_id: built.asset_id, asset_type: built.asset_type, resolved_url: built.resolved_url, description: description, modelo: 'claude-sonnet-4-6' } };"
+      }
+    },
+    {
+      "id": "6560d953-5128-4c9c-acc6-57f19b371d25",
+      "name": "Save Visual Description",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2800,
+        432
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/creative_visuals",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "on_conflict",
+              "value": "asset_id"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal,resolution=merge-duplicates"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ asset_id: $json.asset_id, asset_type: $json.asset_type, description: $json.description, modelo: $json.modelo, resolved_url: $json.resolved_url }) }}"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Supabase"
+        }
+      }
+    },
+    {
+      "id": "11816ccf-4b2b-47c1-87ac-885b1f1f19b8",
+      "name": "Loop One By One",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1500,
+        304
+      ],
+      "parameters": {
+        "batchSize": 1
+      }
+    },
+    {
+      "id": "442681b5-be9d-4b44-8005-a2e8b3501af5",
+      "name": "Schedule Diario Visuals",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -300,
+        80
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      }
     }
   ],
   "connections": {
-    "Run Bulk Visuals": { "main": [[{ "node": "Fetch Catalog Context", "type": "main", "index": 0 }]] },
-    "Schedule Diario Visuals": { "main": [[{ "node": "Fetch Catalog Context", "type": "main", "index": 0 }]] },
-    "Fetch Catalog Context": { "main": [[{ "node": "Fetch Visuals Pendientes", "type": "main", "index": 0 }]] },
-    "Fetch Visuals Pendientes": { "main": [[{ "node": "Switch by Asset Type", "type": "main", "index": 0 }]] },
-    "Switch by Asset Type": { "main": [[{ "node": "Resolve Image Hash", "type": "main", "index": 0 }], [{ "node": "Resolve Video Poster", "type": "main", "index": 0 }], [{ "node": "Passthrough URL", "type": "main", "index": 0 }]] },
-    "Resolve Image Hash": { "main": [[{ "node": "Extract Image URL", "type": "main", "index": 0 }]] },
-    "Extract Image URL": { "main": [[{ "node": "Merge URLs", "type": "main", "index": 0 }]] },
-    "Resolve Video Poster": { "main": [[{ "node": "Extract Video URL", "type": "main", "index": 0 }]] },
-    "Extract Video URL": { "main": [[{ "node": "Merge URLs", "type": "main", "index": 1 }]] },
-    "Passthrough URL": { "main": [[{ "node": "Merge URLs", "type": "main", "index": 2 }]] },
-    "Merge URLs": { "main": [[{ "node": "Loop One By One", "type": "main", "index": 0 }]] },
-    "Loop One By One": { "main": [[{ "node": "Loop Done", "type": "main", "index": 0 }], [{ "node": "Download Image", "type": "main", "index": 0 }]] },
-    "Download Image": { "main": [[{ "node": "Build Anthropic Request", "type": "main", "index": 0 }]] },
-    "Build Anthropic Request": { "main": [[{ "node": "Describe Image with Claude", "type": "main", "index": 0 }]] },
-    "Describe Image with Claude": { "main": [[{ "node": "Parse Description", "type": "main", "index": 0 }]] },
-    "Parse Description": { "main": [[{ "node": "Save Visual Description", "type": "main", "index": 0 }]] },
-    "Save Visual Description": { "main": [[{ "node": "Loop One By One", "type": "main", "index": 0 }]] }
+    "Run Bulk Visuals": {
+      "main": [
+        [
+          {
+            "node": "Fetch Catalog Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Catalog Context": {
+      "main": [
+        [
+          {
+            "node": "Fetch Visuals Pendientes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Visuals Pendientes": {
+      "main": [
+        [
+          {
+            "node": "Switch by Asset Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch by Asset Type": {
+      "main": [
+        [
+          {
+            "node": "Resolve Image Hash",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Resolve Video Poster",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Passthrough URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Image Hash": {
+      "main": [
+        [
+          {
+            "node": "Extract Image URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Image URL": {
+      "main": [
+        [
+          {
+            "node": "Merge URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge URLs": {
+      "main": [
+        [
+          {
+            "node": "Loop One By One",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Video Poster": {
+      "main": [
+        [
+          {
+            "node": "Extract Video URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Video URL": {
+      "main": [
+        [
+          {
+            "node": "Merge URLs",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Passthrough URL": {
+      "main": [
+        [
+          {
+            "node": "Merge URLs",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Download Image": {
+      "main": [
+        [
+          {
+            "node": "Build Anthropic Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Anthropic Request": {
+      "main": [
+        [
+          {
+            "node": "Describe Image with Claude",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Describe Image with Claude": {
+      "main": [
+        [
+          {
+            "node": "Parse Description",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Description": {
+      "main": [
+        [
+          {
+            "node": "Save Visual Description",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Visual Description": {
+      "main": [
+        [
+          {
+            "node": "Loop One By One",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop One By One": {
+      "main": [
+        [
+          {
+            "node": "Loop Done",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Download Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Diario Visuals": {
+      "main": [
+        [
+          {
+            "node": "Fetch Catalog Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
-  "tags": [],
-  "meta": { "aiBuilderAssisted": true }
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "PV9L4Y58E3JLvflt"
+  }
 }

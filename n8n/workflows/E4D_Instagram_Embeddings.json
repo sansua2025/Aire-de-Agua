@@ -7,21 +7,10 @@
       "name": "Run Bulk Posts",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
-      "position": [0, 304]
-    },
-    {
-      "parameters": {
-        "rule": {
-          "interval": [
-            { "triggerAtHour": 9, "triggerAtMinute": 30 }
-          ]
-        }
-      },
-      "id": "fcc787b6-246c-4c56-b5e8-52919446d5fe",
-      "name": "Schedule Diario Posts",
-      "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.3,
-      "position": [0, 80]
+      "position": [
+        0,
+        304
+      ]
     },
     {
       "parameters": {
@@ -34,7 +23,16 @@
       "name": "Fetch Posts Pendientes",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [304, 304]
+      "position": [
+        304,
+        304
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Supabase"
+        }
+      }
     },
     {
       "parameters": {
@@ -44,7 +42,10 @@
       "name": "Preparar Textos Posts",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [608, 304]
+      "position": [
+        608,
+        304
+      ]
     },
     {
       "parameters": {
@@ -55,7 +56,10 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Content-Type", "value": "application/json" }
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
@@ -67,7 +71,16 @@
       "name": "OpenAI Embeddings Posts",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [912, 304]
+      "position": [
+        912,
+        304
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "PLACEHOLDER",
+          "name": "OpenAi account"
+        }
+      }
     },
     {
       "parameters": {
@@ -77,7 +90,10 @@
       "name": "Separar Embeddings Posts",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1200, 304]
+      "position": [
+        1200,
+        304
+      ]
     },
     {
       "parameters": {
@@ -88,8 +104,14 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Content-Type", "value": "application/json" },
-            { "name": "Prefer", "value": "return=minimal,resolution=merge-duplicates" }
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal,resolution=merge-duplicates"
+            }
           ]
         },
         "sendBody": true,
@@ -101,30 +123,110 @@
       "name": "Guardar Embedding Post",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [1504, 304]
+      "position": [
+        1504,
+        304
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 9,
+              "triggerAtMinute": 30
+            }
+          ]
+        }
+      },
+      "id": "fcc787b6-246c-4c56-b5e8-52919446d5fe",
+      "name": "Schedule Diario Posts",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        80
+      ]
     }
   ],
   "connections": {
     "Run Bulk Posts": {
-      "main": [[{ "node": "Fetch Posts Pendientes", "type": "main", "index": 0 }]]
-    },
-    "Schedule Diario Posts": {
-      "main": [[{ "node": "Fetch Posts Pendientes", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Fetch Posts Pendientes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Fetch Posts Pendientes": {
-      "main": [[{ "node": "Preparar Textos Posts", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Preparar Textos Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Preparar Textos Posts": {
-      "main": [[{ "node": "OpenAI Embeddings Posts", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "OpenAI Embeddings Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "OpenAI Embeddings Posts": {
-      "main": [[{ "node": "Separar Embeddings Posts", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Separar Embeddings Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Separar Embeddings Posts": {
-      "main": [[{ "node": "Guardar Embedding Post", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Guardar Embedding Post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Diario Posts": {
+      "main": [
+        [
+          {
+            "node": "Fetch Posts Pendientes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "binaryMode": "separate",
+    "errorWorkflow": "PV9L4Y58E3JLvflt"
   }
 }

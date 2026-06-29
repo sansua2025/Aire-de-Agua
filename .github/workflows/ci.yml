@@ -21,6 +21,20 @@ jobs:
           git fetch origin main --quiet || true
           bash scripts/agent/check-data-rules.sh --diff origin/main
 
+  docstring-rpc-loop:
+    name: docstring-rpc-loop
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      # AIR-135 — drift docstring↔cuerpo en las RPCs del loop de insights.
+      # Origen: AIR-97 (penalización 'refutado -0.15' documentada pero nunca implementada).
+      - name: Drift docstring↔cuerpo en RPCs del loop sobre el diff
+        run: |
+          git fetch origin main --quiet || true
+          bash scripts/agent/check-docstring-rpc-loop.sh --diff origin/main
+
   n8n-sync:
     name: n8n-sync
     runs-on: ubuntu-latest
@@ -30,6 +44,19 @@ jobs:
       # "Transform Ads Data" debe ser idéntico en Backfill y Daily_Sync.
       - name: Transform Ads Data en sync (Backfill ↔ Daily)
         run: bash scripts/check-transform-ads-sync.sh
+
+  n8n-graph-parity:
+    name: n8n-graph-parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # AIR-140 — paridad nodes ↔ activeVersion.nodes: los nodos críticos de
+      # seguridad (Build Prompt*, Claude*, Anthropic*, Parse Claude*) deben ser
+      # idénticos en ambas copias del grafo. n8n EJECUTA activeVersion.nodes; si
+      # diverge de w.nodes, una protección anti prompt-injection puede quedar en
+      # la copia editada pero no en la que corre (regresión silenciosa).
+      - name: Paridad de nodos críticos (nodes ↔ activeVersion.nodes)
+        run: bash scripts/agent/check-n8n-graph-parity.sh
 
   dashboard:
     name: dashboard
@@ -53,3 +80,42 @@ jobs:
       - name: Tests (vitest)
         run: npm run test -- --passWithNoTests
       # 'next build' se queda en verify/Vercel: requiere envs de Supabase.
+
+  evals:
+    name: evals
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    # AIR-156 — Eval set del Cerebro (Fase B I6): reconcilia cada RPC gobernada
+    # analytics.* contra un recompute canonico (analytics.eval_recompute) y contra
+    # los seeds de public.golden_queries. Gate determinista >=95% (reconcile.test.ts
+    # falla la suite si passed/total < 0.95). A diferencia del job 'dashboard', aqui
+    # NO se usa --passWithNoTests: un eval rojo (o ausente) bloquea el merge.
+    #
+    # SECRETO REQUERIDO (configurar A MANO una sola vez en GitHub):
+    #   Settings -> Secrets and variables -> Actions -> New repository secret
+    #     - SUPABASE_SERVICE_ROLE_KEY  (rol service_role del proyecto vnctmzsgemefgbtjctlo)
+    #   NEXT_PUBLIC_SUPABASE_URL es publica y se fija inline abajo.
+    # Sin el secreto, reconcile.test.ts hace SKIP (no rompe); para que el gate sea
+    # real el secreto DEBE estar presente. Marcar este job como required en branch
+    # protection junto con 'data-rules' y 'dashboard'.
+    #
+    # PRE-REQUISITO DE DATOS: las migraciones 085 (GRANT EXECUTE a service_role) y
+    # 086 (analytics.eval_recompute) deben estar aplicadas en prod. Santiago las
+    # aplica al mergear; hasta entonces reconcile fallaria por permiso/funcion ausente.
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - name: Instalar dependencias
+        run: npm ci
+      - name: Eval set del Cerebro (gate >=95%)
+        env:
+          EVALS_REQUIRED: '1'
+          NEXT_PUBLIC_SUPABASE_URL: https://vnctmzsgemefgbtjctlo.supabase.co
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npm run test -- evals/

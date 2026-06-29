@@ -34,6 +34,24 @@ export interface InsightDatum {
   ids_grupo?: string[] | null
 }
 
+/**
+ * Capa 2 (AIR-61): strategic_learnings en estado 'candidato' esperando aprobación
+ * humana. Textos (titulo/sintesis/accion_recomendada) ya saneados en el servidor
+ * (mismo patrón antiinjection que insights/anomalías) antes de llegar aquí.
+ */
+export interface LearningDatum {
+  id: string
+  titulo: string
+  sintesis: string | null
+  accion_recomendada: string | null
+  dominio: string
+  score_estabilidad: number | null
+  semanas_activo: number | null
+  primera_observacion: string | null
+  ultima_observacion: string | null
+  created_at: string | null
+}
+
 export interface AnomaliaDatum {
   id: string
   dominio: string
@@ -60,6 +78,7 @@ interface AiChartsProps {
   insights: InsightDatum[]
   anomalias: AnomaliaDatum[]
   cohorts: CohortDatum[]
+  learnings?: LearningDatum[]
 }
 
 const DOMINIO_COLOR: Record<string, string> = {
@@ -101,7 +120,7 @@ const ESTADO_CHIP: Record<EstadoAccion, { label: string; color: string; emphasis
   pospuesto:  { label: 'Pospuesto',  color: 'var(--warning)' },
 }
 
-export function AiCharts({ insights, anomalias, cohorts }: AiChartsProps) {
+export function AiCharts({ insights, anomalias, cohorts, learnings = [] }: AiChartsProps) {
   // Cohorts ordenados estratégicamente
   const cohortBars = [...cohorts]
     .sort((a, b) => {
@@ -119,7 +138,7 @@ export function AiCharts({ insights, anomalias, cohorts }: AiChartsProps) {
   return (
     <>
       <div className="grid grid-2-1" style={{ marginTop: 14 }}>
-        <InsightsCard insights={insights} />
+        <InsightsCard insights={insights} learnings={learnings} />
 
         <Card
           title="Anomalías · últimos 30 días"
@@ -277,12 +296,53 @@ function bucketize(insights: InsightDatum[]): Buckets {
 type ViewMode = 'triage' | 'explorar'
 type EstadoResult = { ok: boolean; error?: string }
 
-function InsightsCard({ insights: initialInsights }: { insights: InsightDatum[] }) {
+function InsightsCard({
+  insights: initialInsights,
+  learnings: initialLearnings = [],
+}: {
+  insights: InsightDatum[]
+  learnings?: LearningDatum[]
+}) {
   // Estado local: arranca de los datos del servidor y se actualiza de forma
   // optimista al accionar (sin recargar). Si el RSC vuelve a traer datos
   // (revalidate / refresh), el efecto re-sincroniza con la verdad del servidor.
   const [insights, setInsights] = useState<InsightDatum[]>(initialInsights)
   useEffect(() => setInsights(initialInsights), [initialInsights])
+
+  // Capa 2 (AIR-61): candidatos de strategic_learnings, mismo modelo optimista.
+  const [learnings, setLearnings] = useState<LearningDatum[]>(initialLearnings)
+  useEffect(() => setLearnings(initialLearnings), [initialLearnings])
+
+  // Aprobar/rechazar un strategic_learning candidato (human-gate). Optimista:
+  // lo saca de la lista; si el endpoint falla, lo reinserta en su posición.
+  const onAprobarLearning = async (
+    id: string,
+    aprobado: boolean,
+    notas?: string
+  ): Promise<EstadoResult> => {
+    const idx = learnings.findIndex((l) => l.id === id)
+    const prev = idx >= 0 ? learnings[idx] : null
+    setLearnings((cur) => cur.filter((l) => l.id !== id))
+    try {
+      const res = await fetch('/api/propuestas/aprobar-learning', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ learningId: id, aprobado, notas }),
+      })
+      const data = await res.json()
+      if (!data?.ok) throw new Error(data?.estado ?? data?.error ?? 'error')
+      return { ok: true }
+    } catch (e) {
+      if (prev) {
+        setLearnings((cur) => {
+          const next = [...cur]
+          next.splice(Math.min(idx, next.length), 0, prev)
+          return next
+        })
+      }
+      return { ok: false, error: e instanceof Error ? e.message : 'error' }
+    }
+  }
 
   // Default (AIR-83): cola de acción. 'explorar' = modo alterno legacy.
   const [mode, setMode]             = useState<ViewMode>('triage')
@@ -450,7 +510,7 @@ function InsightsCard({ insights: initialInsights }: { insights: InsightDatum[] 
       }
       subtitle={
         mode === 'triage'
-          ? `Cola de acción · condiciones recurrentes agrupadas · ${contexto.length} en contexto`
+          ? `Cola de acción · ${learnings.length} aprendizaje${learnings.length === 1 ? '' : 's'} esperando aprobación · ${contexto.length} en contexto`
           : 'Score de confianza > 0.6 · vigentes (no archivados por decay) · ordenados por score'
       }
       source="analytics.view_dashboard_cola_agrupada"
@@ -479,8 +539,10 @@ function InsightsCard({ insights: initialInsights }: { insights: InsightDatum[] 
           pospuestos={pospuestos}
           historial={historial}
           contexto={contexto}
+          learnings={learnings}
           onAprobar={onAprobar}
           onEstado={onEstado}
+          onAprobarLearning={onAprobarLearning}
         />
       ) : (
       <>
@@ -710,19 +772,23 @@ function TriageView({
   pospuestos,
   historial,
   contexto,
+  learnings,
   onAprobar,
   onEstado,
+  onAprobarLearning,
 }: {
   cola: InsightDatum[]
   pospuestos: InsightDatum[]
   historial: InsightDatum[]
   contexto: InsightDatum[]
+  learnings: LearningDatum[]
   onAprobar: (id: string, aprobado: boolean) => Promise<EstadoResult>
   onEstado: (
     id: string,
     estado: EstadoAccion,
     opts?: { notas?: string; snoozeHasta?: string }
   ) => Promise<EstadoResult>
+  onAprobarLearning: (id: string, aprobado: boolean, notas?: string) => Promise<EstadoResult>
 }) {
   const [contextoOpen, setContextoOpen] = useState(false)
   const [pospuestosOpen, setPospuestosOpen] = useState(false)
@@ -760,6 +826,32 @@ function TriageView({
               onEstado={onEstado}
             />
           ))}
+        </div>
+      )}
+
+      {/* CAPA 2 (AIR-61) · Aprendizajes esperando tu aprobación (human-gate) */}
+      {learnings.length > 0 && (
+        <div style={{ marginTop: 18 }}>
+          <LayerHeader
+            label="Esperando tu aprobación"
+            count={learnings.length}
+            accent="var(--warning)"
+          />
+          <div
+            style={{
+              fontSize: 10.5,
+              fontFamily: 'var(--font-mono-stack)',
+              color: 'var(--fg-faint)',
+              padding: '0 0 6px 14px',
+            }}
+          >
+            Patrones consolidados (strategic_learnings) · aprobar promueve a conocimiento de marca
+          </div>
+          <div style={{ marginTop: 4 }}>
+            {learnings.map((l) => (
+              <LearningCard key={l.id} learning={l} onAprobar={onAprobarLearning} />
+            ))}
+          </div>
         </div>
       )}
 
@@ -1263,6 +1355,173 @@ function ActionCard({
           </ActionBtn>
         )}
 
+        {pending && (
+          <span style={{ fontSize: 10, fontFamily: 'var(--font-mono-stack)', color: 'var(--fg-faint)' }}>
+            …
+          </span>
+        )}
+        {error && (
+          <span style={{ fontSize: 10, fontFamily: 'var(--font-mono-stack)', color: 'var(--danger)' }}>
+            {error}
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// =============================================================================
+// LearningCard · Capa 2 (AIR-61) · strategic_learning candidato (human-gate)
+//   Diferenciado visualmente de la cola de insights: borde/acento warning,
+//   badge "Aprendizaje", métricas de estabilidad. Botones Aprobar/Rechazar
+//   llaman al endpoint /api/propuestas/aprobar-learning.
+//   Textos ya saneados en el servidor (antiinjection) — React además escapa.
+// =============================================================================
+
+function LearningCard({
+  learning,
+  onAprobar,
+}: {
+  learning: LearningDatum
+  onAprobar: (id: string, aprobado: boolean, notas?: string) => Promise<EstadoResult>
+}) {
+  const [pending, startTransition] = useTransition()
+  const [error, setError] = useState<string | null>(null)
+
+  const dominioColor = DOMINIO_COLOR[learning.dominio] || 'var(--fg-subtle)'
+  const principal = learning.accion_recomendada?.trim() || learning.titulo
+  const secondary =
+    learning.accion_recomendada?.trim() ? learning.titulo : learning.sintesis?.trim() || null
+  const rango = formatRango(learning.primera_observacion, learning.ultima_observacion)
+  const estab =
+    typeof learning.score_estabilidad === 'number'
+      ? learning.score_estabilidad.toFixed(2)
+      : null
+  const semanas = learning.semanas_activo ?? null
+
+  const run = (aprobado: boolean, notas?: string) => {
+    setError(null)
+    startTransition(async () => {
+      const r = await onAprobar(learning.id, aprobado, notas)
+      if (!r.ok) setError(r.error ?? 'error')
+    })
+  }
+
+  const handleRechazar = () => {
+    const motivo = window.prompt('Motivo del rechazo (opcional):', '')
+    if (motivo === null) return // cancelado · no rechazar
+    // p_notas se guarda como razon_rechazo. Pasa por onAprobar (optimista + revalidate).
+    run(false, motivo || undefined)
+  }
+
+  return (
+    <div
+      style={{
+        padding: '12px 14px',
+        marginBottom: 8,
+        borderRadius: 8,
+        border: '1px solid var(--border-subtle)',
+        borderLeft: '3px solid var(--warning)',
+        background: 'color-mix(in oklab, var(--warning) 5%, var(--bg-elev-1))',
+      }}
+    >
+      {/* Badges: dominio + chip "Aprendizaje" diferenciador */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          flexWrap: 'wrap',
+          marginBottom: 6,
+        }}
+      >
+        <span
+          style={{
+            fontSize: 9.5,
+            fontWeight: 600,
+            letterSpacing: '0.08em',
+            textTransform: 'uppercase',
+            fontFamily: 'var(--font-mono-stack)',
+            color: dominioColor,
+          }}
+        >
+          {learning.dominio}
+        </span>
+        <span
+          title="Patrón consolidado de strategic_learnings · pendiente de aprobación"
+          style={{
+            fontSize: 9.5,
+            fontWeight: 700,
+            letterSpacing: '0.06em',
+            textTransform: 'uppercase',
+            fontFamily: 'var(--font-mono-stack)',
+            padding: '2px 8px',
+            borderRadius: 999,
+            color: 'var(--warning)',
+            border: '1px solid var(--warning)',
+            background: 'color-mix(in oklab, var(--warning) 12%, transparent)',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          Aprendizaje
+        </span>
+        {semanas != null && semanas > 1 && (
+          <span style={badgeStyle('muted')}>{semanas} semanas activo</span>
+        )}
+      </div>
+
+      {/* Acción recomendada (o título si no hay acción) */}
+      <div
+        style={{
+          fontSize: 13.5,
+          fontWeight: 600,
+          color: 'var(--fg)',
+          lineHeight: 1.4,
+          textWrap: 'pretty',
+        }}
+      >
+        {principal}
+      </div>
+
+      {/* Observación / síntesis */}
+      {secondary && (
+        <div
+          style={{
+            marginTop: 3,
+            fontSize: 11,
+            color: 'var(--fg-subtle)',
+            lineHeight: 1.4,
+            textWrap: 'pretty',
+          }}
+        >
+          {secondary}
+        </div>
+      )}
+
+      {/* Meta: rango de observación + estabilidad */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          marginTop: 8,
+          fontSize: 10,
+          fontFamily: 'var(--font-mono-stack)',
+          color: 'var(--fg-faint)',
+        }}
+      >
+        {rango && <span>{rango}</span>}
+        {estab && <span>estabilidad {estab}</span>}
+      </div>
+
+      {/* Botones del human-gate */}
+      <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <ActionBtn variant="success" disabled={pending} onClick={() => run(true)}>
+          Aprobar
+        </ActionBtn>
+        <ActionBtn variant="neutral" disabled={pending} onClick={handleRechazar}>
+          Rechazar
+        </ActionBtn>
         {pending && (
           <span style={{ fontSize: 10, fontFamily: 'var(--font-mono-stack)', color: 'var(--fg-faint)' }}>
             …

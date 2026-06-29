@@ -3,104 +3,653 @@
   "name": "E4A - Embeddings Pipeline",
   "active": true,
   "description": "Genera embeddings con OpenAI text-embedding-3-small para brand_knowledge y product_embeddings. Bulk via manual trigger, BK via schedule diario 8 UTC, single via Execute Workflow desde E2. Productos usa upsert con on_conflict.",
-  "settings": { "executionOrder": "v1", "availableInMCP": true, "binaryMode": "separate" },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "binaryMode": "separate",
+    "errorWorkflow": "PV9L4Y58E3JLvflt"
+  },
   "nodes": [
-    { "parameters": {}, "id": "db52b441-e483-4d6f-ba9f-a6ca31593dbb", "name": "Run Bulk Embeddings", "type": "n8n-nodes-base.manualTrigger", "typeVersion": 1, "position": [0, 304] },
     {
-      "parameters": { "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/brand_knowledge?embedding=is.null&activo=eq.true&select=id,titulo,contenido,categoria", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {} },
-      "id": "be46a8d7-d1fb-49b0-8395-70db4e125912", "name": "Fetch BK Sin Embedding", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [304, 112],
-      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+      "parameters": {},
+      "id": "db52b441-e483-4d6f-ba9f-a6ca31593dbb",
+      "name": "Run Bulk Embeddings",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        304
+      ]
     },
     {
-      "parameters": { "jsCode": "const records = $input.all().map(i => i.json).filter(r => r.id);\nif (!records.length) return [];\nconst sanitize = (s) => s ? s.replace(/[\\x00-\\x1F]/g, '').substring(0, 3000) : '';\nconst texts = records.map(r => sanitize(r.categoria + ': ' + r.titulo + ' - ' + r.contenido));\nreturn [{ json: { texts, records } }];" },
-      "id": "cf0317b6-d030-4541-8962-7312eee413cb", "name": "Preparar Textos BK", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [608, 112]
+      "parameters": {
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/brand_knowledge?embedding=is.null&activo=eq.true&select=id,titulo,contenido,categoria",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "be46a8d7-d1fb-49b0-8395-70db4e125912",
+      "name": "Fetch BK Sin Embedding",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        304,
+        112
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Supabase"
+        }
+      }
     },
     {
-      "parameters": { "method": "POST", "url": "https://api.openai.com/v1/embeddings", "authentication": "predefinedCredentialType", "nodeCredentialType": "openAiApi", "sendHeaders": true, "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }] }, "sendBody": true, "specifyBody": "json", "jsonBody": "={{ JSON.stringify({ model: \"text-embedding-3-small\", input: $json.texts }) }}", "options": {} },
-      "id": "5f2139a2-7fbd-4b8f-b9ae-a52b95d26775", "name": "OpenAI Embeddings BK", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [912, 112],
-      "credentials": { "openAiApi": { "id": "PLACEHOLDER", "name": "OpenAI AdeA" } }
+      "parameters": {
+        "jsCode": "const records = $input.all().map(i => i.json).filter(r => r.id);\nif (!records.length) return [];\nconst sanitize = (s) => s ? s.replace(/[\\x00-\\x1F]/g, '').substring(0, 3000) : '';\nconst texts = records.map(r => sanitize(r.categoria + ': ' + r.titulo + ' - ' + r.contenido));\nreturn [{ json: { texts, records } }];"
+      },
+      "id": "cf0317b6-d030-4541-8962-7312eee413cb",
+      "name": "Preparar Textos BK",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        608,
+        112
+      ]
     },
     {
-      "parameters": { "jsCode": "const embs = $input.first().json.data.sort((a, b) => a.index - b.index);\nconst records = $('Preparar Textos BK').first().json.records;\nreturn records.map((r, i) => ({ json: { id: r.id, embedding: embs[i].embedding } }));" },
-      "id": "0e8b89b5-7f00-4d0c-a2af-82c315eef6ce", "name": "Separar Embeddings BK", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [1200, 112]
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/embeddings",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: \"text-embedding-3-small\", input: $json.texts }) }}",
+        "options": {}
+      },
+      "id": "5f2139a2-7fbd-4b8f-b9ae-a52b95d26775",
+      "name": "OpenAI Embeddings BK",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        912,
+        112
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "PLACEHOLDER",
+          "name": "OpenAi account"
+        }
+      }
     },
     {
-      "parameters": { "method": "PATCH", "url": "=https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/brand_knowledge?id=eq.{{ $json.id }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendHeaders": true, "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "Prefer", "value": "return=minimal" }] }, "sendBody": true, "specifyBody": "json", "jsonBody": "={{ JSON.stringify({ embedding: $json.embedding }) }}", "options": {} },
-      "id": "9b4c3107-a0c6-4cc1-ad05-e613c39d0609", "name": "Guardar Embedding BK", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [1504, 112],
-      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+      "parameters": {
+        "jsCode": "const embs = $input.first().json.data.sort((a, b) => a.index - b.index);\nconst records = $('Preparar Textos BK').first().json.records;\nreturn records.map((r, i) => ({ json: { id: r.id, embedding: embs[i].embedding } }));"
+      },
+      "id": "0e8b89b5-7f00-4d0c-a2af-82c315eef6ce",
+      "name": "Separar Embeddings BK",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        112
+      ]
     },
     {
-      "parameters": { "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/productos?select=id,titulo,descripcion,tipo,coleccion,material,ocasion,temporada,tags", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {} },
-      "id": "1e25fd1d-8ef7-4236-bf9f-56f656557a4a", "name": "Fetch Productos", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [304, 512],
-      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/brand_knowledge?id=eq.{{ $json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ embedding: $json.embedding }) }}",
+        "options": {}
+      },
+      "id": "9b4c3107-a0c6-4cc1-ad05-e613c39d0609",
+      "name": "Guardar Embedding BK",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1504,
+        112
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Supabase"
+        }
+      }
     },
     {
-      "parameters": { "jsCode": "const products = $input.all().map(i => i.json).filter(p => p.id);\nif (!products.length) return [];\nconst sanitize = (s) => s ? s.replace(/[\\x00-\\x1F]/g, '').substring(0, 3000) : '';\nconst texts = products.map(p => {\n  const parts = [sanitize(p.titulo)];\n  if (p.tipo) parts.push('- ' + p.tipo);\n  if (p.coleccion) parts.push('de ' + p.coleccion);\n  if (p.descripcion) parts.push('. ' + sanitize(p.descripcion));\n  if (p.material) parts.push('. Material: ' + sanitize(p.material));\n  if (p.ocasion) parts.push('. Ocasion: ' + (Array.isArray(p.ocasion) ? p.ocasion.join(', ') : p.ocasion));\n  if (p.temporada) parts.push('. Temporada: ' + p.temporada);\n  return parts.join(' ');\n});\nreturn [{ json: { texts, products } }];" },
-      "id": "1a9091c8-a3c6-4aa8-9e47-b5093d01614a", "name": "Preparar Textos Productos", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [608, 512]
+      "parameters": {
+        "jsCode": "const products = $input.all().map(i => i.json).filter(p => p.id);\nif (!products.length) return [];\nconst sanitize = (s) => s ? s.replace(/[\\x00-\\x1F]/g, '').substring(0, 3000) : '';\nconst texts = products.map(p => {\n  const parts = [sanitize(p.titulo)];\n  if (p.tipo) parts.push('- ' + p.tipo);\n  if (p.coleccion) parts.push('de ' + p.coleccion);\n  if (p.descripcion) parts.push('. ' + sanitize(p.descripcion));\n  if (p.material) parts.push('. Material: ' + sanitize(p.material));\n  if (p.ocasion) parts.push('. Ocasion: ' + (Array.isArray(p.ocasion) ? p.ocasion.join(', ') : p.ocasion));\n  if (p.temporada) parts.push('. Temporada: ' + p.temporada);\n  return parts.join(' ');\n});\nreturn [{ json: { texts, products } }];"
+      },
+      "id": "1a9091c8-a3c6-4aa8-9e47-b5093d01614a",
+      "name": "Preparar Textos Productos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        608,
+        512
+      ]
     },
     {
-      "parameters": { "method": "POST", "url": "https://api.openai.com/v1/embeddings", "authentication": "predefinedCredentialType", "nodeCredentialType": "openAiApi", "sendHeaders": true, "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }] }, "sendBody": true, "specifyBody": "json", "jsonBody": "={{ JSON.stringify({ model: \"text-embedding-3-small\", input: $json.texts }) }}", "options": {} },
-      "id": "03ad1985-7387-4620-8aad-398d83e9e820", "name": "OpenAI Embeddings Productos", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [896, 512],
-      "credentials": { "openAiApi": { "id": "PLACEHOLDER", "name": "OpenAI AdeA" } }
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/embeddings",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: \"text-embedding-3-small\", input: $json.texts }) }}",
+        "options": {}
+      },
+      "id": "03ad1985-7387-4620-8aad-398d83e9e820",
+      "name": "OpenAI Embeddings Productos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        896,
+        512
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "PLACEHOLDER",
+          "name": "OpenAi account"
+        }
+      }
     },
     {
-      "parameters": { "jsCode": "const embs = $input.first().json.data.sort((a, b) => a.index - b.index);\nconst d = $('Preparar Textos Productos').first().json;\nreturn d.products.map((p, i) => ({ json: {\n  producto_id: p.id, texto_fuente: d.texts[i],\n  embedding: embs[i].embedding, modelo: 'text-embedding-3-small',\n  coleccion: p.coleccion || null, temporada: p.temporada || null,\n  tipo: p.tipo || null, tags: p.tags || null\n} }));" },
-      "id": "99fe1b87-5ff0-4e4c-95fa-3fab99de3aa0", "name": "Separar Embeddings Productos", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [1200, 512]
+      "parameters": {
+        "jsCode": "const embs = $input.first().json.data.sort((a, b) => a.index - b.index);\nconst d = $('Preparar Textos Productos').first().json;\nreturn d.products.map((p, i) => ({ json: {\n  producto_id: p.id, texto_fuente: d.texts[i],\n  embedding: embs[i].embedding, modelo: 'text-embedding-3-small',\n  coleccion: p.coleccion || null, temporada: p.temporada || null,\n  tipo: p.tipo || null, tags: p.tags || null\n} }));"
+      },
+      "id": "99fe1b87-5ff0-4e4c-95fa-3fab99de3aa0",
+      "name": "Separar Embeddings Productos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        512
+      ]
     },
     {
-      "parameters": { "method": "POST", "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/product_embeddings?on_conflict=producto_id", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendHeaders": true, "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "Prefer", "value": "return=minimal,resolution=merge-duplicates" }] }, "sendBody": true, "specifyBody": "json", "jsonBody": "={{ JSON.stringify({ producto_id: $json.producto_id, texto_fuente: $json.texto_fuente, embedding: $json.embedding, modelo: $json.modelo, coleccion: $json.coleccion, temporada: $json.temporada, tipo: $json.tipo, tags: $json.tags }) }}", "options": {} },
-      "id": "b5bd88ac-68f4-4d15-bf20-eb8a9566ba35", "name": "Guardar Embedding Producto", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [1504, 512],
-      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/product_embeddings?on_conflict=producto_id",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal,resolution=merge-duplicates"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ producto_id: $json.producto_id, texto_fuente: $json.texto_fuente, embedding: $json.embedding, modelo: $json.modelo, coleccion: $json.coleccion, temporada: $json.temporada, tipo: $json.tipo, tags: $json.tags }) }}",
+        "options": {}
+      },
+      "id": "b5bd88ac-68f4-4d15-bf20-eb8a9566ba35",
+      "name": "Guardar Embedding Producto",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1504,
+        512
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Supabase"
+        }
+      }
     },
-    { "parameters": { "rule": { "interval": [{ "triggerAtHour": 8 }] } }, "id": "180093f2-46ec-4669-90bb-74b6d6e5df1a", "name": "Schedule Diario BK", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.3, "position": [0, 80] },
-    { "parameters": { "workflowInputs": { "values": [{ "name": "shopify_product_id" }] } }, "id": "049eb72b-f753-4359-8b3e-5c6f9238a990", "name": "Embed Single Product", "type": "n8n-nodes-base.executeWorkflowTrigger", "typeVersion": 1.1, "position": [0, 912] },
     {
-      "parameters": { "url": "=https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/productos?shopify_product_id=eq.{{ $json.shopify_product_id }}&select=id,titulo,descripcion,tipo,coleccion,material,ocasion,temporada,tags", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {} },
-      "id": "20255ca7-68b9-41e3-9a40-a4b93e0e55cd", "name": "Fetch Producto por Shopify ID", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [304, 912],
-      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      },
+      "id": "180093f2-46ec-4669-90bb-74b6d6e5df1a",
+      "name": "Schedule Diario BK",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        80
+      ]
     },
     {
-      "parameters": { "jsCode": "const p = $input.first().json;\nif (!p.id) return [];\nconst sanitize = (s) => s ? s.replace(/[\\x00-\\x1F]/g, '').substring(0, 3000) : '';\nconst parts = [sanitize(p.titulo)];\nif (p.tipo) parts.push('- ' + p.tipo);\nif (p.coleccion) parts.push('de ' + p.coleccion);\nif (p.descripcion) parts.push('. ' + sanitize(p.descripcion));\nif (p.material) parts.push('. Material: ' + sanitize(p.material));\nif (p.ocasion) parts.push('. Ocasion: ' + (Array.isArray(p.ocasion) ? p.ocasion.join(', ') : p.ocasion));\nif (p.temporada) parts.push('. Temporada: ' + p.temporada);\nreturn [{ json: { producto_id: p.id, texto_fuente: parts.join(' '), coleccion: p.coleccion, temporada: p.temporada, tipo: p.tipo, tags: p.tags } }];" },
-      "id": "aa3990b3-ea26-4980-b6dd-205a6459d4d8", "name": "Preparar Texto Individual", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [608, 912]
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "shopify_product_id"
+            }
+          ]
+        }
+      },
+      "id": "049eb72b-f753-4359-8b3e-5c6f9238a990",
+      "name": "Embed Single Product",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        912
+      ]
     },
     {
-      "parameters": { "method": "POST", "url": "https://api.openai.com/v1/embeddings", "authentication": "predefinedCredentialType", "nodeCredentialType": "openAiApi", "sendHeaders": true, "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }] }, "sendBody": true, "specifyBody": "json", "jsonBody": "={{ JSON.stringify({ model: \"text-embedding-3-small\", input: [$json.texto_fuente] }) }}", "options": {} },
-      "id": "687530b5-1be3-4d32-8ac8-e3583b1baa8b", "name": "OpenAI Embed Individual", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [912, 912],
-      "credentials": { "openAiApi": { "id": "PLACEHOLDER", "name": "OpenAI AdeA" } }
+      "parameters": {
+        "url": "=https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/productos?shopify_product_id=eq.{{ $json.shopify_product_id }}&select=id,titulo,descripcion,tipo,coleccion,material,ocasion,temporada,tags",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "20255ca7-68b9-41e3-9a40-a4b93e0e55cd",
+      "name": "Fetch Producto por Shopify ID",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        304,
+        912
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Supabase"
+        }
+      }
     },
     {
-      "parameters": { "jsCode": "const emb = $input.first().json.data[0].embedding;\nconst p = $('Preparar Texto Individual').first().json;\nreturn [{ json: { producto_id: p.producto_id, texto_fuente: p.texto_fuente, embedding: emb, modelo: 'text-embedding-3-small', coleccion: p.coleccion || null, temporada: p.temporada || null, tipo: p.tipo || null, tags: p.tags || null } }];" },
-      "id": "040a6b07-2483-41ce-a63a-0878a213987d", "name": "Formatear Resultado Individual", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [1200, 912]
+      "parameters": {
+        "jsCode": "const p = $input.first().json;\nif (!p.id) return [];\nconst sanitize = (s) => s ? s.replace(/[\\x00-\\x1F]/g, '').substring(0, 3000) : '';\nconst parts = [sanitize(p.titulo)];\nif (p.tipo) parts.push('- ' + p.tipo);\nif (p.coleccion) parts.push('de ' + p.coleccion);\nif (p.descripcion) parts.push('. ' + sanitize(p.descripcion));\nif (p.material) parts.push('. Material: ' + sanitize(p.material));\nif (p.ocasion) parts.push('. Ocasion: ' + (Array.isArray(p.ocasion) ? p.ocasion.join(', ') : p.ocasion));\nif (p.temporada) parts.push('. Temporada: ' + p.temporada);\nreturn [{ json: { producto_id: p.id, texto_fuente: parts.join(' '), coleccion: p.coleccion, temporada: p.temporada, tipo: p.tipo, tags: p.tags } }];"
+      },
+      "id": "aa3990b3-ea26-4980-b6dd-205a6459d4d8",
+      "name": "Preparar Texto Individual",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        608,
+        912
+      ]
     },
     {
-      "parameters": { "method": "DELETE", "url": "=https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/product_embeddings?producto_id=eq.{{ $json.producto_id }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {} },
-      "id": "b3ee60b9-04b6-48c8-88ad-95416bbe4e1d", "name": "Borrar Embedding Anterior", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [1504, 912],
-      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/embeddings",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: \"text-embedding-3-small\", input: [$json.texto_fuente] }) }}",
+        "options": {}
+      },
+      "id": "687530b5-1be3-4d32-8ac8-e3583b1baa8b",
+      "name": "OpenAI Embed Individual",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        912,
+        912
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "PLACEHOLDER",
+          "name": "OpenAi account"
+        }
+      }
     },
     {
-      "parameters": { "method": "POST", "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/product_embeddings", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendHeaders": true, "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "Prefer", "value": "return=minimal" }] }, "sendBody": true, "specifyBody": "json", "jsonBody": "={{ JSON.stringify({ producto_id: $(\"Formatear Resultado Individual\").first().json.producto_id, texto_fuente: $(\"Formatear Resultado Individual\").first().json.texto_fuente, embedding: $(\"Formatear Resultado Individual\").first().json.embedding, modelo: \"text-embedding-3-small\", coleccion: $(\"Formatear Resultado Individual\").first().json.coleccion, temporada: $(\"Formatear Resultado Individual\").first().json.temporada, tipo: $(\"Formatear Resultado Individual\").first().json.tipo, tags: $(\"Formatear Resultado Individual\").first().json.tags }) }}", "options": {} },
-      "id": "045fd6f1-c717-4818-a88c-37bd9be5da29", "name": "Insertar Embedding Individual", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.4, "position": [1808, 912],
-      "credentials": { "httpHeaderAuth": { "id": "PLACEHOLDER", "name": "Supabase AdeA" } }
+      "parameters": {
+        "jsCode": "const emb = $input.first().json.data[0].embedding;\nconst p = $('Preparar Texto Individual').first().json;\nreturn [{ json: { producto_id: p.producto_id, texto_fuente: p.texto_fuente, embedding: emb, modelo: 'text-embedding-3-small', coleccion: p.coleccion || null, temporada: p.temporada || null, tipo: p.tipo || null, tags: p.tags || null } }];"
+      },
+      "id": "040a6b07-2483-41ce-a63a-0878a213987d",
+      "name": "Formatear Resultado Individual",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        912
+      ]
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "=https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/product_embeddings?producto_id=eq.{{ $json.producto_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "b3ee60b9-04b6-48c8-88ad-95416bbe4e1d",
+      "name": "Borrar Embedding Anterior",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1504,
+        912
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/product_embeddings",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ producto_id: $(\"Formatear Resultado Individual\").first().json.producto_id, texto_fuente: $(\"Formatear Resultado Individual\").first().json.texto_fuente, embedding: $(\"Formatear Resultado Individual\").first().json.embedding, modelo: \"text-embedding-3-small\", coleccion: $(\"Formatear Resultado Individual\").first().json.coleccion, temporada: $(\"Formatear Resultado Individual\").first().json.temporada, tipo: $(\"Formatear Resultado Individual\").first().json.tipo, tags: $(\"Formatear Resultado Individual\").first().json.tags }) }}",
+        "options": {}
+      },
+      "id": "045fd6f1-c717-4818-a88c-37bd9be5da29",
+      "name": "Insertar Embedding Individual",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1808,
+        912
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## E4A - Embeddings Pipeline\n\n**3 triggers, 3 ramas, 2 destinos:**\n\n- Manual → BK (arriba) + Productos (centro)\n- Schedule (8 UTC / 3am COL) → BK únicamente\n- Execute Workflow → Single Product (desde E2 webhook)\n\n**Tablas destino:**\n- brand_knowledge (texto de marca, doctrina)\n- product_embeddings (catálogo Shopify)\n\nAmbas con UNIQUE constraint en su columna llave. La rama productos del bulk usa UPSERT (`on_conflict=producto_id` + `Prefer: resolution=merge-duplicates`).",
+        "height": 280,
+        "width": 480,
+        "color": 5
+      },
+      "id": "dee592bb-c8d9-412a-a9bb-0d25f316d6be",
+      "name": "Sticky Note 84af88c5",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -560,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/productos?select=id,titulo,descripcion,tipo,coleccion,material,ocasion,temporada,tags",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "1e25fd1d-8ef7-4236-bf9f-56f656557a4a",
+      "name": "Fetch Productos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        304,
+        512
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Supabase"
+        }
+      }
     }
   ],
   "connections": {
-    "Run Bulk Embeddings": { "main": [[{ "node": "Fetch BK Sin Embedding", "type": "main", "index": 0 }, { "node": "Fetch Productos", "type": "main", "index": 0 }]] },
-    "Fetch BK Sin Embedding": { "main": [[{ "node": "Preparar Textos BK", "type": "main", "index": 0 }]] },
-    "Preparar Textos BK": { "main": [[{ "node": "OpenAI Embeddings BK", "type": "main", "index": 0 }]] },
-    "OpenAI Embeddings BK": { "main": [[{ "node": "Separar Embeddings BK", "type": "main", "index": 0 }]] },
-    "Separar Embeddings BK": { "main": [[{ "node": "Guardar Embedding BK", "type": "main", "index": 0 }]] },
-    "Fetch Productos": { "main": [[{ "node": "Preparar Textos Productos", "type": "main", "index": 0 }]] },
-    "Preparar Textos Productos": { "main": [[{ "node": "OpenAI Embeddings Productos", "type": "main", "index": 0 }]] },
-    "OpenAI Embeddings Productos": { "main": [[{ "node": "Separar Embeddings Productos", "type": "main", "index": 0 }]] },
-    "Separar Embeddings Productos": { "main": [[{ "node": "Guardar Embedding Producto", "type": "main", "index": 0 }]] },
-    "Schedule Diario BK": { "main": [[{ "node": "Fetch BK Sin Embedding", "type": "main", "index": 0 }]] },
-    "Embed Single Product": { "main": [[{ "node": "Fetch Producto por Shopify ID", "type": "main", "index": 0 }]] },
-    "Fetch Producto por Shopify ID": { "main": [[{ "node": "Preparar Texto Individual", "type": "main", "index": 0 }]] },
-    "Preparar Texto Individual": { "main": [[{ "node": "OpenAI Embed Individual", "type": "main", "index": 0 }]] },
-    "OpenAI Embed Individual": { "main": [[{ "node": "Formatear Resultado Individual", "type": "main", "index": 0 }]] },
-    "Formatear Resultado Individual": { "main": [[{ "node": "Borrar Embedding Anterior", "type": "main", "index": 0 }]] },
-    "Borrar Embedding Anterior": { "main": [[{ "node": "Insertar Embedding Individual", "type": "main", "index": 0 }]] }
+    "Run Bulk Embeddings": {
+      "main": [
+        [
+          {
+            "node": "Fetch BK Sin Embedding",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Productos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch BK Sin Embedding": {
+      "main": [
+        [
+          {
+            "node": "Preparar Textos BK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Textos BK": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Embeddings BK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Embeddings BK": {
+      "main": [
+        [
+          {
+            "node": "Separar Embeddings BK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Separar Embeddings BK": {
+      "main": [
+        [
+          {
+            "node": "Guardar Embedding BK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Textos Productos": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Embeddings Productos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Embeddings Productos": {
+      "main": [
+        [
+          {
+            "node": "Separar Embeddings Productos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Separar Embeddings Productos": {
+      "main": [
+        [
+          {
+            "node": "Guardar Embedding Producto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Diario BK": {
+      "main": [
+        [
+          {
+            "node": "Fetch BK Sin Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embed Single Product": {
+      "main": [
+        [
+          {
+            "node": "Fetch Producto por Shopify ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Producto por Shopify ID": {
+      "main": [
+        [
+          {
+            "node": "Preparar Texto Individual",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Texto Individual": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Embed Individual",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Embed Individual": {
+      "main": [
+        [
+          {
+            "node": "Formatear Resultado Individual",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formatear Resultado Individual": {
+      "main": [
+        [
+          {
+            "node": "Borrar Embedding Anterior",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Borrar Embedding Anterior": {
+      "main": [
+        [
+          {
+            "node": "Insertar Embedding Individual",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Productos": {
+      "main": [
+        [
+          {
+            "node": "Preparar Textos Productos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
   "tags": [],
-  "meta": { "aiBuilderAssisted": true }
+  "meta": {
+    "aiBuilderAssisted": true
+  }
 }

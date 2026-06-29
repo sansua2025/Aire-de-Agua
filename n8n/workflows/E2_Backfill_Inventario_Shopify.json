@@ -1,0 +1,196 @@
+{
+  "name": "E2 - Backfill Inventario Shopify",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "a199e3f4-ad58-49e3-bc64-070b3a005db1",
+      "name": "When clicking Test workflow",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://749941.myshopify.com/admin/api/2024-01/locations.json",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "shopifyAccessTokenApi",
+        "options": {}
+      },
+      "id": "eb8d97a0-e2e4-4cfc-9aec-565e957629f0",
+      "name": "Fetch Shopify Locations",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        272,
+        304
+      ],
+      "credentials": {
+        "shopifyAccessTokenApi": {
+          "id": "PLACEHOLDER",
+          "name": "Shopify Access Token account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build comma-separated location IDs for inventory API\nconst locations = $input.first().json.locations || [];\nconst ids = locations.map(l => l.id).join(\",\");\nreturn [{ json: { location_ids: ids, count: locations.length } }];"
+      },
+      "id": "f53f50ed-a8e6-4a65-8ddd-3c865af7efb7",
+      "name": "Build Location IDs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        528,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ \"https://749941.myshopify.com/admin/api/2024-01/inventory_levels.json?limit=250&location_ids=\" + $json.location_ids }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "shopifyAccessTokenApi",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "responseContainsNextURL",
+              "nextURL": "={{ $response.headers.link ? $response.headers.link.match(/<([^>]+)>; rel=\"next\"/)?.[1] : \"\" }}",
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.headers.link || !$response.headers.link.includes(\"next\") }}",
+              "requestInterval": 600
+            }
+          }
+        }
+      },
+      "id": "96c4fcbb-a8ee-4174-8548-ff117a515c85",
+      "name": "Fetch Inventory Levels",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        784,
+        304
+      ],
+      "credentials": {
+        "shopifyAccessTokenApi": {
+          "id": "PLACEHOLDER",
+          "name": "Shopify Access Token account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Flatten paginated inventory responses\nconst allItems = $input.all();\nconst levels = [];\nfor (const item of allItems) {\n  for (const lvl of (item.json.inventory_levels || [])) {\n    levels.push({\n      inventory_item_id: String(lvl.inventory_item_id),\n      location_id: String(lvl.location_id),\n      available: lvl.available || 0\n    });\n  }\n}\nreturn [{ json: { inventory_data: levels, total: levels.length } }];"
+      },
+      "id": "1352d30f-77e6-4faa-afe7-cf9c6cfa4629",
+      "name": "Flatten Inventory",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/rpc/backfill_inventario",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ inventory_data: $json.inventory_data }) }}",
+        "options": {}
+      },
+      "id": "d9d4544f-9cba-4046-9daa-39ea399657ee",
+      "name": "Call backfill_inventario RPC",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1312,
+        304
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Supabase"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "When clicking Test workflow": {
+      "main": [
+        [
+          {
+            "node": "Fetch Shopify Locations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Shopify Locations": {
+      "main": [
+        [
+          {
+            "node": "Build Location IDs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Location IDs": {
+      "main": [
+        [
+          {
+            "node": "Fetch Inventory Levels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Inventory Levels": {
+      "main": [
+        [
+          {
+            "node": "Flatten Inventory",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flatten Inventory": {
+      "main": [
+        [
+          {
+            "node": "Call backfill_inventario RPC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

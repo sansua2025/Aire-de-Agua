@@ -1,0 +1,408 @@
+{
+  "name": "AIR-155 - Golden Queries Vectorize & Promote",
+  "nodes": [
+    {
+      "id": "d4d9c20f-f7e4-4b1b-bd90-bb752a04d732",
+      "name": "Run Vectorize Pending",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "b21a9057-a3c9-4098-9779-d8a6c5988a97",
+      "name": "Fetch Golden Sin Embedding",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/golden_queries?embedding=is.null&activo=eq.true&select=id,pregunta",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "R1gvcFqRbgctuPP5",
+          "name": "Header Auth Supabase"
+        }
+      }
+    },
+    {
+      "id": "7e2b9b06-e3e3-4de6-9c74-26ca0bd4734f",
+      "name": "Preparar Textos Golden",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const records = $input.all().map(i => i.json).filter(r => r.id && r.pregunta);\nif (!records.length) return [];\n// AIR-94: quitar caracteres de control y acotar longitud antes de vectorizar.\nconst sanitize = (s) => s ? String(s).replace(/[\\x00-\\x1F\\x7F]/g, ' ').trim().substring(0, 2000) : '';\nconst texts = records.map(r => sanitize(r.pregunta));\nreturn [{ json: { texts, records } }];"
+      }
+    },
+    {
+      "id": "76b2a07e-1966-4ab7-a378-b2c2d542ea6a",
+      "name": "OpenAI Embeddings Golden",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/embeddings",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: \"text-embedding-3-small\", input: $json.texts }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "openAiApi": {
+          "id": "QMuUnR5DRiRiUk8s",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "id": "dbdb1bc0-8393-49a7-8bfe-7efad82fed3a",
+      "name": "Separar Embeddings Golden",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const embs = $input.first().json.data.sort((a, b) => a.index - b.index);\nconst records = $('Preparar Textos Golden').first().json.records;\nreturn records.map((r, i) => ({ json: { id: r.id, embedding: embs[i].embedding } }));"
+      }
+    },
+    {
+      "id": "69719170-0a86-4d58-93d1-10380bd2c4dc",
+      "name": "Guardar Embedding Golden",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/golden_queries?id=eq.{{ $json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ embedding: $json.embedding }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "R1gvcFqRbgctuPP5",
+          "name": "Header Auth Supabase"
+        }
+      }
+    },
+    {
+      "id": "af36cb4d-a429-438a-875e-2738b8178a4c",
+      "name": "Promover Validada",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        224
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "pregunta",
+              "type": "string"
+            },
+            {
+              "name": "tool_call",
+              "type": "object"
+            },
+            {
+              "name": "resultado_validado",
+              "type": "object"
+            },
+            {
+              "name": "validado_por",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "ee93729f-a0da-403e-87b2-8feef9bad317",
+      "name": "Construir Fila + Hash",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        224
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Una golden query validada por fila. Calcula pregunta_hash con la MISMA\n// normalizacion que la migracion 084 (lower + trim + colapsar espacios) y prepara\n// el texto para vectorizar (AIR-94: sin caracteres de control, acotado).\nconst out = [];\nfor (const item of $input.all()) {\n  const j = item.json;\n  const preguntaRaw = j.pregunta;\n  if (!preguntaRaw) continue;\n  const normalizada = String(preguntaRaw).trim().toLowerCase().replace(/\\s+/g, ' ');\n  const enc = new TextEncoder().encode(normalizada);\n  const buf = await crypto.subtle.digest('SHA-256', enc);\n  const pregunta_hash = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');\n  const sanitize = (s) => s ? String(s).replace(/[\\x00-\\x1F\\x7F]/g, ' ').trim().substring(0, 2000) : '';\n  out.push({ json: {\n    texto: sanitize(preguntaRaw),\n    pregunta: String(preguntaRaw),\n    tool_call: j.tool_call,\n    resultado_validado: j.resultado_validado,\n    validado_por: j.validado_por || null,\n    pregunta_hash\n  } });\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "bea325f5-c250-43f8-84b1-85605046b1ee",
+      "name": "OpenAI Embed Validada",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        448,
+        224
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/embeddings",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: \"text-embedding-3-small\", input: [$json.texto] }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "openAiApi": {
+          "id": "QMuUnR5DRiRiUk8s",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "id": "3293ee66-0e65-4744-b269-d8727023afcb",
+      "name": "Construir Body Upsert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        224
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const emb = $input.first().json.data[0].embedding;\nconst src = $('Construir Fila + Hash').first().json;\nreturn [{ json: { body: {\n  pregunta: src.pregunta,\n  tool_call: src.tool_call,\n  resultado_validado: src.resultado_validado,\n  embedding: emb,\n  modelo: 'text-embedding-3-small',\n  fuente: 'promocion_validada',\n  validado_por: src.validado_por,\n  activo: true,\n  pregunta_hash: src.pregunta_hash\n} } }];"
+      }
+    },
+    {
+      "id": "baebb769-426c-442d-ba84-311cfbede783",
+      "name": "Upsert Golden Query",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        896,
+        224
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/golden_queries?on_conflict=pregunta_hash",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal,resolution=merge-duplicates"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "R1gvcFqRbgctuPP5",
+          "name": "Header Auth Supabase"
+        }
+      }
+    },
+    {
+      "id": "d362c95f-46c8-4011-ba4b-68805297c72f",
+      "name": "Sticky Note d8cafb4f",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        560,
+        288
+      ],
+      "parameters": {
+        "content": "## AIR-155 — Golden Queries: vectorizacion + promocion\n\n**Rama 1 (Vectorizar pendientes)** — Manual trigger:\nGET golden_queries con `embedding IS NULL` y `activo=true` -> sanitiza (AIR-94: sin control chars, cap 2000) -> OpenAI text-embedding-3-small (1536) -> PATCH por id con el embedding.\n\n**Rama 2 (Promover validada)** — Execute Workflow trigger:\nrecibe {pregunta, tool_call, resultado_validado, validado_por} -> calcula pregunta_hash (sha256 de lower+trim+colapsar espacios, IGUAL que la migracion 084) -> OpenAI embedding -> POST `on_conflict=pregunta_hash` con `Prefer: resolution=merge-duplicates`.\n\n**Idempotencia:** pregunta_hash es UNIQUE + merge-duplicates; la Rama 1 solo toca filas con `embedding IS NULL`. Re-correr no duplica ni re-vectoriza.\n\n**Credenciales (reusadas):** OpenAI `QMuUnR5DRiRiUk8s`; Supabase header `R1gvcFqRbgctuPP5` (service_role: INSERT/PATCH).\n\n**INACTIVO:** la primera corrida (vectoriza + cuesta OpenAI + escribe) es un paso humano aparte.",
+        "color": 5,
+        "width": 520,
+        "height": 420
+      }
+    }
+  ],
+  "connections": {
+    "Run Vectorize Pending": {
+      "main": [
+        [
+          {
+            "node": "Fetch Golden Sin Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Golden Sin Embedding": {
+      "main": [
+        [
+          {
+            "node": "Preparar Textos Golden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Textos Golden": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Embeddings Golden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Embeddings Golden": {
+      "main": [
+        [
+          {
+            "node": "Separar Embeddings Golden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Separar Embeddings Golden": {
+      "main": [
+        [
+          {
+            "node": "Guardar Embedding Golden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Promover Validada": {
+      "main": [
+        [
+          {
+            "node": "Construir Fila + Hash",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Construir Fila + Hash": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Embed Validada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Embed Validada": {
+      "main": [
+        [
+          {
+            "node": "Construir Body Upsert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Construir Body Upsert": {
+      "main": [
+        [
+          {
+            "node": "Upsert Golden Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

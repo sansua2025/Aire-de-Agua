@@ -2,72 +2,110 @@
   "name": "E3C - Backfill Amplitude UTM Attribution",
   "nodes": [
     {
+      "parameters": {},
       "id": "89f75194-ad84-4083-8801-fb24feee1dd3",
       "name": "Start Backfill",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
-      "position": [0, 300]
+      "position": [
+        0,
+        304
+      ]
     },
     {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "startDate",
+              "value": "20250401",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "endDate",
+              "value": "={{ $now.toFormat(\"yyyyMMdd\") }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
       "id": "401e85ba-5ce1-4768-ae02-754d3e5de444",
       "name": "Set Date Range",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [240, 300],
-      "parameters": {
-        "mode": "manual",
-        "assignments": {
-          "assignments": [
-            { "id": "a1", "name": "startDate", "value": "20250401", "type": "string" },
-            { "id": "a2", "name": "endDate", "value": "={{ $now.toFormat(\"yyyyMMdd\") }}", "type": "string" }
-          ]
-        }
-      }
+      "position": [
+        240,
+        304
+      ]
     },
     {
-      "id": "3ad4e62d-fe83-414a-8a9c-3574eea53468",
-      "name": "Get Orders with UTMs",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.4,
-      "position": [480, 300],
       "parameters": {
-        "method": "GET",
         "url": "https://amplitude.com/api/2/events/segmentation",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpBasicAuth",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
-            { "name": "e", "value": "{\"event_type\":\"[Amplitude] Order Created\",\"group_by\":[{\"type\":\"event\",\"value\":\"[Amplitude] Customer\"},{\"type\":\"user\",\"value\":\"gp:utm_source\"},{\"type\":\"user\",\"value\":\"gp:utm_medium\"},{\"type\":\"user\",\"value\":\"gp:utm_campaign\"}]}" },
-            { "name": "m", "value": "totals" },
-            { "name": "start", "value": "={{ $json.startDate }}" },
-            { "name": "end", "value": "={{ $json.endDate }}" },
-            { "name": "i", "value": "1" },
-            { "name": "limit", "value": "1000" }
+            {
+              "name": "e",
+              "value": "{\"event_type\":\"[Amplitude] Order Created\",\"group_by\":[{\"type\":\"event\",\"value\":\"[Amplitude] Customer\"},{\"type\":\"user\",\"value\":\"gp:utm_source\"},{\"type\":\"user\",\"value\":\"gp:utm_medium\"},{\"type\":\"user\",\"value\":\"gp:utm_campaign\"}]}"
+            },
+            {
+              "name": "m",
+              "value": "totals"
+            },
+            {
+              "name": "start",
+              "value": "={{ $json.startDate }}"
+            },
+            {
+              "name": "end",
+              "value": "={{ $json.endDate }}"
+            },
+            {
+              "name": "i",
+              "value": "1"
+            },
+            {
+              "name": "limit",
+              "value": "1000"
+            }
           ]
-        }
+        },
+        "options": {}
       },
+      "id": "3ad4e62d-fe83-414a-8a9c-3574eea53468",
+      "name": "Get Orders with UTMs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        480,
+        304
+      ],
       "credentials": {
-        "httpBasicAuth": { "id": "", "name": "Amplitude API" }
+        "httpBasicAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Amplitude Basic"
+        }
       }
     },
     {
+      "parameters": {
+        "jsCode": "const resp = $input.first().json;\nconst data = resp.data;\nif (!data || !data.seriesLabels || !data.xValues) {\n  return [{ json: { attribution_data: [], count: 0, error: 'No data from Amplitude' } }];\n}\n\nconst labels = data.seriesLabels;\nconst xValues = data.xValues;\nconst series = data.series;\nconst attribution = [];\n\nfor (let i = 0; i < labels.length; i++) {\n  let email, src, med, camp;\n\n  // seriesLabels can be arrays or semicolon-separated strings\n  if (Array.isArray(labels[i])) {\n    email = labels[i][0];\n    src = labels[i][1];\n    med = labels[i][2];\n    camp = labels[i][3];\n  } else {\n    const parts = String(labels[i]).split('; ');\n    email = parts[0]; src = parts[1]; med = parts[2]; camp = parts[3];\n  }\n\n  if (!email || email === '(none)') continue;\n  if (!src || src === '(none)') continue;\n\n  // series[i] is array of metrics, series[i][0] is daily values array\n  const daySeries = series[i] && series[i][0] ? series[i][0] : [];\n  for (let d = 0; d < daySeries.length; d++) {\n    if (daySeries[d] > 0 && xValues[d]) {\n      attribution.push({\n        email: email,\n        fecha: xValues[d],\n        utm_source: src,\n        utm_medium: (med && med !== '(none)') ? med : null,\n        utm_campaign: (camp && camp !== '(none)') ? camp : null,\n        utm_content: null,\n        utm_term: null\n      });\n    }\n  }\n}\n\nreturn [{ json: { attribution_data: attribution, count: attribution.length } }];"
+      },
       "id": "78fbee69-7b2d-418f-8de6-81704bb691bd",
       "name": "Transform Attribution Data",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [720, 300],
-      "parameters": {
-        "mode": "runOnceForAllItems",
-        "jsCode": "const resp = $input.first().json;\nconst data = resp.data;\nif (!data || !data.seriesLabels || !data.xValues) {\n  return [{ json: { attribution_data: [], count: 0, error: 'No data from Amplitude' } }];\n}\n\nconst labels = data.seriesLabels;\nconst xValues = data.xValues;\nconst series = data.series;\nconst attribution = [];\n\nfor (let i = 0; i < labels.length; i++) {\n  let email, src, med, camp;\n\n  // seriesLabels can be arrays or semicolon-separated strings\n  if (Array.isArray(labels[i])) {\n    email = labels[i][0];\n    src = labels[i][1];\n    med = labels[i][2];\n    camp = labels[i][3];\n  } else {\n    const parts = String(labels[i]).split('; ');\n    email = parts[0]; src = parts[1]; med = parts[2]; camp = parts[3];\n  }\n\n  if (!email || email === '(none)') continue;\n  if (!src || src === '(none)') continue;\n\n  // series[i] is array of metrics, series[i][0] is daily values array\n  const daySeries = series[i] && series[i][0] ? series[i][0] : [];\n  for (let d = 0; d < daySeries.length; d++) {\n    if (daySeries[d] > 0 && xValues[d]) {\n      attribution.push({\n        email: email,\n        fecha: xValues[d],\n        utm_source: src,\n        utm_medium: (med && med !== '(none)') ? med : null,\n        utm_campaign: (camp && camp !== '(none)') ? camp : null,\n        utm_content: null,\n        utm_term: null\n      });\n    }\n  }\n}\n\nreturn [{ json: { attribution_data: attribution, count: attribution.length } }];"
-      }
+      "position": [
+        720,
+        304
+      ]
     },
     {
-      "id": "dae072a1-7fec-4082-8f6c-90c872e1375e",
-      "name": "Upsert UTM Attribution",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.4,
-      "position": [960, 300],
       "parameters": {
         "method": "POST",
         "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/rpc/update_ventas_utm_from_amplitude",
@@ -76,24 +114,37 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Content-Type", "value": "application/json" },
-            { "name": "Prefer", "value": "return=representation" }
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ attribution_data: $json.attribution_data }) }}"
+        "jsonBody": "={{ JSON.stringify({ attribution_data: $json.attribution_data }) }}",
+        "options": {}
       },
+      "id": "dae072a1-7fec-4082-8f6c-90c872e1375e",
+      "name": "Upsert UTM Attribution",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        960,
+        304
+      ],
       "credentials": {
-        "httpHeaderAuth": { "id": "", "name": "Supabase API" }
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Supabase"
+        }
       }
     },
     {
-      "id": "b0afaf31-37de-4621-b266-580f1f2e20c4",
-      "name": "Log Backfill Complete",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.4,
-      "position": [1200, 300],
       "parameters": {
         "method": "POST",
         "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log",
@@ -102,37 +153,97 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Content-Type", "value": "application/json" },
-            { "name": "Prefer", "value": "return=minimal" }
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"evento\":\"backfill_amplitude_utm\",\"entidad\":\"ventas\",\"estado\":\"ok\"}"
+        "jsonBody": "{\"evento\":\"backfill_amplitude_utm\",\"entidad\":\"ventas\",\"estado\":\"ok\"}",
+        "options": {}
       },
+      "id": "b0afaf31-37de-4621-b266-580f1f2e20c4",
+      "name": "Log Backfill Complete",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1200,
+        304
+      ],
       "credentials": {
-        "httpHeaderAuth": { "id": "", "name": "Supabase API" }
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Supabase"
+        }
       }
     }
   ],
   "connections": {
     "Start Backfill": {
-      "main": [[{ "node": "Set Date Range", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Set Date Range",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Set Date Range": {
-      "main": [[{ "node": "Get Orders with UTMs", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Get Orders with UTMs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Get Orders with UTMs": {
-      "main": [[{ "node": "Transform Attribution Data", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Transform Attribution Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Transform Attribution Data": {
-      "main": [[{ "node": "Upsert UTM Attribution", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Upsert UTM Attribution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Upsert UTM Attribution": {
-      "main": [[{ "node": "Log Backfill Complete", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Log Backfill Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "binaryMode": "separate"
   }
 }
