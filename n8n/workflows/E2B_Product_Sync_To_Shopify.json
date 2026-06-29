@@ -2,146 +2,595 @@
   "name": "E2B - Product Sync To Shopify",
   "nodes": [
     {
+      "id": "e2b90412-cbd4-454d-9985-316282ce6484",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -260,
+        300
+      ],
       "parameters": {
         "httpMethod": "POST",
         "path": "product-sync-to-shopify",
         "responseMode": "responseNode",
         "options": {}
       },
-      "id": "e2b-0001-4aaa-b001-000000000001",
-      "name": "Webhook Trigger",
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2,
-      "position": [220, 460],
-      "webhookId": "product-sync-to-shopify"
+      "webhookId": "6324c863-64bc-42c2-9f52-928b423762d8"
     },
     {
+      "id": "353ce687-8f11-4e2a-b4ae-0db8ebb7b9e2",
+      "name": "Validar Secreto",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -40,
+        300
+      ],
       "parameters": {
-        "jsCode": "// Map Supabase changed_fields → Shopify productUpdate mutation variables\nconst input = $input.first().json;\nconst shopifyProductId = input.shopify_product_id;\nconst changedFields = input.changed_fields;\n\n// Build ProductUpdateInput\nconst product = {\n  id: `gid://shopify/Product/${shopifyProductId}`\n};\nconst metafields = [];\n\n// Native fields\nif (changedFields.product_type !== undefined) {\n  product.productType = changedFields.product_type || '';\n}\nif (changedFields.tags !== undefined) {\n  // Supabase tags is text[], Shopify expects [String!]\n  product.tags = Array.isArray(changedFields.tags) ? changedFields.tags : [];\n}\n\n// Metafields (custom namespace)\nif (changedFields.material !== undefined) {\n  metafields.push({\n    namespace: 'custom',\n    key: 'material',\n    value: changedFields.material || '',\n    type: 'single_line_text_field'\n  });\n}\nif (changedFields.ocasion !== undefined) {\n  // ocasion is text[] in Supabase → list.single_line_text_field in Shopify\n  const val = Array.isArray(changedFields.ocasion)\n    ? JSON.stringify(changedFields.ocasion)\n    : '[]';\n  metafields.push({\n    namespace: 'custom',\n    key: 'ocasion',\n    value: val,\n    type: 'list.single_line_text_field'\n  });\n}\nif (changedFields.temporada !== undefined) {\n  metafields.push({\n    namespace: 'custom',\n    key: 'temporada',\n    value: changedFields.temporada || '',\n    type: 'single_line_text_field'\n  });\n}\nif (changedFields.genero !== undefined) {\n  metafields.push({\n    namespace: 'custom',\n    key: 'genero',\n    value: changedFields.genero || '',\n    type: 'single_line_text_field'\n  });\n}\n\nif (metafields.length > 0) {\n  product.metafields = metafields;\n}\n\nconst query = `mutation UpdateProduct($product: ProductUpdateInput!) {\n  productUpdate(product: $product) {\n    product { id productType tags }\n    userErrors { field message }\n  }\n}`;\n\nreturn [{\n  json: {\n    producto_id: input.producto_id,\n    shopify_product_id: shopifyProductId,\n    query,\n    variables: { product }\n  }\n}];"
-      },
-      "id": "e2b-0001-4aaa-b001-000000000002",
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $env.PRODUCT_SYNC_SECRET }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              },
+              "rightValue": ""
+            },
+            {
+              "leftValue": "={{ $json.headers[\"x-sync-secret\"] }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "={{ $env.PRODUCT_SYNC_SECRET }}"
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "fd462127-a38d-4a89-921e-25d486fb16c3",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        180,
+        180
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "producto_id",
+              "value": "={{ $json.body.producto_id }}",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "shopify_product_id",
+              "value": "={{ $json.body.shopify_product_id }}",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "changed_fields",
+              "value": "={{ $json.body.changed_fields }}",
+              "type": "object"
+            },
+            {
+              "id": "a4",
+              "name": "dryRun",
+              "value": "={{ true }}",
+              "type": "boolean"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "11beffaf-a175-41f3-a1a9-4fdb934c3131",
       "name": "Map to Shopify",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [460, 460]
+      "position": [
+        400,
+        180
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const cfg = $input.first().json;\nconst changed = cfg.changed_fields || {};\nconst productInput = { id: \"gid://shopify/Product/\" + cfg.shopify_product_id };\nif (changed.product_type !== undefined && changed.product_type !== null) {\n  productInput.productType = String(changed.product_type);\n}\nif (changed.tags !== undefined) {\n  if (Array.isArray(changed.tags)) productInput.tags = changed.tags;\n  else if (changed.tags === null) productInput.tags = [];\n  else productInput.tags = [String(changed.tags)];\n}\nconst query = \"mutation productUpdate($input: ProductInput!) {\\n\"\n  + \"  productUpdate(input: $input) {\\n\"\n  + \"    product { id productType tags }\\n\"\n  + \"    userErrors { field message }\\n\"\n  + \"  }\\n\"\n  + \"}\";\nreturn [{ json: {\n  producto_id: cfg.producto_id,\n  shopify_product_id: cfg.shopify_product_id,\n  dryRun: cfg.dryRun === true || cfg.dryRun === \"true\",\n  query,\n  variables: { input: productInput }\n} }];"
+      }
     },
     {
+      "id": "23b55b8a-d98d-42c8-8cc2-116a26d0e308",
+      "name": "IF dryRun",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        620,
+        180
+      ],
       "parameters": {
-        "method": "POST",
-        "url": "=https://{{ $credentials.shopifyDomain }}/admin/api/2024-10/graphql.json",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ query: $json.query, variables: $json.variables }) }}",
-        "options": {}
-      },
-      "id": "e2b-0001-4aaa-b001-000000000003",
-      "name": "Update Shopify",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [700, 460],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "SHOPIFY_CREDENTIAL_ID",
-          "name": "Shopify Admin API"
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.dryRun }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "rightValue": ""
+            }
+          ],
+          "combinator": "and"
         }
       }
     },
     {
-      "parameters": {
-        "method": "PATCH",
-        "url": "=https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/productos?id=eq.{{ $json.producto_id }}",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "Content-Type", "value": "application/json" },
-            { "name": "Prefer", "value": "return=minimal" }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ last_synced_at: new Date().toISOString() }) }}",
-        "options": {}
-      },
-      "id": "e2b-0001-4aaa-b001-000000000004",
-      "name": "Update last_synced_at",
+      "id": "dba8b72d-8727-4240-9451-5a899ea39f43",
+      "name": "Log DryRun",
       "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [940, 460],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "SUPABASE_CREDENTIAL_ID",
-          "name": "Supabase API"
-        }
-      }
-    },
-    {
+      "typeVersion": 4.4,
+      "position": [
+        840,
+        80
+      ],
       "parameters": {
         "method": "POST",
         "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
+        "specifyHeaders": "keypair",
         "headerParameters": {
           "parameters": [
-            { "name": "Content-Type", "value": "application/json" },
-            { "name": "Prefer", "value": "return=minimal" }
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
           ]
         },
         "sendBody": true,
+        "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "{\"evento\":\"product_sync_to_shopify\",\"entidad\":\"productos\",\"estado\":\"ok\"}",
+        "jsonBody": "={{ JSON.stringify({ evento: \"product_sync_to_shopify_DRYRUN\", entidad: \"productos\", estado: \"ok\", entidad_id: $json.producto_id }) }}",
         "options": {}
       },
-      "id": "e2b-0001-4aaa-b001-000000000005",
-      "name": "Log Sync",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [1180, 460],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "SUPABASE_CREDENTIAL_ID",
-          "name": "Supabase API"
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Supabase"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "1ce1a3b1-c6ee-47b0-b678-cc1af6ae040e",
+      "name": "Respond DryRun",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1060,
+        80
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: \"dry_run\", producto_id: $(\"Map to Shopify\").item.json.producto_id, would_send: { query: $(\"Map to Shopify\").item.json.query, variables: $(\"Map to Shopify\").item.json.variables } }) }}",
+        "options": {
+          "responseCode": 200
         }
       }
     },
     {
+      "id": "cb83eee8-13d3-4d1a-94bb-00b101f5a9f3",
+      "name": "Update Shopify",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        840,
+        320
+      ],
       "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ status: 'ok', shopify_product_id: $(\"Map to Shopify\").first().json.shopify_product_id }) }}",
+        "method": "POST",
+        "url": "https://749941.myshopify.com/admin/api/2024-10/graphql.json",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "shopifyAccessTokenApi",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: $json.query, variables: $json.variables }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "shopifyAccessTokenApi": {
+          "id": "PLACEHOLDER",
+          "name": "Shopify Access Token Claude MCP"
+        }
+      }
+    },
+    {
+      "id": "15615a73-88f0-4a6e-baa1-d9cd96d943de",
+      "name": "Check userErrors",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1060,
+        320
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.data.productUpdate.userErrors }}",
+              "operator": {
+                "type": "array",
+                "operation": "notEmpty"
+              },
+              "rightValue": ""
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "53e3295f-47d2-4784-8cd5-6a9ba0a8c8bf",
+      "name": "Log Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1280,
+        440
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ evento: \"product_sync_to_shopify\", entidad: \"productos\", estado: \"error\", entidad_id: $(\"Map to Shopify\").item.json.producto_id, error_mensaje: JSON.stringify($json.data.productUpdate.userErrors) }) }}",
         "options": {}
       },
-      "id": "e2b-0001-4aaa-b001-000000000006",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Supabase"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "dfb0d3b2-da2a-424c-b7e1-e6419cd8a8dc",
+      "name": "Respond 502",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1500,
+        440
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: \"error\", userErrors: $(\"Update Shopify\").item.json.data.productUpdate.userErrors }) }}",
+        "options": {
+          "responseCode": 502
+        }
+      }
+    },
+    {
+      "id": "48a16a32-0d1b-48ed-b2cb-ecc6459c5d0d",
+      "name": "Writeback last_synced_at",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1280,
+        220
+      ],
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/productos?id=eq.{{ $(\"Map to Shopify\").item.json.producto_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ last_synced_at: $now.toISO() }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Supabase"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "996d962e-a054-475f-8b12-c790acf52b42",
+      "name": "Log OK",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1500,
+        220
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/sync_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ evento: \"product_sync_to_shopify\", entidad: \"productos\", estado: \"ok\", entidad_id: $(\"Map to Shopify\").item.json.producto_id }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Supabase"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "44d928d2-946c-420a-9ec4-85e9c9ccd47b",
       "name": "Respond OK",
       "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
-      "position": [1420, 460]
+      "typeVersion": 1.5,
+      "position": [
+        1720,
+        220
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: \"ok\", shopify_product_id: $(\"Map to Shopify\").item.json.shopify_product_id }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "a8534cb3-2c04-4d69-857b-3fcec3cc1e32",
+      "name": "Respond 401",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        180,
+        480
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: \"unauthorized\" }) }}",
+        "options": {
+          "responseCode": 401
+        }
+      }
     }
   ],
   "connections": {
     "Webhook Trigger": {
-      "main": [[{ "node": "Map to Shopify", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Validar Secreto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar Secreto": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 401",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Map to Shopify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Map to Shopify": {
-      "main": [[{ "node": "Update Shopify", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "IF dryRun",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF dryRun": {
+      "main": [
+        [
+          {
+            "node": "Log DryRun",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Shopify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log DryRun": {
+      "main": [
+        [
+          {
+            "node": "Respond DryRun",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Update Shopify": {
       "main": [
-        [{ "node": "Update last_synced_at", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Check userErrors",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Update last_synced_at": {
-      "main": [[{ "node": "Log Sync", "type": "main", "index": 0 }]]
+    "Check userErrors": {
+      "main": [
+        [
+          {
+            "node": "Log Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Writeback last_synced_at",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
-    "Log Sync": {
-      "main": [[{ "node": "Respond OK", "type": "main", "index": 0 }]]
+    "Log Error": {
+      "main": [
+        [
+          {
+            "node": "Respond 502",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Writeback last_synced_at": {
+      "main": [
+        [
+          {
+            "node": "Log OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log OK": {
+      "main": [
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
-    "executionOrder": "v1",
-    "errorWorkflow": "ErrorHandlerGlobal01"
+    "executionOrder": "v1"
   }
 }
