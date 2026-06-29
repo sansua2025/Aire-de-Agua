@@ -125,3 +125,14 @@ Entorno en `.claude/agents/` + `scripts/agent/` para desarrollar issues de Linea
 - **Un número por migración.** Nunca reutilices un número ya usado.
 - **Sufijo `b`** (p.ej. `058b_...`) solo para un *hotfix* de una migración existente del mismo número (ya aplicada), no para migraciones nuevas independientes.
 - Los archivos de `supabase/migrations/` son **respaldo fiel de lo aplicado en PROD** — al renombrar, solo `git mv`, nunca edites el SQL.
+- **Prefijos duplicados bloquean el merge.** `check-data-rules.sh` (R7) falla si dos archivos distintos comparten el mismo prefijo `NNN_`/`NNNb_`. `049_` y `049b_` son distintos; `065_air120` y `065_air43` colisionan.
+
+## Disciplina de cambios a PROD (AIR-162)
+
+Reglas obligatorias para cualquier cambio (DDL o datos) sobre el Supabase de PROD (`vnctmzsgemefgbtjctlo`):
+
+1. **Ground-truth antes de "arreglar" un gate.** Antes de aplicar DDL/datos a PROD que pretenda arreglar un gate (evals u otro), **corre el gate real** o verifica las 3 fuentes: `rpc == oracle == golden`. Nunca infieras el estado de PROD de reportes de subagentes — valida contra PROD directamente.
+2. **Migraciones siempre primero en un preview branch.** `create_branch` → `apply_migration` sobre el branch, nunca DDL directo a PROD. El hook `scripts/agent/hooks/guard-prod-writes.sh` (PreToolUse) lo refuerza pidiendo confirmación en todo `apply_migration` y en `execute_sql` con write.
+3. **Todo write a PROD exige el mismo umbral de confirmación humana** — DDL incluido, no solo los cambios "obvios de dinero". Un `CREATE FUNCTION` o un `GRANT` pesan igual que un `UPDATE` de revenue.
+4. **Pre-flight de drift.** Antes de cualquier trabajo de reconciliación de migraciones, compara `list_migrations` (PROD) contra `supabase/migrations/` (git) para detectar divergencias antes de tocar nada.
+5. **Verifica artefactos contra el blob del servidor.** Para confirmar el contenido real de un archivo en un commit, usa `gh api .../contents?ref=<sha>` o `git show <sha>:<path>` — nunca `git show <sha>` a secas (imprime patch + metadata y produce falsos positivos).

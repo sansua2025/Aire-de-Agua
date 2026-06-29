@@ -56,6 +56,41 @@ else
   ok "archivo en allowlist se salta entero (sin FAIL)"
 fi
 
+# --- Caso 5: R7 numeración de migraciones (AIR-162) -------------------------
+# 5a) Dos archivos DISTINTOS con el mismo prefijo 'NNN_' -> DEBE fallar.
+MIGT="$(mktemp -d)"
+cat > "$MIGT/065_air120_algo.sql"  <<'SQL'
+SELECT 1;
+SQL
+cat > "$MIGT/065_air43_otro.sql"   <<'SQL'
+SELECT 2;
+SQL
+# 5a también incluye un par 049_/049b_ que NO debe colisionar (sufijo distinto).
+cat > "$MIGT/049_base.sql"  <<'SQL'
+SELECT 3;
+SQL
+cat > "$MIGT/049b_hotfix.sql" <<'SQL'
+SELECT 4;
+SQL
+# El prefijo de env DEBE ir sobre el `bash` externo (no sobre la función run),
+# para que se exporte al proceso hijo del lint. Capturamos la salida en una
+# variable ANTES de grepear: el lint sale 1 al detectar la colisión y, con
+# `pipefail`, ese 1 contaminaría el status de un `... | grep -q`.
+OUT5="$(DATA_RULES_MIG_DIR="$MIGT" bash "$LINT" --file "$TMP/write_only.sql" 2>&1)"
+echo "$OUT5" | grep -q "prefijo '065_' DUPLICADO" \
+  && ok "R7 detecta prefijo '065_' duplicado" \
+  || bad "R7 DEBERÍA detectar el prefijo '065_' duplicado"
+echo "$OUT5" | grep -q "prefijo '049" \
+  && bad "R7 NO debe marcar 049_/049b_ como colisión (sufijo los separa)" \
+  || ok "R7 no marca 049_ vs 049b_ (distintos)"
+rm -rf "$MIGT"
+
+# 5b) El set REAL de supabase/migrations/ NO debe disparar R7 (tras AIR-43).
+OUT5B="$(run "$TMP/write_only.sql")"
+echo "$OUT5B" | grep -q "DUPLICADO" \
+  && bad "supabase/migrations/ real tiene un prefijo duplicado (R7 disparó)" \
+  || ok "supabase/migrations/ real sin colisiones de prefijo (R7 limpio)"
+
 echo "---"
 echo "selftest: ${PASS} ok / ${FAIL} bad"
 [ "$FAIL" -eq 0 ]

@@ -121,6 +121,36 @@ for f in ${FILES[@]+"${FILES[@]}"}; do
   esac
 done
 
+# R7 — numeración de migraciones sin colisiones (AIR-162 / AIR-90).
+# Check a NIVEL DE ÁRBOL (no del diff): dos archivos DISTINTOS no pueden
+# compartir el mismo prefijo numérico 'NNN_' o 'NNNb_'. El prefijo es
+# dígitos + sufijo de letra opcional, hasta el primer '_'.
+#   049_  y 049b_        -> DISTINTOS (no colisión: el sufijo los separa).
+#   065_air120 y 065_air43 -> COLISIÓN (mismo '065').
+# La convención AIR-90 exige numeración secuencial estricta; un prefijo
+# duplicado significa que dos migraciones independientes pisan el mismo número.
+# DATA_RULES_MIG_DIR permite al selftest apuntar a un dir temporal; en uso real
+# se resuelve a supabase/migrations/ del repo.
+MIG_DIR="${DATA_RULES_MIG_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/supabase/migrations}"
+if [ -d "$MIG_DIR" ]; then
+  DUPES="$(
+    for p in "$MIG_DIR"/*.sql; do
+      [ -e "$p" ] || continue
+      b="$(basename "$p")"
+      # Prefijo = ^[0-9]+ + ([a-z])? justo antes del primer '_'.
+      pref="$(printf '%s' "$b" | sed -nE 's/^([0-9]+[a-z]?)_.*/\1/p')"
+      [ -n "$pref" ] && printf '%s\n' "$pref"
+    done | sort | uniq -d
+  )"
+  if [ -n "$DUPES" ]; then
+    while IFS= read -r d; do
+      [ -z "$d" ] && continue
+      collide="$(cd "$MIG_DIR" && ls -1 "${d}_"*.sql 2>/dev/null | tr '\n' ' ')"
+      fail "supabase/migrations/ — prefijo '${d}_' DUPLICADO: ${collide}(AIR-90: un número por migración; usa el siguiente libre)."
+    done <<< "$DUPES"
+  fi
+fi
+
 echo "---"
 echo "data-rules: ${FAILS} fail / ${WARNS} warn (archivos: ${#FILES[@]})"
 [ "$FAILS" -gt 0 ] && exit 1
