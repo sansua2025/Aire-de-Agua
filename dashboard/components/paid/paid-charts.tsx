@@ -12,11 +12,16 @@ export interface CampaignDatum {
   gasto: number
   compras: number
   valor_compras: number
+  margen_atribuido: number
   ctr_pct: number | null
   cpc: number | null
   roas: number | null
+  roas_margen: number | null
+  roas_revenue: number | null
   cpa: number | null
   objetivo: string | null
+  recomendacion: string | null
+  cobertura_cogs_pct: number | null
 }
 
 export interface TopAdDatum {
@@ -58,11 +63,30 @@ interface PaidChartsProps {
 }
 
 function statusForCampaign(c: CampaignDatum): 'good' | 'ok' | 'warn' | 'bad' {
-  // Meta atribuye mal (AIR-44), por eso categorizamos por CTR + actividad real
+  switch (c.recomendacion) {
+    case 'escalar': return 'good'
+    case 'mantener': return 'ok'
+    case 'revisar': return 'warn'
+    case 'pausar': return 'bad'
+    case 'sin_conversion': return 'warn'   // gasto sin ventas atribuidas
+    case 'cogs_incompleto': return 'warn'  // margen no confiable (<50% cobertura)
+  }
+  // Fallback: sin recomendación → usar CTR + actividad
   if ((c.ctr_pct ?? 0) >= 5 && c.compras > 0) return 'good'
-  if ((c.ctr_pct ?? 0) >= 3 && c.compras > 0) return 'ok'
   if (c.gasto >= 100_000 && c.compras === 0) return 'warn'
   return 'ok'
+}
+
+function labelForRecomendacion(rec: string | null, status: 'good' | 'ok' | 'warn' | 'bad'): string {
+  switch (rec) {
+    case 'escalar': return '★ escalar'
+    case 'mantener': return 'mantener'
+    case 'revisar': return '⚠ revisar'
+    case 'pausar': return '✕ pausar'
+    case 'sin_conversion': return 'sin conv.'
+    case 'cogs_incompleto': return 'COGS ?'
+  }
+  return status === 'good' ? '★ top' : status === 'warn' ? '⚠ revisar' : 'ok'
 }
 
 const STATUS_PILL: Record<'good' | 'ok' | 'warn' | 'bad', 'success' | 'accent' | 'warning' | 'danger'> = {
@@ -73,8 +97,8 @@ const STATUS_PILL: Record<'good' | 'ok' | 'warn' | 'bad', 'success' | 'accent' |
 }
 
 export function PaidCharts({ campaigns, topAds, learnings, totals }: PaidChartsProps) {
-  // Banner si todas las campañas tienen ROAS = 0 (bug AIR-44)
-  const allRoasZero = campaigns.length > 0 && campaigns.every((c) => (c.roas ?? 0) === 0)
+  // Banner si todas las campañas están bajo break-even (roas_margen < 1)
+  const allBelowBreakeven = campaigns.length > 0 && campaigns.every((c) => (c.roas_margen ?? 0) < 1.0)
 
   const topAdsForChart = topAds
     .filter((a) => a.valor_compras > 0)
@@ -88,7 +112,7 @@ export function PaidCharts({ campaigns, topAds, learnings, totals }: PaidChartsP
 
   return (
     <>
-      {allRoasZero && (
+      {allBelowBreakeven && (
         <div
           style={{
             padding: '12px 14px',
@@ -106,10 +130,10 @@ export function PaidCharts({ campaigns, topAds, learnings, totals }: PaidChartsP
         >
           <Icon name="alert" size={14} className="alert-icon" />
           <div>
-            <strong style={{ color: 'var(--warning)' }}>Atribución Meta degradada (AIR-44).</strong>{' '}
-            El pixel reporta <code>value=0</code> en eventos Purchase para casi todas las campañas.
-            Para ROAS real, mirá el atribuido en Resumen ejecutivo (cruza ventas web con utm_term de Meta).
-            Esta página muestra datos crudos de Meta — útil para CTR, CPC, gasto y volumen pero no para ROAS.
+            <strong style={{ color: 'var(--warning)' }}>Todas las campañas bajo break-even.</strong>{' '}
+            ROAS-margen {'<'} 1.0x en todas las campañas activas — estamos quemando margen en agregado.
+            Break-even = 1.0x | Target ≥ 1.5x. Revisar adsets por volumen en{' '}
+            <code>v_paid_performance_diario</code> y considerar pausa de los adsets marcados como &quot;pausar&quot;.
           </div>
         </div>
       )}
@@ -126,26 +150,27 @@ export function PaidCharts({ campaigns, topAds, learnings, totals }: PaidChartsP
               <thead>
                 <tr>
                   <th>Campaña</th>
-                  <th className="right">Ads</th>
                   <th className="right">Gasto</th>
+                  <th className="right">ROAS-margen</th>
+                  <th className="right">ROAS-revenue</th>
+                  <th className="right">Cobertura COGS</th>
                   <th className="right">CTR</th>
-                  <th className="right">CPC</th>
-                  <th className="right">CPA</th>
                   <th className="right">Compras</th>
-                  <th className="right">ROAS</th>
-                  <th className="right">Estado</th>
+                  <th className="right">Recomendación</th>
                 </tr>
               </thead>
               <tbody>
                 {campaigns.length === 0 ? (
                   <tr>
-                    <td colSpan={9} style={{ textAlign: 'center', padding: '24px 0', color: 'var(--fg-faint)' }}>
+                    <td colSpan={8} style={{ textAlign: 'center', padding: '24px 0', color: 'var(--fg-faint)' }}>
                       Sin campañas activas en los últimos 30 días.
                     </td>
                   </tr>
                 ) : (
                   campaigns.map((c) => {
                     const status = statusForCampaign(c)
+                    const rm = c.roas_margen
+                    const cob = c.cobertura_cogs_pct
                     return (
                       <tr key={`${c.campaign_id}-${c.objetivo ?? 'none'}`}>
                         <td className="label">
@@ -157,27 +182,35 @@ export function PaidCharts({ campaigns, topAds, learnings, totals }: PaidChartsP
                             {c.campaign_name}
                           </span>
                         </td>
-                        <td className="right">{c.num_ads}</td>
                         <td className="right">{formatCop(c.gasto)}</td>
-                        <td className="right">{c.ctr_pct != null ? formatPct(c.ctr_pct) : '—'}</td>
-                        <td className="right">{c.cpc != null ? formatCop(c.cpc) : '—'}</td>
-                        <td className="right">{c.cpa != null ? formatCop(c.cpa) : '—'}</td>
-                        <td className="right">{c.compras}</td>
                         <td className="right">
-                          {c.roas != null && c.roas > 0 ? (
-                            <Pill kind={c.roas >= 2.5 ? 'success' : c.roas >= 1.5 ? 'accent' : 'warning'}>
-                              {formatX(c.roas)}
+                          {rm != null && (c.roas_revenue ?? 0) > 0 ? (
+                            <Pill kind={rm >= 1.5 ? 'success' : rm >= 1.0 ? 'accent' : 'warning'}>
+                              {formatX(rm)}
                             </Pill>
                           ) : (
                             <span style={{ color: 'var(--fg-faint)' }}>—</span>
                           )}
                         </td>
                         <td className="right">
+                          {c.roas_revenue != null && c.roas_revenue > 0
+                            ? formatX(c.roas_revenue)
+                            : <span style={{ color: 'var(--fg-faint)' }}>—</span>}
+                        </td>
+                        <td className="right">
+                          {cob != null ? (
+                            <span style={{ color: cob >= 80 ? 'var(--fg)' : 'var(--warning)' }}>
+                              {formatPct(cob)}
+                            </span>
+                          ) : (
+                            <span style={{ color: 'var(--fg-faint)' }}>—</span>
+                          )}
+                        </td>
+                        <td className="right">{c.ctr_pct != null ? formatPct(c.ctr_pct) : '—'}</td>
+                        <td className="right">{c.compras}</td>
+                        <td className="right">
                           <Pill kind={STATUS_PILL[status]}>
-                            {status === 'good' && '★ top'}
-                            {status === 'ok' && 'ok'}
-                            {status === 'warn' && '⚠ revisar'}
-                            {status === 'bad' && 'bad'}
+                            {labelForRecomendacion(c.recomendacion, status)}
                           </Pill>
                         </td>
                       </tr>
