@@ -16,3 +16,11 @@
 049b_roas_margen_primario.sql
 050_fix_roas_margen_calculo.sql
 051_alerta_cogs_faltante.sql
+
+# AIR-162 (respaldo reverse-drift git↔PROD). RPCs de diagnóstico que LEEN
+# meta_ads_performance.valor_compras como dato del pixel para detectar/medir el
+# bug de value=0 (no lo usan como revenue real: ese se computa aparte). SQL ya
+# vivo en PROD desde 2026-05; respaldo fiel inmutable. Disparan R1 (valor_compras)
+# como falso positivo histórico.
+094_air162_get_estado_sistema.sql
+096_air162_get_meta_ads_diagnostico.sql
