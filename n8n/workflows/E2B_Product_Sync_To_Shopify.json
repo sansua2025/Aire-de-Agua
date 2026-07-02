@@ -14,48 +14,16 @@
         "httpMethod": "POST",
         "path": "product-sync-to-shopify",
         "responseMode": "responseNode",
+        "authentication": "headerAuth",
         "options": {}
       },
-      "webhookId": "6324c863-64bc-42c2-9f52-928b423762d8"
-    },
-    {
-      "id": "353ce687-8f11-4e2a-b4ae-0db8ebb7b9e2",
-      "name": "Validar Secreto",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
-      "position": [
-        -40,
-        300
-      ],
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 2
-          },
-          "conditions": [
-            {
-              "leftValue": "={{ $env.PRODUCT_SYNC_SECRET }}",
-              "operator": {
-                "type": "string",
-                "operation": "notEmpty"
-              },
-              "rightValue": ""
-            },
-            {
-              "leftValue": "={{ $json.headers[\"x-sync-secret\"] }}",
-              "operator": {
-                "type": "string",
-                "operation": "equals"
-              },
-              "rightValue": "={{ $env.PRODUCT_SYNC_SECRET }}"
-            }
-          ],
-          "combinator": "and"
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Product Sync Secret"
         }
-      }
+      },
+      "webhookId": "6324c863-64bc-42c2-9f52-928b423762d8"
     },
     {
       "id": "fd462127-a38d-4a89-921e-25d486fb16c3",
@@ -427,23 +395,6 @@
           "responseCode": 200
         }
       }
-    },
-    {
-      "id": "a8534cb3-2c04-4d69-857b-3fcec3cc1e32",
-      "name": "Respond 401",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.5,
-      "position": [
-        180,
-        480
-      ],
-      "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ status: \"unauthorized\" }) }}",
-        "options": {
-          "responseCode": 401
-        }
-      }
     }
   ],
   "connections": {
@@ -451,25 +402,7 @@
       "main": [
         [
           {
-            "node": "Validar Secreto",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Validar Secreto": {
-      "main": [
-        [
-          {
             "node": "Config",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Respond 401",
             "type": "main",
             "index": 0
           }
