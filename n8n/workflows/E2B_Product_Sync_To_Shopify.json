@@ -222,10 +222,11 @@
           },
           "conditions": [
             {
-              "leftValue": "={{ $json.data.productUpdate.userErrors }}",
+              "leftValue": "={{ (Array.isArray($json.errors) && $json.errors.length > 0) || (!!($json.data && $json.data.productUpdate && Array.isArray($json.data.productUpdate.userErrors) && $json.data.productUpdate.userErrors.length > 0)) }}",
               "operator": {
-                "type": "array",
-                "operation": "notEmpty"
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
               },
               "rightValue": ""
             }
@@ -265,7 +266,7 @@
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ evento: \"product_sync_to_shopify\", entidad: \"productos\", estado: \"error\", entidad_id: $(\"Map to Shopify\").item.json.producto_id, error_mensaje: JSON.stringify($json.data.productUpdate.userErrors) }) }}",
+        "jsonBody": "={{ JSON.stringify({ evento: \"product_sync_to_shopify\", entidad: \"productos\", estado: \"error\", entidad_id: $(\"Map to Shopify\").item.json.producto_id, error_mensaje: JSON.stringify($json.errors || ($json.data && $json.data.productUpdate ? $json.data.productUpdate.userErrors : $json)) }) }}",
         "options": {}
       },
       "credentials": {
@@ -287,7 +288,7 @@
       ],
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ status: \"error\", userErrors: $(\"Update Shopify\").item.json.data.productUpdate.userErrors }) }}",
+        "responseBody": "={{ JSON.stringify({ status: \"error\", errors: ($(\"Update Shopify\").item.json.errors || $(\"Update Shopify\").item.json.data?.productUpdate?.userErrors || \"unknown\") }) }}",
         "options": {
           "responseCode": 502
         }
