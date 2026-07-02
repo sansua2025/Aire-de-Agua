@@ -80,7 +80,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "const cfg = $input.first().json;\nconst changed = cfg.changed_fields || {};\nconst productInput = { id: \"gid://shopify/Product/\" + cfg.shopify_product_id };\nif (changed.product_type !== undefined && changed.product_type !== null) {\n  productInput.productType = String(changed.product_type);\n}\nif (changed.tags !== undefined) {\n  if (Array.isArray(changed.tags)) productInput.tags = changed.tags;\n  else if (changed.tags === null) productInput.tags = [];\n  else productInput.tags = [String(changed.tags)];\n}\nconst query = \"mutation productUpdate($input: ProductInput!) {\\n\"\n  + \"  productUpdate(input: $input) {\\n\"\n  + \"    product { id productType tags }\\n\"\n  + \"    userErrors { field message }\\n\"\n  + \"  }\\n\"\n  + \"}\";\nreturn [{ json: {\n  producto_id: cfg.producto_id,\n  shopify_product_id: cfg.shopify_product_id,\n  dryRun: cfg.dryRun === true || cfg.dryRun === \"true\",\n  query,\n  variables: { input: productInput }\n} }];"
+        "jsCode": "const cfg = $input.first().json;\nconst changed = cfg.changed_fields || {};\nconst product = { id: \"gid://shopify/Product/\" + cfg.shopify_product_id };\nif (changed.product_type !== undefined && changed.product_type !== null) {\n  product.productType = String(changed.product_type);\n}\nif (changed.tags !== undefined) {\n  if (Array.isArray(changed.tags)) product.tags = changed.tags;\n  else if (changed.tags === null) product.tags = [];\n  else product.tags = [String(changed.tags)];\n}\nconst query = \"mutation productUpdate($product: ProductUpdateInput!) {\\n\"\n  + \"  productUpdate(product: $product) {\\n\"\n  + \"    product { id productType tags }\\n\"\n  + \"    userErrors { field message }\\n\"\n  + \"  }\\n\"\n  + \"}\";\nreturn [{ json: {\n  producto_id: cfg.producto_id,\n  shopify_product_id: cfg.shopify_product_id,\n  dryRun: cfg.dryRun === true || cfg.dryRun === \"true\",\n  query,\n  variables: { product }\n} }];"
       }
     },
     {
@@ -185,7 +185,7 @@
       ],
       "parameters": {
         "method": "POST",
-        "url": "https://749941.myshopify.com/admin/api/2024-10/graphql.json",
+        "url": "https://749941.myshopify.com/admin/api/2026-07/graphql.json",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "shopifyAccessTokenApi",
         "sendBody": true,
