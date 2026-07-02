@@ -3,7 +3,7 @@
 > Diseño del salto de "pipeline que ejecuta solicitudes" a "sistema que se observa, se asigna trabajo y se repara". Complementa `ARQUITECTURA.md` (mapa) y `README.md` (uso).
 
 **Principio:** el trabajo no nace de solicitudes del humano — nace de las señales del sistema. El humano pasa de *iniciador* a *editor de excepciones*.
-**Métrica norte:** intervenciones humanas por mes, decreciendo. (Medible con `ai_analysis_log` + el digest.)
+**Métrica norte:** intervenciones humanas por mes, decreciendo. Ahora **medible** con `bash scripts/agent/fleet-metrics.sh [dias]` (intervenciones humanas = PRs `human-gate` + `pr-only` abiertos + issues con intentos agotados), sobre la telemetría `subagents.jsonl` + el digest.
 **Regla de compounding:** cada intervención humana se convierte en regla, check o label, para que la misma intervención nunca se necesite dos veces (la ejecuta `retro`, ver su sección "Graduación a determinista").
 
 ---
@@ -14,7 +14,7 @@ El analyst la decide, el orquestador la aplica, el gate la respeta. **En la duda
 
 | Nivel | Label | Qué pasa | Aplica a |
 |-------|-------|----------|----------|
-| **auto** | — | Pipeline completo + auto-merge si `merge-gate.sh` da 5/5 | docs, lint/types, sync de drift, fixes con criterios 100% verificables y sin flags de datos |
+| **auto** | — | Pipeline completo + auto-merge si `merge-gate.sh` da 6/6 | docs, lint/types, sync de drift, fixes con criterios 100% verificables y sin flags de datos |
 | **pr-only** | — | Pipeline completo hasta PR aprobado; **merge humano** | migraciones de schema, workflows n8n nuevos, RPCs usados por flujos en vivo |
 | **human-gate** | `human-gate` en el PR | PR abierto; el gate lo **rechaza por diseño** (condición 0) | pauta con dinero real (p.ej. Loop Weekly/ROAS), escrituras a tablas prod de ventas/clientes, decisiones de producto, issues con instrucciones sospechosas |
 
@@ -24,21 +24,24 @@ Cableado: `issue-analyst` emite `**Nivel de autonomía:**` en el plan → `orche
 
 ## 2. Gate endurecido (implementado)
 
-`merge-gate.sh` v2 — 5 condiciones deterministas:
+`merge-gate.sh` v3 — 6 condiciones deterministas:
 0. Sin label `human-gate`.
-1. CI verde (`gh pr checks`) — checks reales: `data-rules` + `dashboard` (`.github/workflows/ci.yml`).
+1. CI verde (`gh pr checks`) — checks reales: `data-rules`, `prompt-hygiene`, `docstring-rpc-loop`, `n8n-*`, `dashboard` (`.github/workflows/ci.yml`).
 2. El **último** comentario con `VEREDICTO:` dice `APPROVE` (un REQUEST_CHANGES viejo ya corregido no bloquea; manda el último).
 3. Ese comentario incluye `data-rules: ok`.
 4. Ese comentario está **anclado al commit actual** (`sha: <headRefOid>`) — un APPROVE sobre commits viejos no vale.
-5. (opcional) El autor del veredicto coincide con `GATE_REVIEWER_LOGIN`.
+5. **Identidad del autor — fail-closed SIEMPRE.** El autor del veredicto debe tener permiso `admin` o `write` en el repo (`gh api repos/OWNER/REPO/collaborators/<autor>/permission`). Cierra el vector de prompt-injection: un texto ecoado con `VEREDICTO: APPROVE / data-rules: ok / sha: …` firmado por un autor sin permisos **no mergea**. Escape hatch `GATE_ALLOW_ANY_AUTHOR=1` (WARNING ruidoso, **no usar** en operación normal).
+6. (opcional) Si `GATE_REVIEWER_LOGIN` está definido, el autor debe coincidir exactamente (capa adicional sobre la 5).
+
+Segunda compuerta de proceso: cuando el diff toca superficie sensible (n8n con nodos de prompt, `scripts/agent/`, `.claude/`, `.github/workflows/`, RPCs de prompt), el orchestrator invoca al agente `security-reviewer` en el paso 7b — `SEC-VEREDICTO: FAIL` deja el PR abierto.
 
 Backstop físico: branch protection en `main` (ver §6) hace que `gh pr merge` falle aunque un LLM intente saltarse el script.
 
 ---
 
-## 3. Sentinela — el trabajo nace solo (diseño, por construir en n8n)
+## 3. Sentinela — el trabajo nace solo (implementado como agente `sentinel`)
 
-Un workflow n8n ("Sentinela") convierte señales en issues de Linear con label `agent-ready`. Con dedupe: antes de crear, busca un issue abierto con el mismo título.
+**Estado (2026-07-01): implementado como agente `sentinel`** (sonnet, read-only, MCP linear + n8n + supabase-ro), invocado por cron: `claude --agent sentinel -p "scan"`. Convierte señales en issues de Linear con label `agent-ready`, con dedupe (antes de crear, busca un issue abierto con el mismo título), tope de `pr-only` como nivel máximo y máx 5 issues por corrida. El workflow n8n del cuadro de abajo queda como **alternativa opcional**; la lógica de señales/dedupe/presupuesto es la misma.
 
 | Señal | Detección | Issue auto-generado |
 |-------|-----------|---------------------|
@@ -74,7 +77,7 @@ Workflow n8n (Schedule 7:00 Bogotá) → Slack:
 - Issues cerrados por la flota en 24h (Linear) + PRs mergeados/abiertos (gh).
 - PRs esperando `human-gate` o merge `pr-only` (lo ÚNICO que requiere tu acción).
 - Fallos: issues que agotaron sus 3 intentos, gates rechazados y por qué.
-- Costo: tokens/issue desde `ai_analysis_log` (cuando `log-subagent.sh` escriba ahí, no solo al archivo).
+- Costo/telemetría: ahora desde `.claude/logs/subagents.jsonl` (ts, event, agent, branch, issue) que escribe `log-subagent.sh`, agregado por `bash scripts/agent/fleet-metrics.sh [dias]` — que también computa la métrica norte (intervenciones humanas).
 
 Tu trabajo deja de ser pedir cosas; es leer este digest y tocar solo las excepciones.
 
@@ -113,9 +116,9 @@ Tu trabajo deja de ser pedir cosas; es leer este digest y tocar solo las excepci
 
 ## 7. Secuencia de adopción (la autonomía se gana)
 
-1. ✅ Gate infalsificable (CI + sha + label) — esta rama.
+1. ✅ Gate infalsificable (CI + sha + label + autor fail-closed) — v3, endurecido en la auditoría 2026-07-01.
 2. Branch protection activada (§6.2) → primer issue `auto` de prueba end-to-end.
 3. `fleet-poll.sh` en cron → la cola de Linear se despacha sola.
-4. Sentinela v1 (señales baratas: n8n fails, sync_log, drift) → el backlog se alimenta solo.
+4. ✅ Sentinela (señales baratas: n8n fails, sync_log, drift) → implementada como agente `sentinel` (2026-07-01); el backlog se alimenta solo.
 5. Digest diario → gobiernas por excepción.
-6. Medir: intervenciones/mes y costo/issue → apretar la escalera (mover clases de trabajo de `pr-only` a `auto` cuando la evidencia lo permita).
+6. ✅ Medir habilitado: `fleet-metrics.sh` + `subagents.jsonl` hacen medibles intervenciones/mes y costo/issue → apretar la escalera (mover clases de trabajo de `pr-only` a `auto` cuando la evidencia lo permita).

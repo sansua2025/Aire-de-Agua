@@ -11,7 +11,9 @@ flowchart TB
     subgraph TRIGGERS["🚀 Triggers"]
         H["Humano<br/>claude --agent orchestrator"]
         D["dispatch-issue.sh<br/>(headless, desde n8n Execute Command)"]
+        SEN["sentinel (agente · cron)<br/>señales → issues agent-ready<br/>dedupe · máx 5/corrida · pr-only"]
         L["Linear AIR-n<br/>label agent-ready"]
+        SEN --> L
     end
 
     subgraph WT["🌳 Aislamiento — worktrees-pool.sh"]
@@ -24,24 +26,28 @@ flowchart TB
         B1["2·builder<br/>opus · RW · MCP supabase + n8n<br/>migración / workflow / dashboard"]
         V1["3·verify<br/>haiku · RO<br/>tsc · build · advisors · validate_workflow"]
         F1["4·fixer<br/>opus · RW<br/>causa raíz, cambio mínimo"]
-        R1["5·reviewer ◀ GATE<br/>opus · read-only · MCP supabase<br/>VEREDICTO + data-rules"]
+        R1["5·reviewer ◀ GATE 1<br/>opus · read-only · MCP supabase<br/>VEREDICTO + data-rules"]
+        SR["7b·security-reviewer ◀ GATE 2<br/>opus · read-only · supabase-ro<br/>SEC-VEREDICTO: PASS|FAIL + sha<br/>(si toca superficie sensible)"]
         RT["6·retro<br/>sonnet<br/>memoria · insights · poda"]
 
         A1 --> B1 --> V1
         V1 -- "FAIL (máx 3)" --> F1 --> V1
         V1 -- PASS --> R1
         R1 -- REQUEST_CHANGES --> F1
+        R1 -- "APPROVE + superficie sensible" --> SR
+        SR -- FAIL --> F1
     end
 
     subgraph GUARD["🛡️ Guardrails deterministas (hooks)"]
         VS["validate-sql.sh · PreToolUse<br/>bloquea SQL destructivo / DML a prod<br/>(Bash + apply_migration)"]
         RC["run-checks.sh · PostToolUse Edit|Write<br/>prettier + eslint + reglas de datos<br/>exit 2 → feedback inmediato"]
-        LS["log-subagent.sh · SubagentStart/Stop<br/>→ .claude/logs/subagents.log"]
+        LS["log-subagent.sh · SubagentStart/Stop<br/>→ subagents.log + subagents.jsonl<br/>(telemetría → fleet-metrics.sh)"]
+        GP["guard-prod-writes.sh · PreToolUse<br/>confirma apply_migration + execute_sql (write)<br/>a PROD (AIR-162) — cableado en settings.json"]
     end
 
     subgraph GH["🐙 GitHub"]
         PR["PR contra main<br/>título AIR-n · Closes AIR-n"]
-        MG["merge-gate.sh<br/>1· CI verde 2· VEREDICTO: APPROVE<br/>3· data-rules: ok"]
+        MG["merge-gate.sh v3 · 6 condiciones<br/>CI · APPROVE · data-rules:ok · sha<br/>· autor con permiso admin/write (fail-closed)"]
         MERGE["gh pr merge --squash<br/>--delete-branch"]
     end
 
@@ -62,14 +68,15 @@ flowchart TB
     D --> SLOT
     L -. "despacho manual hoy" .-> D
     SLOT --> SESION
-    B1 -.-> VS & RC
-    F1 -.-> VS & RC
+    B1 -.-> VS & RC & GP
+    F1 -.-> VS & RC & GP
     R1 -.-> VS
     SESION -.-> LS
     B1 --> SB & N8N & VC
     V1 --> PR
     R1 -- "gh pr comment (veredicto)" --> PR
-    PR --> MG -- "3/3 OK" --> MERGE
+    SR -. "SEC-VEREDICTO: PASS" .-> MG
+    PR --> MG -- "6/6 OK" --> MERGE
     MERGE --> RT
     RT --> MMD & INS & LIN
     RT --> MB --> MMD
@@ -89,6 +96,7 @@ sequenceDiagram
     participant V as verify (haiku)
     participant FX as fixer (opus·RW)
     participant R as reviewer (opus·RO)
+    participant SR as security-reviewer (opus·RO)
     participant G as merge-gate.sh
     participant RT as retro (sonnet)
 
@@ -110,11 +118,16 @@ sequenceDiagram
     R-->>O: VEREDICTO: APPROVE|REQUEST_CHANGES + data-rules
     Note over R: Publica veredicto como<br/>comentario del PR
     alt APPROVE + data-rules: ok
+        opt diff toca n8n prompt / scripts/agent / .claude / .github/workflows / RPC de prompt
+            O->>SR: 7b · red-team adversarial (segunda compuerta OBLIGATORIA)
+            SR-->>O: SEC-VEREDICTO: PASS|FAIL + sha anclado
+            Note over SR: FAIL → PR abierto, no gate;<br/>vuelve a fixer si aplica
+        end
         O->>G: bash scripts/agent/merge-gate.sh PR
-        G-->>O: CI ✓ + APPROVE ✓ + data-rules ✓ → squash merge
+        G-->>O: 6/6 (CI · APPROVE · data-rules · sha · autor con permiso) → squash merge
         O->>RT: Delegar retrospectiva
         RT-->>O: Memoria + insight + comentario Linear + poda
-    else REQUEST_CHANGES o flag sin resolver
+    else REQUEST_CHANGES / SEC-VEREDICTO FAIL / flag sin resolver
         O->>O: PR queda abierto + resumen de qué falta<br/>(intervención humana)
     end
 ```
@@ -127,11 +140,17 @@ sequenceDiagram
 |---|--------|--------|-----------|-----|---------------|-----|
 | 1 | `orchestrator` | opus | ❌ (sin Write/Edit) | linear | — | Coordina el pipeline; único que delega |
 | 2 | `issue-analyst` | opus | ❌ | linear | — | Plan + criterios verificables + flags de riesgo de datos |
-| 3 | `builder` | opus | ✅ | supabase, n8n-mcp, n8n | validate-sql (Pre) + run-checks (Post) | Implementa la mínima superficie; memoria de proyecto |
-| 4 | `verify` | haiku | ❌ (no edita) | supabase, n8n-mcp | — | Señal limpia PASS/FAIL; aísla salida ruidosa |
-| 5 | `reviewer` | opus | ❌ (+ sin apply_migration) | supabase | validate-sql (Pre) | **Compuerta del auto-merge**; veredicto con doble token |
-| 6 | `fixer` | opus | ✅ | supabase, n8n-mcp, n8n | validate-sql (Pre) + run-checks (Post) | Causa raíz, cambio mínimo; memoria de proyecto |
+| 3 | `builder` | opus | ✅ | supabase, n8n-mcp, n8n | validate-sql (Pre) + run-checks (Post) + guard-prod-writes (Pre) | Implementa la mínima superficie; memoria de proyecto |
+| 4 | `verify` | haiku | ❌ (`disallowedTools` Write/Edit) | supabase, n8n-mcp | — | Señal limpia PASS/FAIL; corre él mismo advisors/validate_workflow |
+| 5 | `reviewer` | opus | ❌ (+ sin apply_migration) | supabase | validate-sql (Pre) | **Compuerta del auto-merge (GATE 1)**; veredicto con doble token |
+| 6 | `fixer` | opus | ✅ | supabase, n8n-mcp, n8n | validate-sql (Pre) + run-checks (Post) + guard-prod-writes (Pre) | Causa raíz, cambio mínimo; memoria de proyecto |
 | 7 | `retro` | sonnet | ✅ | supabase, linear | — | Destila aprendizajes; bibliotecario y poda de memoria |
+| 8 | `security-reviewer` | opus | ❌ (read-only) | supabase-ro | validate-sql (Pre) | **Segunda compuerta (GATE 2)**; red-team adversarial de prompt-injection y debilitamiento de gates; `SEC-VEREDICTO: PASS\|FAIL` + sha anclado |
+| 9 | `sentinel` | sonnet | ❌ (read-only) | linear, n8n, supabase-ro | — | Sentinela de AUTONOMIA §3 como agente: señales → issues Linear `agent-ready`, dedupe, máx pr-only, máx 5 issues/corrida; corre por cron |
+
+**Migración a `disallowedTools` (auditoría 2026-07-01):** `builder`, `verify`, `fixer` y `retro` pasaron de una lista `tools:` positiva a `disallowedTools:` — así SÍ reciben MCP en entorno remoto (mitiga el gap de §7). En la práctica `verify` vuelve a poder correr `get_advisors`/`validate_workflow` por sí mismo.
+
+**GATE 2 (security-reviewer) es OBLIGATORIO** cuando el diff toca: `n8n/workflows/` con nodos de prompt, `scripts/agent/`, `.claude/`, `.github/workflows/`, o RPCs que alimentan prompts. El orchestrator lo invoca en el **paso 7b**, antes del gate.
 
 **Restricción estructural:** un subagente no puede generar otro → toda delegación pasa por el orchestrator (hub-and-spoke, sin cadenas ocultas).
 
@@ -146,10 +165,12 @@ flowchart LR
     end
     subgraph CAPA2["Capa 2 · Hooks (determinista, pre/post tool)"]
         P2["validate-sql.sh<br/>drop de schema/db · truncado de tablas<br/>· borrados/updates sin filtro · DML a prod"]
-        P3["run-checks.sh<br/>valor_compras · timezone Bogotá<br/>· join variantes · migración sin reversa"]
+        P3["run-checks.sh<br/>R1 valor_compras · R2 timezone Bogotá<br/>· R3 join variantes · R5 GENERATED"]
+        P8["guard-prod-writes.sh (AIR-162)<br/>confirma apply_migration + execute_sql<br/>(write) a PROD · cableado en settings.json"]
     end
     subgraph CAPA3["Capa 3 · Gate (script + GitHub)"]
-        P4["merge-gate.sh<br/>CI + APPROVE + data-rules:ok"]
+        P4["merge-gate.sh v3 · 6 condiciones<br/>CI + APPROVE + data-rules:ok + sha<br/>+ autor con permiso (fail-closed)"]
+        P9["security-reviewer (GATE 2)<br/>SEC-VEREDICTO en superficie sensible"]
         P5["Branch protection en main<br/>(backstop)"]
     end
     subgraph CAPA4["Capa 4 · Infraestructura"]
@@ -160,12 +181,12 @@ flowchart LR
 ```
 
 **Reglas de datos protegidas en las 3 primeras capas** (prompt + regex + veredicto):
-1. `valor_compras` ≠ revenue → usar `roas_real` / `v_meta_ads_roas_real`
-2. Ventas: `ordered_at AT TIME ZONE 'America/Bogota'` + `estado_pago='paid'`
-3. Productos: join `venta_items → variantes → productos` (nunca `producto_id` directo)
-4. Ciudad: `JOIN clientes c ON c.id = v.cliente_id`
-5. Margen: verificar `cobertura_cogs`
-6. Sin columnas GENERATED STORED en INSERT/UPSERT
+1. **R1** `valor_compras` ≠ revenue → usar `roas_real` / `v_meta_ads_roas_real` (FAIL)
+2. **R2** Ventas: `ordered_at AT TIME ZONE 'America/Bogota'` + `estado_pago='paid'` (FAIL)
+3. **R3** Productos: join `venta_items → variantes → productos` (nunca `producto_id` directo) (FAIL)
+4. **R5** Sin columnas GENERATED STORED en INSERT/UPSERT — análisis de bloque por tabla contra la lista de `CLAUDE.md` (FAIL)
+5. **R6a** Ciudad sin `JOIN clientes` → `JOIN clientes c ON c.id = v.cliente_id` (WARN)
+6. **R6b** Margen sin verificar `cobertura_cogs` (WARN)
 
 ### Checks deterministas en CI (Capa 3)
 
@@ -173,7 +194,8 @@ Además del veredicto del reviewer, el job `CI` (`.github/workflows/ci.yml`) cor
 
 | Check (job CI) | Script | Qué pesca |
 |----------------|--------|-----------|
-| `data-rules` | `scripts/agent/check-data-rules.sh --diff origin/main` | Las 6 reglas de datos sobre el diff (valor_compras, timezone, joins, GENERATED, …) |
+| `data-rules` | `scripts/agent/check-data-rules.sh --diff origin/main` | Reglas de datos sobre el diff — FAIL: R1 valor_compras, R2 timezone, R3 joins, R5 GENERATED (bloque por tabla), R7 numeración de migraciones; WARN: R6a ciudad sin `JOIN clientes`, R6b margen sin `cobertura_cogs` |
+| `prompt-hygiene` | `scripts/agent/check-prompt-hygiene.sh` | Gradúa el patrón AIR-94 a determinista: en nodos críticos de n8n (ambas copias, `nodes` y `activeVersion.nodes`) exige `sanitize()` con strip total `<[^>]*>`, system prompt defensivo con "Ignora", y prohíbe el antipatrón "reporta lo sospechoso". Con selftest y allowlist ratchet (`prompt-hygiene-allowlist.txt`) |
 | `docstring-rpc-loop` | `scripts/agent/check-docstring-rpc-loop.sh --diff origin/main` | Drift docstring↔cuerpo en las RPCs del loop de insights (AIR-135) |
 | `n8n-sync` | `scripts/check-transform-ads-sync.sh` | Bloque de mapeo "Transform Ads Data" idéntico entre Backfill y Daily (AIR-95) |
 | `n8n-graph-parity` | `scripts/agent/check-n8n-graph-parity.sh` | Paridad `nodes` ↔ `activeVersion.nodes` en nodos críticos de seguridad (AIR-140) |
@@ -231,12 +253,14 @@ Principio: **cada issue resuelto hace al siguiente más barato.** Si un aprendiz
 
 MCP **acotado por subagente** (frontmatter `mcpServers`) → el hilo principal no carga tools que no usa → prefijo de contexto estable → KV-cache caliente.
 
-> **Restricción verificada en entorno web/remoto (sesión AIR-71/119/67/97):** los subagentes con
-> lista `tools:` positiva (builder, verify, reviewer, retro, fixer) **no reciben herramientas MCP**
-> aunque el frontmatter declare `mcpServers`. Solo los agentes "All tools except…" (issue-analyst,
-> orchestrator — cuyo frontmatter NO usa lista positiva) tienen MCP garantizado. Consecuencia:
-> el ORQUESTADOR ejecuta las operaciones MCP críticas (apply_migration, validate_workflow,
-> get_advisors); el builder solo puede autorar archivos.
+> **Restricción MCP en entorno web/remoto — MITIGADA (auditoría 2026-07-01):** históricamente los
+> subagentes con lista `tools:` positiva (builder, verify, reviewer, retro, fixer) **no recibían
+> herramientas MCP** aunque el frontmatter declarara `mcpServers` (sesión AIR-71/119/67/97). El fix
+> estructural fue migrar builder/verify/fixer/retro de lista positiva `tools:` a `disallowedTools:`
+> (patrón "All tools except…", igual que issue-analyst/orchestrator). Con ello **sí reciben MCP en
+> remoto**: en particular `verify` vuelve a poder correr `get_advisors`/`validate_workflow` por sí
+> mismo, sin depender de que el orquestador ejecute las ops MCP. Pendiente: **verificar empíricamente
+> en la próxima sesión remota** que el MCP llega efectivamente a estos subagentes.
 
 > **Restricción de infraestructura (plan Free):** `create_branch` en Supabase devuelve
 > `PaymentRequired` (`vnctmzsgemefgbtjctlo` sin plan Pro). Preview branches no disponibles.
@@ -268,11 +292,29 @@ flowchart LR
 | 2 | Veredicto sin anclar | ✅ Resuelto — `merge-gate.sh` v2 exige `sha: <headRefOid>` + último veredicto + autor opcional (`GATE_REVIEWER_LOGIN`) |
 | 3 | Reviewer podía escribir vía `execute_sql` | ✅ Mitigado — `disallowedTools` lo bloquea; falta paso manual `supabase-ro` (ver `AUTONOMIA.md` §6.3) |
 | 4 | Branch protection en `main` | ⏳ Manual — comando listo en `AUTONOMIA.md` §6.2 |
-| 5 | Drift n8n ↔ repo | 📋 Diseñado — señal del Sentinela (`AUTONOMIA.md` §3) |
+| 5 | Drift n8n ↔ repo | ✅ Cubierto por el agente `sentinel` (señal del Sentinela, `AUTONOMIA.md` §3); el workflow n8n queda como alternativa opcional |
 | 6 | Trigger Linear→dispatch | ✅ Resuelto — `scripts/agent/fleet-poll.sh` + cron (`AUTONOMIA.md` §4) |
 | 7 | Carril `human-gate` formal | ✅ Resuelto — escalera de autonomía: analyst decide → orchestrator etiqueta → gate condición 0 |
 
 Extras de esta rama: contador determinista de reintentos (`attempt.sh`), reglas de datos como fuente única (`check-data-rules.sh`, usada por hook + CI), regla de graduación en `retro`, guard anti prompt-injection en `issue-analyst`. Diseño completo de autonomía: `docs/agentes/AUTONOMIA.md`.
-| 8 | MCP no llega a subagentes con allowlist `tools:` positiva en entorno web/remoto | Documentado — el orquestador ejecuta las ops MCP; builder/verify/reviewer solo autoran archivos. Ver §7. |
+| 8 | MCP no llega a subagentes con allowlist `tools:` positiva en entorno web/remoto | ✅ Mitigado (2026-07-01) — migración de builder/verify/fixer/retro a `disallowedTools:`; pendiente verificar en la próxima sesión remota. Ver §7. |
 | 9 | Supabase branching deshabilitado (plan Free) | Documentado — mitigación: verificación estática + tests sintéticos en PR. Ver §7. |
-| 10 | Drift docstring/cuerpo en RPCs del loop de insights | Candidato a regla `check-data-rules.sh` (AIR-127) — aún no implementado. |
+| 10 | Drift docstring/cuerpo en RPCs del loop de insights | ✅ Resuelto — `check-docstring-rpc-loop.sh` (job CI `docstring-rpc-loop`, AIR-135). |
+| 11 | `guard-prod-writes.sh` (AIR-162) existía sin correr | ✅ Resuelto (2026-07-01) — cableado en `settings.json` PreToolUse para `apply_migration` y `execute_sql` (write). |
+| 12 | Regla GENERATED STORED no graduada a determinista | ✅ Resuelto (2026-07-01) — R5 (FAIL) en `check-data-rules.sh` con análisis de bloque por tabla. |
+| 13 | Sentinela solo diseñado (n8n) | ✅ Resuelto (2026-07-01) — implementado como agente `sentinel`; el workflow n8n sigue como alternativa opcional. |
+| 14 | Métrica norte (intervenciones humanas) no medible | ✅ Resuelto (2026-07-01) — `fleet-metrics.sh` + telemetría `subagents.jsonl`. |
+
+---
+
+## 10. Auditoría 2026-07-01
+
+Siete cambios endurecieron los guardrails y cerraron gaps de autonomía:
+
+1. **`check-data-rules.sh` — R5/R6.** R5 (FAIL): columnas GENERATED STORED en INSERT/UPSERT, por análisis de bloque por tabla contra la lista de `CLAUDE.md`. R6a/R6b (WARN): `ciudad` sin `JOIN clientes`, `margen` sin `cobertura_cogs`. Selftest extendido.
+2. **Nuevo check `check-prompt-hygiene.sh`** (+ selftest + allowlist ratchet `prompt-hygiene-allowlist.txt`, job CI `prompt-hygiene`): gradúa el patrón AIR-94 a determinista sobre las dos copias del grafo (`nodes` y `activeVersion.nodes`) — exige `sanitize()` con strip total `<[^>]*>`, system prompt defensivo con "Ignora", y prohíbe el antipatrón "reporta lo sospechoso".
+3. **`merge-gate.sh` v3 — 6 condiciones.** La identidad del autor del veredicto es **fail-closed SIEMPRE** (permiso admin/write vía `gh api .../collaborators/.../permission`); `GATE_REVIEWER_LOGIN` sigue como capa opcional; escape hatch `GATE_ALLOW_ANY_AUTHOR=1` (no recomendado).
+4. **Telemetría.** `log-subagent.sh` ahora también escribe `.claude/logs/subagents.jsonl` (ts, event, agent, branch, issue); `fleet-metrics.sh [dias]` hace medible la métrica norte (intervenciones humanas = PRs `human-gate` + `pr-only` abiertos + issues con intentos agotados).
+5. **2 agentes nuevos (roster 7 → 9).** `security-reviewer` (GATE 2, red-team, paso 7b) y `sentinel` (Sentinela de AUTONOMIA §3 como agente).
+6. **Fix estructural MCP.** builder/verify/fixer/retro migran de lista `tools:` positiva a `disallowedTools:` → reciben MCP en remoto (§7 mitigado).
+7. **`settings.json`.** `guard-prod-writes.sh` (AIR-162) por fin cableado en PreToolUse para `apply_migration` y `execute_sql`.
