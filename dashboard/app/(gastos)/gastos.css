@@ -1,0 +1,389 @@
+/* =============================================================================
+ * App de Gastos · gastos.airedeagua.com (AIR-167)
+ * Estilos SCOPEADOS al shell `.gastos-shell`. NO heredan los tokens data-theme
+ * del dashboard (el Cerebro). Paleta y tipografía propias del Figma aprobado.
+ * Tokens literales del design-spec (fuente de verdad). Mobile-first (390px).
+ * =============================================================================
+ */
+
+.gastos-shell {
+  /* --- Paleta (hex exactos del spec) --- */
+  --g-bg: #F5F3EF;
+  --g-surface: #FFFFFF;
+  --g-surface-soft: #FAF8F4;
+  --g-surface-inset: #ECE8E0;
+  --g-surface-muted: #F0ECE4;
+  --g-border: #E7E3DB;
+  --g-border-dashed: #D8D2C6;
+  --g-ink: #23231F;
+  --g-ink-secondary: #5B564C;
+  --g-ink-tertiary: #8C877B;
+  --g-ink-faint: #B0AA9C;
+  --g-primary: #4C5A2E;     /* oliva */
+  --g-accent: #C98B6E;      /* terracota */
+  --g-danger: #C0563F;
+
+  /* --- Sombras --- */
+  --g-shadow-key: 0 3px 10px rgba(36, 31, 20, 0.05);
+  --g-shadow-cta: 0 6px 16px rgba(36, 31, 20, 0.18);
+  --g-shadow-seg: 0 2px 6px rgba(36, 31, 20, 0.08);
+
+  /* Escapa el `overflow:hidden` global del body del dashboard: el shell es su
+     propio viewport con scroll interno. */
+  position: fixed;
+  inset: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  background: var(--g-bg);
+  color: var(--g-ink);
+  font-family: var(--font-gastos, 'Inter'), -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.4;
+  z-index: 0;
+}
+
+.gastos-shell *,
+.gastos-shell *::before,
+.gastos-shell *::after { box-sizing: border-box; }
+
+.gastos-shell button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: inherit;
+}
+
+/* ---------------------------------------------------------------------------
+ * Screen shell — columna centrada, ancho de teléfono
+ * ------------------------------------------------------------------------- */
+.gs-screen {
+  width: 100%;
+  max-width: 430px;
+  margin: 0 auto;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 20px 24px;
+}
+.gs-flex1 { flex: 1 1 auto; }
+
+/* ---------------------------------------------------------------------------
+ * Header (botón circular + título centrado + spacer)
+ * ------------------------------------------------------------------------- */
+.gs-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.gs-iconbtn {
+  width: 40px;
+  height: 40px;
+  border-radius: 20px;
+  background: var(--g-surface);
+  display: grid;
+  place-items: center;
+  box-shadow: var(--g-shadow-key);
+  color: var(--g-ink);
+  flex: none;
+}
+.gs-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--g-ink);
+}
+.gs-spacer40 { width: 40px; height: 40px; flex: none; }
+
+/* ---------------------------------------------------------------------------
+ * CTA principal (full-width oliva)
+ * ------------------------------------------------------------------------- */
+.gs-cta {
+  width: 100%;
+  padding: 18px;
+  border-radius: 30px;
+  background: var(--g-primary);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-shadow: var(--g-shadow-cta);
+  transition: opacity 0.15s ease, transform 0.05s ease;
+}
+.gs-cta:active { transform: translateY(1px); }
+.gs-cta:disabled { opacity: 0.4; box-shadow: none; cursor: not-allowed; }
+
+/* ---------------------------------------------------------------------------
+ * Pantalla 1 · Monto
+ * ------------------------------------------------------------------------- */
+.gs-amount {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding-top: 22px;
+}
+.gs-microlabel {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1.1px;
+  text-transform: uppercase;
+  color: var(--g-ink-faint);
+}
+.gs-amount-row {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.gs-currency {
+  font-size: 30px;
+  font-weight: 500;
+  color: var(--g-accent);
+}
+.gs-amount-value {
+  font-size: 52px;
+  font-weight: 700;
+  color: var(--g-ink);
+  letter-spacing: -1px;
+  font-variant-numeric: tabular-nums;
+}
+.gs-amount-sub {
+  font-size: 12px;
+  color: var(--g-ink-faint);
+}
+
+.gs-concept-chip {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--g-border);
+  background: var(--g-surface);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--g-ink-tertiary);
+  margin-top: 6px;
+}
+.gs-concept-chip.has-value { color: var(--g-ink); }
+.gs-concept-chip .ico { color: var(--g-accent); flex: none; }
+
+.gs-numpad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  padding-top: 12px;
+}
+.gs-key {
+  background: var(--g-surface);
+  border-radius: 20px;
+  padding: 17px 0;
+  font-size: 24px;
+  font-weight: 500;
+  color: var(--g-ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--g-shadow-key);
+  transition: transform 0.05s ease, background 0.1s ease;
+}
+.gs-key:active { transform: scale(0.97); }
+.gs-key--clear {
+  background: var(--g-surface-muted);
+  box-shadow: none;
+  color: var(--g-accent);
+}
+.gs-key--back { color: var(--g-ink); }
+
+/* ---------------------------------------------------------------------------
+ * Pantalla 2 · Detalle
+ * ------------------------------------------------------------------------- */
+.gs-screen--detalle { gap: 16px; }
+
+.gs-card-amount {
+  background: var(--g-surface);
+  border-radius: 18px;
+  padding: 14px 18px;
+  box-shadow: var(--g-shadow-key);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.gs-card-amount .col { display: flex; flex-direction: column; gap: 2px; }
+.gs-card-amount .lbl {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--g-ink-faint);
+}
+.gs-card-amount .val {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--g-ink);
+  font-variant-numeric: tabular-nums;
+}
+.gs-editlink {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--g-accent);
+  padding: 4px;
+}
+
+.gs-field { display: flex; flex-direction: column; gap: 8px; }
+.gs-labelrow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.gs-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--g-ink-secondary);
+}
+.gs-label-annot {
+  font-size: 12px;
+  color: var(--g-ink-faint);
+}
+
+.gs-input {
+  width: 100%;
+  background: var(--g-surface);
+  border: 1px solid var(--g-border);
+  border-radius: 16px;
+  padding: 14px 16px;
+  font-size: 15px;
+  color: var(--g-ink);
+  font-family: inherit;
+  outline: none;
+}
+.gs-input::placeholder { color: var(--g-ink-tertiary); }
+.gs-input:focus { border-color: var(--g-primary); }
+
+/* Chips (tipo / categoría / fecha) — con wrap */
+.gs-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.gs-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 15px;
+  border-radius: 999px;
+  border: 1px solid var(--g-border);
+  background: var(--g-surface);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--g-ink-secondary);
+  white-space: nowrap;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+.gs-chip--active-olive {
+  background: var(--g-primary);
+  color: #fff;
+  font-weight: 600;
+  border-color: transparent;
+}
+.gs-chip--active-terra {
+  background: var(--g-accent);
+  color: #fff;
+  font-weight: 600;
+  border-color: transparent;
+}
+.gs-chip .ico { flex: none; }
+
+.gs-hint {
+  font-size: 13px;
+  color: var(--g-ink-tertiary);
+  padding: 2px 0;
+}
+
+/* Segmented control (Pagado por) */
+.gs-seg {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 16px;
+  background: var(--g-surface-inset);
+}
+.gs-seg-opt {
+  flex: 1 1 0;
+  padding: 11px 0;
+  border-radius: 13px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--g-ink-tertiary);
+  transition: background 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
+}
+.gs-seg-opt--active {
+  background: var(--g-surface);
+  color: var(--g-ink);
+  font-weight: 600;
+  box-shadow: var(--g-shadow-seg);
+}
+
+/* Uploader de recibo (dashed) */
+.gs-uploader {
+  width: 100%;
+  background: var(--g-surface-soft);
+  border: 1px dashed var(--g-border-dashed);
+  border-radius: 16px;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--g-ink-tertiary);
+}
+.gs-uploader.has-file { color: var(--g-ink); border-style: solid; }
+
+.gs-visually-hidden {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------------------------------------------------------------------------
+ * Toast + estados de carga
+ * ------------------------------------------------------------------------- */
+.gs-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 96px;
+  transform: translateX(-50%);
+  max-width: 360px;
+  width: calc(100% - 40px);
+  padding: 13px 18px;
+  border-radius: 14px;
+  font-size: 14px;
+  font-weight: 500;
+  text-align: center;
+  box-shadow: var(--g-shadow-cta);
+  z-index: 20;
+}
+.gs-toast--ok { background: var(--g-primary); color: #fff; }
+.gs-toast--err { background: var(--g-danger); color: #fff; }
+
+.gs-center-state {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  text-align: center;
+  color: var(--g-ink-tertiary);
+  font-size: 14px;
+}
