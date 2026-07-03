@@ -12,6 +12,8 @@ import {
 } from 'lucide-react'
 import { Numpad } from './Numpad'
 import { ReceiptUploader } from './ReceiptUploader'
+import { Chip } from './Chip'
+import { categoriaColor } from '@/lib/gastos/resumen-colors'
 import {
   formatMontoDigits,
   bogotaTodayISO,
@@ -448,14 +450,12 @@ function DetalleScreen(props: {
         <span className="gs-label">Tipo de gasto</span>
         <div className="gs-chips">
           {tipos.map((t) => (
-            <button
+            <Chip
               key={t}
-              type="button"
-              className={`gs-chip${t === tipo ? ' gs-chip--active-olive' : ''}`}
+              label={t}
+              selected={t === tipo}
               onClick={() => onSelectTipo(t)}
-            >
-              {t}
-            </button>
+            />
           ))}
         </div>
       </div>
@@ -469,14 +469,13 @@ function DetalleScreen(props: {
         {tipo ? (
           <div className="gs-chips">
             {categorias.map((c) => (
-              <button
+              <Chip
                 key={c.id}
-                type="button"
-                className={`gs-chip${c.id === categoriaId ? ' gs-chip--active-terra' : ''}`}
+                label={c.nombre}
+                selected={c.id === categoriaId}
                 onClick={() => setCategoriaId(c.id)}
-              >
-                {c.nombre}
-              </button>
+                selectedColor={categoriaColor(undefined, tipo)}
+              />
             ))}
           </div>
         ) : (

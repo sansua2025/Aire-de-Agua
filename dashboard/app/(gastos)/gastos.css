@@ -284,6 +284,14 @@
   white-space: nowrap;
   transition: background 0.1s ease, color 0.1s ease;
 }
+/* Chip seleccionable reutilizable (AIR-177). El color activo entra por la
+   custom property --gs-chip-active; si el Chip no la define, cae al oliva. */
+.gs-chip--selected {
+  background: var(--gs-chip-active, var(--g-primary));
+  color: #fff;
+  font-weight: 600;
+  border-color: transparent;
+}
 .gs-chip--active-olive {
   background: var(--g-primary);
   color: #fff;
