@@ -36,7 +36,7 @@ export interface GastoGuardarPayload {
 }
 
 /**
- * Fila de `v_gastos_detalle` (gastos ⋈ categorías ⋈ pagadores, mig 106).
+ * Fila de `v_gastos_detalle` (gastos ⋈ categorías ⋈ pagadores, mig 106 + 108).
  * Es la forma que devuelven GET /api/gastos y GET /api/gastos/[id].
  */
 export interface GastoDetalle {
@@ -50,10 +50,11 @@ export interface GastoDetalle {
   pagador_id: string
   pagador_nombre: string
   recibo_path: string | null
-  creado_por: string
+  creado_por: string // autor original, inmutable (AIR-174)
   created_at: string
   updated_at: string
   firestore_id: string | null
+  editado_por: string | null // último editor; null = nunca editado (mig 108, AIR-174)
 }
 
 /** Respuesta paginada de GET /api/gastos. */
