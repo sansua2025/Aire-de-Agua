@@ -1,31 +1,37 @@
 #!/usr/bin/env node
 /**
- * backfill-gastos.mjs  —  AIR-166 · Backfill BigQuery/Firestore → tabla `gastos`
+ * backfill-gastos.mjs  —  AIR-166/AIR-175 · Backfill → tabla `gastos`
  *
- * Toma un export LOCAL de la tabla BigQuery
- *   `adea-d2c-analytics.firebase_expense.app_expenses`
+ * Toma un export LOCAL (BigQuery/Firestore o el CONSOLIDADO Excel+BQ de AIR-175)
  * (NDJSON / JSONL / JSON-array / CSV) y emite un `.sql` IDEMPOTENTE que un
  * humano revisa y aplica sobre PROD. El script NUNCA escribe a la base de datos
  * ni a BigQuery: solo lee un archivo local y produce SQL.
  *
- * Contrato destino: migración 106_air164_app_gastos_schema.sql
+ * Contrato destino: migración 106 (base) + 108 (autor/editor) + 109 (AIR-175)
  *   gastos(id, concepto, categoria_id FK, monto numeric(14,2)>0, fecha date,
- *          pagador_id FK, recibo_path, creado_por, created_at, updated_at,
- *          firestore_id UNIQUE)
+ *          pagador_id FK, recibo_path, creado_por, editado_por, created_at,
+ *          updated_at, firestore_id UNIQUE, precision_fecha in('dia','mes'))
  *
  * DECISIONES (Santiago, 2026-07-03):
- *   - Se migra TODO el export (incl. los 7 egresos con userId 2/3 que la UI
- *     vieja ocultaba: son gastos reales).
+ *   - Se migra TODO el export (incl. los egresos que la UI vieja ocultaba).
  *   - El .sql es idempotente: INSERT ... ON CONFLICT (firestore_id) DO NOTHING.
  *   - Corte: snapshot completo del export al día de ejecución; re-corridas
  *     idempotentes capturan rezagados.
+ *   - AIR-175: formato consolidado con columnas concepto, categoria_nombre,
+ *     monto, fecha, pagador_nombre, creado_por, firestore_id, precision_fecha.
  *
  * MAPEOS (diccionario explícito; FALLA RUIDOSAMENTE ante valor desconocido):
- *   category → categoria_id (13 slugs del seed)
- *   paidBy   → pagador_id  ('Aire de Agua'→aire_de_agua, 'Santi&Susi'→santi_susi)
+ *   category → categoria_id (13 slugs del seed 106 + claude/influencers/legal de 109)
+ *   paidBy   → pagador_id  (aire_de_agua, santi_susi, mandre[histórico/inactivo])
  *
- * FECHA: derivada del timestamp en zona America/Bogota (UTC-5, sin DST).
- *   ~24 filas cambian de día contable vs UTC → NUNCA tomar la fecha en UTC.
+ * FECHA:
+ *   - Valor 'YYYY-MM-DD' PURO (consolidado AIR-175) → passthrough SIN shift de TZ
+ *     (ya es día contable en Bogotá; para 'mes' es el día 1).
+ *   - Timestamp con hora (BQ viejo) → se deriva el día en zona America/Bogota
+ *     (UTC-5, sin DST); ~24 filas cambian de día vs UTC → NUNCA tomar fecha en UTC.
+ *
+ * CREADO_POR: si viene en el archivo se respeta (passthrough); si no, default.
+ * PRECISION_FECHA: passthrough validado ∈ {dia,mes}; si no viene, 'dia'.
  *
  * USO:
  *   node scripts/backfill-gastos.mjs --input <archivo>            # dry-run (default)
@@ -70,6 +76,10 @@ const CATEGORIA_MAP = {
   'shipping': 'shipping',
   'cogs': 'cogs',
   'assets': 'assets',
+  // AIR-175 · categorías nuevas del consolidado (seed en mig 109).
+  'claude': 'claude',
+  'influencers': 'influencers',
+  'legal': 'legal',
 };
 
 // paidBy (BQ) → pagador_id. Tolera variantes de espacios/case y de '&' con o
@@ -77,24 +87,34 @@ const CATEGORIA_MAP = {
 const PAGADOR_MAP = {
   'aire de agua': 'aire_de_agua', 'aire_de_agua': 'aire_de_agua',
   'santi&susi': 'santi_susi', 'santi_susi': 'santi_susi',
+  // AIR-175 · pagador histórico Mandre (inactivo en el form; seed en mig 109).
+  'mandre': 'mandre',
 };
+
+// AIR-175 · valores válidos de precision_fecha (columna nueva de la mig 109).
+const PRECISION_VALID = new Set(['dia', 'mes']);
+const PRECISION_DEFAULT = 'dia';
 
 // Nombres de columna candidatos en el export (BQ/Firestore varían). Se resuelve
 // el primero presente; si ninguno aparece → error ruidoso indicando la fila.
 const FIELD_CANDIDATES = {
   concepto:    ['concepto', 'concept', 'description', 'descripcion', 'desc', 'detalle', 'name', 'title'],
   amount:      ['amount', 'monto', 'value', 'valor', 'total'],
-  category:    ['category', 'categoria', 'category_name', 'categoryName'],
-  paidBy:      ['paidBy', 'paid_by', 'pagador', 'payer'],
+  category:    ['category', 'categoria', 'categoria_nombre', 'category_name', 'categoryName'],
+  paidBy:      ['paidBy', 'paid_by', 'pagador', 'pagador_nombre', 'payer'],
   timestamp:   ['date', 'fecha', 'timestamp', 'createdAt', 'created_at', 'time', 'datetime'],
   firestoreId: ['firestoreId', 'firestore_id', 'documentId', 'document_id', 'docId', 'doc_id', 'id', '_id'],
+  // AIR-175 · consolidado. Opcionales: si no aparecen, se usan los defaults.
+  creadoPor:      ['creado_por', 'created_by', 'createdBy'],
+  precisionFecha: ['precision_fecha', 'precisionFecha', 'precision'],
 };
 
 const CREADO_POR = 'backfill@migracion';
 const TZ = 'America/Bogota';
 
 // Orden de columnas del INSERT (usado también por el round-trip de validación).
-const COLS = ['concepto', 'categoria_id', 'monto', 'fecha', 'pagador_id', 'creado_por', 'firestore_id'];
+// AIR-175 añade precision_fecha AL FINAL (no shiftea IDX de categoria_id/monto).
+const COLS = ['concepto', 'categoria_id', 'monto', 'fecha', 'pagador_id', 'creado_por', 'firestore_id', 'precision_fecha'];
 const IDX = Object.fromEntries(COLS.map((c, i) => [c, i]));
 
 // ============================================================================
@@ -197,7 +217,9 @@ function parseCSV(text) {
 }
 
 function parseInput(path) {
-  const raw = readFileSync(path, 'utf8');
+  // Strip BOM UTF-8 (﻿) si el archivo lo trae, para que el header no quede
+  // como "﻿concepto" y rompa el resolución de campos (AIR-175: CSV con BOM).
+  const raw = readFileSync(path, 'utf8').replace(/^\uFEFF/, '');
   const lower = path.toLowerCase();
   if (lower.endsWith('.csv')) return parseCSV(raw);
 
@@ -263,7 +285,14 @@ function mapRow(row, i) {
   const tsF = resolveField(row, FIELD_CANDIDATES.timestamp);
   let fecha = null;
   if (!tsF) errors.push(`${ref}: sin campo timestamp/date`);
-  else fecha = bogotaDate(toEpochMs(tsF.value, ref));
+  else {
+    // AIR-175: si el valor ya es 'YYYY-MM-DD' PURO, es un DÍA CONTABLE ya en
+    // Bogotá (consolidado) → passthrough SIN conversión de TZ. El shift de zona
+    // solo aplica a timestamps con hora (formato BQ viejo).
+    const dayStr = String(tsF.value).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dayStr)) fecha = dayStr;
+    else fecha = bogotaDate(toEpochMs(tsF.value, ref));
+  }
 
   const conF = resolveField(row, FIELD_CANDIDATES.concepto);
   let concepto = null;
@@ -273,11 +302,30 @@ function mapRow(row, i) {
     if (concepto === '') errors.push(`${ref}: concepto vacío`);
   }
 
+  // AIR-175: creado_por opcional. Si viene en el archivo, se respeta
+  // (passthrough); si no, el default histórico (formato BQ viejo).
+  const creF = resolveField(row, FIELD_CANDIDATES.creadoPor);
+  const creado_por = creF ? String(creF.value).trim() : CREADO_POR;
+
+  // AIR-175: precision_fecha opcional, validada ∈ {dia,mes}. Si la columna no
+  // existe en el input (formato BQ viejo), default 'dia'.
+  const preF = resolveField(row, FIELD_CANDIDATES.precisionFecha);
+  let precision_fecha = PRECISION_DEFAULT;
+  if (preF) {
+    const p = String(preF.value).trim().toLowerCase();
+    if (!PRECISION_VALID.has(p)) {
+      errors.push(`${ref}: precision_fecha inválida "${preF.value}" (esperado: dia | mes)`);
+    } else {
+      precision_fecha = p;
+    }
+  }
+
   return {
     errors,
     resolved: {
       firestoreId: fId && fId.key, category: catF && catF.key, paidBy: pagF && pagF.key,
       amount: amtF && amtF.key, timestamp: tsF && tsF.key, concepto: conF && conF.key,
+      creadoPor: creF && creF.key, precisionFecha: preF && preF.key,
     },
     record: errors.length ? null : {
       concepto,
@@ -285,8 +333,9 @@ function mapRow(row, i) {
       monto,
       fecha,
       pagador_id,
-      creado_por: CREADO_POR,
+      creado_por,
       firestore_id: String(fId.value),
+      precision_fecha,
     },
   };
 }
@@ -317,6 +366,7 @@ function buildSQL(records, inputName) {
       sqlStr(r.pagador_id),
       sqlStr(r.creado_por),
       sqlStr(r.firestore_id),
+      sqlStr(r.precision_fecha),
     ].join(', ') + ')';
   });
   lines.push(tuples.join(',\n'));
