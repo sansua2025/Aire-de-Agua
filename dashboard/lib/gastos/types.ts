@@ -87,3 +87,37 @@ export interface GastoResumen {
   por_pagador: ResumenGrupo[]
   serie_mensual: { mes: string; total: number; count: number }[]
 }
+
+/**
+ * Árbol jerárquico del RPC public.gastos_desglose(desde, hasta) (mig 110, AIR-178).
+ * Un solo viaje para el drill-down del Resumen: tipo → categoría → concepto.
+ * Orden por `total` desc en los tres niveles; conceptos agrupados por texto exacto.
+ * Nota: usa `n` (no `count`) en cada nodo. Para el mismo rango,
+ * desglose.total === resumen.total y desglose.n === resumen.count.
+ */
+export interface DesgloseConcepto {
+  concepto: string
+  total: number
+  n: number
+}
+
+export interface DesgloseCategoria {
+  categoria_id: string
+  categoria: string
+  total: number
+  n: number
+  conceptos: DesgloseConcepto[]
+}
+
+export interface DesgloseTipo {
+  tipo: string
+  total: number
+  n: number
+  categorias: DesgloseCategoria[]
+}
+
+export interface GastoDesglose {
+  total: number
+  n: number
+  tipos: DesgloseTipo[]
+}
