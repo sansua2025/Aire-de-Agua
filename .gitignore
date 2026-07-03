@@ -38,8 +38,9 @@ Thumbs.db
 docs/Errores/*.json
 docs/products.json
 
-# AIR-166 · Backfill de gastos: ni el export de BQ ni el .sql generado entran
-# al repo público (datos financieros).
+# AIR-166 / AIR-175 · Backfill de gastos: ni el export/CSV ni el .sql generado
+# entran al repo público (datos financieros). Los datos viven fuera del repo.
 scripts/.data/
 *.gastos.*
 backfill*.sql
+backfill*.csv
