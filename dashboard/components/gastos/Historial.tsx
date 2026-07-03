@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ChevronDown, Search, Pencil, Trash2, Paperclip, X } from 'lucide-react'
+import { ChevronDown, Search, Pencil, Trash2, Paperclip, X, Download } from 'lucide-react'
 import { TabBar } from './TabBar'
 import { groupThousands, isoToLabel } from '@/lib/gastos/format'
 import { rangoFromPeriodo, PERIODO_OPCIONES, type PeriodoKey } from '@/lib/gastos/periodo'
@@ -43,6 +43,9 @@ export function Historial() {
   // Eliminar
   const [deleteTarget, setDeleteTarget] = useState<GastoDetalle | null>(null)
   const [deleting, setDeleting] = useState(false)
+
+  // Exportar
+  const [exportOpen, setExportOpen] = useState(false)
 
   const rango = useMemo(() => rangoFromPeriodo(periodo), [periodo])
 
@@ -85,6 +88,23 @@ export function Historial() {
       p.set('limit', String(PAGE_SIZE))
       p.set('offset', String(offset))
       return `/api/gastos?${p.toString()}`
+    },
+    [rango.desde, rango.hasta, tipo, categoriaId, pagadorId, qDebounced]
+  )
+
+  // URL del export — MISMOS filtros que el historial (sin limit/offset); `todo`
+  // ignora el filtro activo y exporta todo. "Exportas lo que ves".
+  const exportUrl = useCallback(
+    (todo: boolean) => {
+      if (todo) return '/api/gastos/export?todo=true'
+      const p = new URLSearchParams()
+      p.set('desde', rango.desde)
+      p.set('hasta', rango.hasta)
+      if (tipo) p.set('tipo', tipo)
+      if (categoriaId) p.set('categoria_id', categoriaId)
+      if (pagadorId) p.set('pagador_id', pagadorId)
+      if (qDebounced) p.set('q', qDebounced)
+      return `/api/gastos/export?${p.toString()}`
     },
     [rango.desde, rango.hasta, tipo, categoriaId, pagadorId, qDebounced]
   )
@@ -179,7 +199,17 @@ export function Historial() {
     <div className="gs-hist">
       {/* Header */}
       <header className="gs-hist-head">
-        <h1 className="gs-hist-title">Historial</h1>
+        <div className="gs-hist-head-row">
+          <h1 className="gs-hist-title">Historial</h1>
+          <button
+            type="button"
+            className="gs-hist-export"
+            aria-label="Exportar"
+            onClick={() => setExportOpen(true)}
+          >
+            <Download size={18} strokeWidth={2.2} />
+          </button>
+        </div>
         <p className="gs-hist-sub">
           <span>{rango.label}</span>
           {resumen && (
@@ -331,8 +361,29 @@ export function Historial() {
           onConfirm={confirmDelete}
         />
       )}
+
+      {exportOpen && (
+        <ExportSheet
+          count={count}
+          onClose={() => setExportOpen(false)}
+          onExport={(todo) => {
+            triggerDownload(exportUrl(todo))
+            setExportOpen(false)
+          }}
+        />
+      )}
     </div>
   )
+}
+
+/** Dispara la descarga sin navegar (la respuesta es attachment). */
+function triggerDownload(url: string) {
+  const a = document.createElement('a')
+  a.href = url
+  a.rel = 'noopener'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
 }
 
 /* ==========================================================================
@@ -417,6 +468,88 @@ function ExpenseCard({
             </span>
           )}
         </div>
+      </div>
+    </div>
+  )
+}
+
+/* ==========================================================================
+ * Bottom sheet de exportar (AIR-180)
+ *   "¿Qué exportar?" filtrado (default) vs todos · formato CSV (Excel próximamente)
+ * ======================================================================== */
+function ExportSheet({
+  count,
+  onClose,
+  onExport,
+}: {
+  count: number
+  onClose: () => void
+  onExport: (todo: boolean) => void
+}) {
+  const [scope, setScope] = useState<'filtrado' | 'todos'>('filtrado')
+
+  const cta =
+    scope === 'todos'
+      ? 'Exportar todos los gastos'
+      : `Exportar ${count} ${count === 1 ? 'gasto' : 'gastos'}`
+
+  return (
+    <div className="gs-sheet-backdrop" onClick={onClose} role="presentation">
+      <div
+        className="gs-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="gs-exp-title"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="gs-sheet-handle" aria-hidden />
+        <h2 id="gs-exp-title" className="gs-sheet-title">
+          Exportar
+        </h2>
+
+        <div className="gs-sheet-section">
+          <span className="gs-sheet-label">¿Qué exportar?</span>
+          <div className="gs-seg" role="radiogroup" aria-label="Qué exportar">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={scope === 'filtrado'}
+              className={`gs-seg-opt${scope === 'filtrado' ? ' is-active' : ''}`}
+              onClick={() => setScope('filtrado')}
+            >
+              Solo lo filtrado ({count})
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={scope === 'todos'}
+              className={`gs-seg-opt${scope === 'todos' ? ' is-active' : ''}`}
+              onClick={() => setScope('todos')}
+            >
+              Todos
+            </button>
+          </div>
+        </div>
+
+        <div className="gs-sheet-section">
+          <span className="gs-sheet-label">Formato</span>
+          <div className="gs-fmt">
+            <button type="button" className="gs-fmt-opt is-active" aria-pressed="true">
+              CSV
+            </button>
+            <button type="button" className="gs-fmt-opt" disabled>
+              Excel <span className="gs-fmt-soon">próximamente</span>
+            </button>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          className="gs-sheet-cta"
+          onClick={() => onExport(scope === 'todos')}
+        >
+          {cta}
+        </button>
       </div>
     </div>
   )
