@@ -8,7 +8,7 @@
 -- PROD es correcto; el golden esta desactualizado. Este archivo reconcilia el seed.
 -- Patron identico a 092_air65_reconciliar_golden_get_roas.sql (golden_queries append-only:
 -- UPDATE activo=false condicionado + INSERT fila nueva con hash nuevo, ON CONFLICT DO NOTHING).
--- Idempotente. Aun NO aplicado a PROD (human-gate); respaldo fiel en git (AIR-90).
+-- Idempotente. Aplicado a PROD con autorizacion humana 2026-07-03 (AIR-162 R3); respaldo fiel en git (AIR-90).
 
 -- Desactivar el seed viejo de get_revenue mayo (total deflactado a 36.208.418 / 184 ordenes,
 -- previo al pago tardio de la orden POS #AA22313).
