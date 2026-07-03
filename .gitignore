@@ -37,3 +37,9 @@ Thumbs.db
 # Datos con PII potencial o respuestas de API
 docs/Errores/*.json
 docs/products.json
+
+# AIR-166 · Backfill de gastos: ni el export de BQ ni el .sql generado entran
+# al repo público (datos financieros).
+scripts/.data/
+*.gastos.*
+backfill*.sql
