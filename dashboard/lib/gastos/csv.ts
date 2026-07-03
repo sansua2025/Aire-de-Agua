@@ -68,3 +68,159 @@ export function gastosToCsv(rows: GastoCsvRow[]): string {
   const lines = [CSV_HEADER, ...rows.map(gastoRowToCsv)]
   return CSV_BOM + lines.join(CRLF)
 }
+
+/* ==========================================================================
+ * Parser CSV (AIR-181) — simétrico al serializador de arriba.
+ *   Round-trip real: gastosToCsv(...) → parseGastosCsv(...) reconstruye las filas.
+ *   Robusto a: BOM UTF-8, CRLF y LF, comillas RFC 4180 (comas/comillas/saltos
+ *   embebidos), líneas en blanco finales.
+ * ======================================================================== */
+
+/** Columnas del template de carga masiva, en orden EXACTO (= CSV_HEADER). */
+export const CSV_COLUMNS = ['concepto', 'tipo', 'categoria', 'monto', 'fecha', 'pagador'] as const
+
+/** Una fila cruda del CSV de carga (strings tal cual del archivo). */
+export interface GastoImportRow {
+  concepto: string
+  tipo: string
+  categoria: string
+  monto: string
+  fecha: string
+  pagador: string
+}
+
+/** Resultado del parseo del CSV de carga. */
+export type ParseCsvResult =
+  | { ok: true; rows: GastoImportRow[] }
+  | { ok: false; error: string }
+
+/**
+ * Tokeniza un CSV completo (RFC 4180) en una matriz de celdas. Soporta comillas
+ * dobles con comas/saltos embebidos y `""` como comilla escapada. Normaliza CRLF
+ * y CR sueltos a LF. Devuelve un array de filas; cada fila es un array de celdas.
+ */
+function tokenizeCsv(text: string): string[][] {
+  const rows: string[][] = []
+  let row: string[] = []
+  let cur = ''
+  let inQuotes = false
+  let sawAnyChar = false
+
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]
+
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') {
+          cur += '"'
+          i++
+        } else {
+          inQuotes = false
+        }
+      } else {
+        cur += c
+      }
+      continue
+    }
+
+    if (c === '"') {
+      inQuotes = true
+      sawAnyChar = true
+    } else if (c === ',') {
+      row.push(cur)
+      cur = ''
+      sawAnyChar = true
+    } else if (c === '\r') {
+      // CRLF o CR suelto → fin de registro. El \n de un CRLF se salta.
+      if (text[i + 1] === '\n') i++
+      row.push(cur)
+      rows.push(row)
+      row = []
+      cur = ''
+      sawAnyChar = false
+    } else if (c === '\n') {
+      row.push(cur)
+      rows.push(row)
+      row = []
+      cur = ''
+      sawAnyChar = false
+    } else {
+      cur += c
+      sawAnyChar = true
+    }
+  }
+
+  // Último registro (si el archivo no termina en salto de línea, o hay contenido).
+  if (sawAnyChar || cur !== '' || row.length > 0) {
+    row.push(cur)
+    rows.push(row)
+  }
+  return rows
+}
+
+/** Quita el BOM UTF-8 inicial si está presente. */
+function stripBom(text: string): string {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
+}
+
+/**
+ * Parsea el CSV de carga masiva. Exige el header EXACTO del template
+ * (`concepto,tipo,categoria,monto,fecha,pagador`, sin importar mayúsculas ni
+ * espacios). Devuelve las filas de datos como strings crudos (sin validar
+ * negocio: eso lo hacen el endpoint y el RPC). Ignora filas totalmente vacías.
+ *
+ * @param maxRows tope de filas de datos; supéralo y devuelve error (evita cargas gigantes).
+ */
+export function parseGastosCsv(text: string, maxRows = 2000): ParseCsvResult {
+  const clean = stripBom(text ?? '')
+  const matrix = tokenizeCsv(clean)
+
+  if (matrix.length === 0) {
+    return { ok: false, error: 'El archivo está vacío.' }
+  }
+
+  // Header: comparar celda por celda, tolerante a mayúsculas/espacios.
+  const header = matrix[0].map((h) => h.trim().toLowerCase())
+  const expected = CSV_COLUMNS
+  const headerOk =
+    header.length === expected.length &&
+    expected.every((col, i) => header[i] === col)
+  if (!headerOk) {
+    return {
+      ok: false,
+      error: `Encabezado inválido. Debe ser exactamente: ${CSV_HEADER}`,
+    }
+  }
+
+  const rows: GastoImportRow[] = []
+  for (let r = 1; r < matrix.length; r++) {
+    const cells = matrix[r]
+    // Fila totalmente vacía (p.ej. salto final) → ignorar sin error.
+    if (cells.every((c) => c.trim() === '')) continue
+
+    if (cells.length !== expected.length) {
+      return {
+        ok: false,
+        error: `Fila ${r + 1}: se esperaban ${expected.length} columnas y llegaron ${cells.length}.`,
+      }
+    }
+
+    rows.push({
+      concepto: cells[0],
+      tipo: cells[1],
+      categoria: cells[2],
+      monto: cells[3],
+      fecha: cells[4],
+      pagador: cells[5],
+    })
+
+    if (rows.length > maxRows) {
+      return {
+        ok: false,
+        error: `Demasiadas filas (máximo ${maxRows}). Divide el archivo en partes.`,
+      }
+    }
+  }
+
+  return { ok: true, rows }
+}

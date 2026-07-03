@@ -1097,3 +1097,240 @@
   font-variant-numeric: tabular-nums;
   flex: none;
 }
+
+/* ===========================================================================
+ * Carga masiva CSV (AIR-181) · /gastos/importar
+ * ========================================================================= */
+
+/* Fila de acciones del header del Historial (Importar + Exportar) */
+.gs-hist-actions { display: flex; align-items: center; gap: 8px; }
+/* gs-hist-export se reusa como <a> (Link) para el Upload → sin subrayado */
+a.gs-hist-export { text-decoration: none; }
+
+.gs-imp {
+  width: 100%;
+  max-width: 430px;
+  margin: 0 auto;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 20px 40px;
+}
+
+.gs-imp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2px;
+}
+.gs-imp-title { font-size: 18px; font-weight: 600; color: var(--g-ink); margin: 0; }
+
+.gs-imp-card {
+  background: var(--g-surface);
+  border-radius: 18px;
+  padding: 16px;
+  box-shadow: var(--g-shadow-key);
+}
+
+.gs-imp-step { display: flex; gap: 12px; align-items: flex-start; }
+.gs-imp-num {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  background: var(--g-primary);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+}
+.gs-imp-step-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.gs-imp-step-title { font-size: 15px; font-weight: 600; color: var(--g-ink); margin: 0; }
+.gs-imp-step-desc { font-size: 13px; color: var(--g-ink-tertiary); margin: 0; line-height: 1.5; }
+.gs-imp-step-desc code {
+  font-size: 12px;
+  background: var(--g-surface-muted);
+  padding: 1px 5px;
+  border-radius: 5px;
+  color: var(--g-ink-secondary);
+}
+
+.gs-imp-download {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 15px;
+  border-radius: 999px;
+  border: 1px solid var(--g-border);
+  background: var(--g-surface);
+  color: var(--g-primary);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  margin-top: 2px;
+}
+
+/* Zona de subida / drag & drop */
+.gs-imp-drop {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px 16px;
+  border: 1.5px dashed var(--g-border-dashed);
+  border-radius: 16px;
+  background: var(--g-surface-soft);
+  text-align: center;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.gs-imp-drop.is-over {
+  border-color: var(--g-primary);
+  background: #EEF0E6;
+}
+.gs-imp-drop-ico { color: var(--g-ink-tertiary); }
+.gs-imp-drop-txt { font-size: 13px; color: var(--g-ink-tertiary); }
+.gs-imp-file {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.gs-imp-filename {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--g-ink);
+  word-break: break-all;
+}
+.gs-imp-reset {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--g-ink-tertiary);
+  padding: 2px 0;
+}
+
+.gs-imp-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--g-ink-secondary);
+  margin: 0;
+}
+.gs-imp-spin { animation: gs-imp-spin 0.9s linear infinite; }
+@keyframes gs-imp-spin { to { transform: rotate(360deg); } }
+
+.gs-imp-error {
+  font-size: 13px;
+  color: var(--g-danger);
+  background: #F7E7E2;
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin: 0;
+  line-height: 1.4;
+}
+
+/* Preview: conteos válidas / omitidas */
+.gs-imp-preview { display: flex; flex-direction: column; gap: 12px; }
+.gs-imp-counts { display: flex; gap: 10px; }
+.gs-imp-count {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 12px;
+  border-radius: 14px;
+}
+.gs-imp-count--ok { background: #E9EBDD; }
+.gs-imp-count--warn { background: #F3E1D8; }
+.gs-imp-count-n { font-size: 24px; font-weight: 700; color: var(--g-ink); font-variant-numeric: tabular-nums; }
+.gs-imp-count--ok .gs-imp-count-n { color: #5C6637; }
+.gs-imp-count--warn .gs-imp-count-n { color: #B06A47; }
+.gs-imp-count-l { font-size: 12px; font-weight: 500; color: var(--g-ink-secondary); }
+
+/* Lista scrolleable de filas omitidas */
+.gs-imp-omit {
+  border: 1px solid var(--g-border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.gs-imp-omit-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #B06A47;
+  background: var(--g-surface-soft);
+  padding: 9px 12px;
+  margin: 0;
+  border-bottom: 1px solid var(--g-border);
+}
+.gs-imp-omit-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.gs-imp-omit-item {
+  display: flex;
+  gap: 10px;
+  padding: 8px 12px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--g-surface-muted);
+}
+.gs-imp-omit-item:last-child { border-bottom: none; }
+.gs-imp-omit-fila { flex: none; font-weight: 600; color: var(--g-ink-secondary); }
+.gs-imp-omit-motivo { color: var(--g-ink-tertiary); line-height: 1.4; }
+
+/* CTA de importar / resultado */
+.gs-imp-cta {
+  width: 100%;
+  padding: 14px;
+  border-radius: 16px;
+  background: var(--g-primary);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-shadow: var(--g-shadow-cta);
+}
+.gs-imp-cta:disabled { opacity: 0.45; box-shadow: none; cursor: not-allowed; }
+.gs-imp-cta--ghost {
+  background: var(--g-surface-muted);
+  color: var(--g-ink-secondary);
+  box-shadow: none;
+}
+
+.gs-imp-result { display: flex; flex-direction: column; gap: 10px; }
+.gs-imp-result-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--g-ink-secondary);
+  margin: 0;
+}
+.gs-imp-ok { color: var(--g-primary); }
+.gs-imp-ok strong { font-size: 18px; }
+.gs-imp-dup { color: var(--g-ink-tertiary); font-size: 13px; }
+.gs-imp-actions { display: flex; gap: 10px; margin-top: 4px; }
+.gs-imp-actions .gs-imp-cta { flex: 1 1 0; }
