@@ -675,3 +675,185 @@
 .gs-modal-btn--ghost { background: var(--g-surface-muted); color: var(--g-ink-secondary); }
 .gs-modal-btn--danger { background: var(--g-danger); color: #fff; }
 .gs-modal-btn:disabled { opacity: 0.5; }
+
+/* ===========================================================================
+ * Pantalla 4 · Resumen (AIR-169)
+ * ========================================================================= */
+.gs-res {
+  width: 100%;
+  max-width: 430px;
+  margin: 0 auto;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px 20px 112px; /* pb deja aire para la tab bar fija */
+}
+
+/* Header + selector de mes */
+.gs-res-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.gs-res-title { font-size: 24px; font-weight: 700; color: var(--g-ink); margin: 0; }
+.gs-monthsel {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--g-border);
+  background: var(--g-surface);
+}
+.gs-monthsel-nav {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  color: var(--g-ink-secondary);
+  flex: none;
+}
+.gs-monthsel-nav:disabled { opacity: 0.3; cursor: not-allowed; }
+.gs-monthsel-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--g-ink);
+  min-width: 78px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* Estados de carga/error/vacío del Resumen */
+.gs-res-state {
+  text-align: center;
+  color: var(--g-ink-tertiary);
+  font-size: 14px;
+  padding: 48px 20px;
+}
+.gs-res-empty { font-size: 13px; color: var(--g-ink-tertiary); margin: 0; }
+
+/* Card "Total del mes" (oliva) */
+.gs-res-total {
+  background: var(--g-primary);
+  border-radius: 20px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  box-shadow: 0 6px 16px rgba(36, 31, 20, 0.15);
+  color: #fff;
+}
+.gs-res-total-lbl {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #C9D0B4;
+}
+.gs-res-total-val {
+  font-size: 32px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: -0.5px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+.gs-res-total-sub { font-size: 12px; color: #C9D0B4; }
+
+/* Cards blancas (por categoría / tendencia / pagado por) */
+.gs-res-card {
+  background: var(--g-surface);
+  border-radius: 20px;
+  padding: 16px 18px;
+  box-shadow: var(--g-shadow-key);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.gs-res-card-title { font-size: 14px; font-weight: 600; color: var(--g-ink); margin: 0; }
+
+/* Por categoría — label/valor + barra de progreso */
+.gs-res-catlist { display: flex; flex-direction: column; gap: 13px; }
+.gs-cat { display: flex; flex-direction: column; gap: 6px; }
+.gs-cat-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.gs-cat-label { font-size: 12px; font-weight: 500; color: var(--g-ink-secondary); min-width: 0; }
+.gs-cat-value {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--g-ink);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+.gs-cat-track {
+  width: 100%;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--g-surface-muted);
+  overflow: hidden;
+}
+.gs-cat-fill {
+  height: 8px;
+  border-radius: 4px;
+  min-width: 0;
+  transition: width 0.3s ease;
+}
+
+/* Tendencia · barras verticales alineadas al fondo */
+.gs-res-trend {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px;
+  height: 128px;
+}
+.gs-trend-col {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+}
+.gs-trend-track {
+  flex: 1 1 auto;
+  width: 30px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.gs-trend-bar {
+  width: 30px;
+  min-height: 8px;
+  border-radius: 8px;
+  background: #DDE0CF;
+  transition: height 0.3s ease;
+}
+.gs-trend-bar.is-current { background: var(--g-primary); }
+.gs-trend-lbl { font-size: 11px; font-weight: 400; color: var(--g-ink-faint); }
+.gs-trend-lbl.is-current { font-weight: 600; color: var(--g-primary); }
+
+/* Pagado por */
+.gs-res-payers { display: flex; flex-direction: column; gap: 12px; }
+.gs-payer-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.gs-payer-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--g-ink-secondary);
+  min-width: 0;
+}
+.gs-payer-dot { width: 8px; height: 8px; border-radius: 999px; flex: none; }
+.gs-payer-monto {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--g-ink);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
