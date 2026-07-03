@@ -965,3 +965,135 @@
   font-variant-numeric: tabular-nums;
   flex: none;
 }
+
+/* ---------------------------------------------------------------------------
+ * Resumen · selector de rango + drill-down (AIR-179)
+ * ------------------------------------------------------------------------- */
+
+/* Sheet "Personalizado" — 2 date inputs nativos + aplicar (mobile-friendly) */
+.gs-daterange {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  background: var(--g-surface);
+  border: 1px solid var(--g-border);
+  border-radius: 16px;
+  padding: 14px 16px;
+  box-shadow: var(--g-shadow-key);
+}
+.gs-daterange-field { display: flex; flex-direction: column; gap: 5px; flex: 1 1 130px; min-width: 0; }
+.gs-daterange-lbl {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: var(--g-ink-tertiary);
+}
+.gs-daterange-input {
+  width: 100%;
+  padding: 9px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--g-border);
+  background: var(--g-surface);
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--g-ink);
+  outline: none;
+}
+.gs-daterange-input:focus { border-color: var(--g-primary); }
+.gs-daterange-apply {
+  flex: 1 1 100%;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--g-primary);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+.gs-daterange-apply:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Barras de tendencia clickeables (reset del <button>) */
+.gs-trend-col { padding: 0; background: none; border: none; }
+.gs-trend-col:active .gs-trend-bar { filter: brightness(0.94); }
+
+/* Drill-down tipo → categoría → concepto */
+.gs-desg { display: flex; flex-direction: column; }
+.gs-desg-node { display: flex; flex-direction: column; }
+.gs-desg > .gs-desg-node + .gs-desg-node { border-top: 1px solid var(--g-surface-muted); }
+.gs-desg-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 0;
+  text-align: left;
+}
+.gs-desg-lead { display: inline-flex; align-items: center; gap: 9px; min-width: 0; }
+.gs-desg-trail { display: inline-flex; align-items: baseline; gap: 12px; flex: none; }
+.gs-desg-chev { color: var(--g-ink-faint); transition: transform 0.15s ease; flex: none; }
+.gs-desg-chev.is-open { transform: rotate(90deg); }
+.gs-desg-dot { width: 9px; height: 9px; border-radius: 999px; flex: none; }
+.gs-desg-name {
+  font-size: 13px;
+  color: var(--g-ink-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.gs-desg-tipo .gs-desg-name { font-weight: 600; color: var(--g-ink); }
+.gs-desg-cat .gs-desg-name { font-weight: 500; }
+.gs-desg-count {
+  font-size: 11px;
+  color: var(--g-ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+.gs-desg-total {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--g-ink);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Nivel 2 · categorías (indentadas, barra de color del tipo a la izquierda) */
+.gs-desg-children { display: flex; flex-direction: column; padding-left: 24px; }
+.gs-desg-cat {
+  border-left: 3px solid var(--g-border);
+  padding-left: 12px;
+}
+
+/* Nivel 3 · conceptos */
+.gs-desg-conceptos {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 2px 0 4px 12px;
+  border-left: 3px solid var(--g-border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.gs-desg-concepto {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.gs-desg-concepto-name {
+  font-size: 12px;
+  color: var(--g-ink-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.gs-desg-concepto-total {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--g-ink-secondary);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
