@@ -1,16 +1,17 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import {
   X,
   ArrowLeft,
   ArrowRight,
   Pencil,
   Calendar,
-  Camera,
   Check,
 } from 'lucide-react'
 import { Numpad } from './Numpad'
+import { ReceiptUploader } from './ReceiptUploader'
 import {
   formatMontoDigits,
   bogotaTodayISO,
@@ -18,22 +19,21 @@ import {
   isoToLabel,
 } from '@/lib/gastos/format'
 import { appendDigit } from '@/lib/gastos/format'
-import type { GastosConfig, GastoCategoria, GastoPagador } from '@/lib/gastos/types'
+import { tiposFromCategorias } from '@/lib/gastos/tipos'
+import type {
+  GastosConfig,
+  GastoCategoria,
+  GastoPagador,
+  GastoDetalle,
+} from '@/lib/gastos/types'
 
 type Step = 'monto' | 'detalle'
 type Toast = { kind: 'ok' | 'err'; msg: string }
 
-/** Tipos únicos derivados de las categorías (data-driven, ordenados por `orden`). */
-function tiposFromCategorias(categorias: GastoCategoria[]): string[] {
-  const minOrden = new Map<string, number>()
-  for (const c of categorias) {
-    const prev = minOrden.get(c.tipo)
-    if (prev === undefined || c.orden < prev) minOrden.set(c.tipo, c.orden)
-  }
-  return [...minOrden.entries()].sort((a, b) => a[1] - b[1]).map(([t]) => t)
-}
-
 export function GastosApp() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const editId = searchParams.get('id')
   const [config, setConfig] = useState<GastosConfig | null>(null)
   const [configError, setConfigError] = useState<string | null>(null)
 
@@ -44,6 +44,13 @@ export function GastosApp() {
   const [categoriaId, setCategoriaId] = useState('')
   const [fecha, setFecha] = useState(() => bogotaTodayISO())
   const [pagadorId, setPagadorId] = useState('')
+
+  // Edición (AIR-168): id del gasto que se edita + estado del recibo.
+  const [gastoId, setGastoId] = useState<string | null>(null)
+  const [reciboPath, setReciboPath] = useState<string | null>(null)
+  // ¿el usuario tocó el recibo? Solo si lo tocó mandamos la clave recibo_path al
+  // guardar (trap del RPC: omitir preserva, null borra, string aplica).
+  const [reciboTouched, setReciboTouched] = useState(false)
 
   const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState<Toast | null>(null)
@@ -77,6 +84,35 @@ export function GastosApp() {
     },
     []
   )
+
+  // Edición: si viene ?id=, hidrata el formulario y abre directo en Detalle.
+  // GastoDetalle ya trae `tipo` resuelto → no depende de que config haya cargado.
+  useEffect(() => {
+    if (!editId) return
+    let active = true
+    fetch(`/api/gastos/${editId}`)
+      .then(async (r) => {
+        if (!r.ok) throw new Error((await r.json()).error ?? 'No se pudo cargar el gasto')
+        return r.json() as Promise<{ gasto: GastoDetalle }>
+      })
+      .then(({ gasto }) => {
+        if (!active) return
+        setGastoId(gasto.id)
+        setMontoDigits(String(Math.trunc(Number(gasto.monto))))
+        setConcepto(gasto.concepto)
+        setTipo(gasto.tipo)
+        setCategoriaId(gasto.categoria_id)
+        setFecha(gasto.fecha)
+        setPagadorId(gasto.pagador_id)
+        setReciboPath(gasto.recibo_path)
+        setReciboTouched(false)
+        setStep('detalle')
+      })
+      .catch((e) => active && showToast({ kind: 'err', msg: e instanceof Error ? e.message : 'Error' }))
+    return () => {
+      active = false
+    }
+  }, [editId])
 
   const monto = useMemo(() => Number(montoDigits.replace(/\D/g, '') || '0'), [montoDigits])
   const montoLabel = formatMontoDigits(montoDigits)
@@ -113,7 +149,19 @@ export function GastosApp() {
     setCategoriaId('')
     setFecha(bogotaTodayISO())
     setPagadorId(config?.pagadores[0]?.id ?? '')
+    setGastoId(null)
+    setReciboPath(null)
+    setReciboTouched(false)
     setStep('monto')
+  }
+
+  function setRecibo(path: string | null) {
+    setReciboPath(path)
+    setReciboTouched(true)
+  }
+
+  function closeToHistorial() {
+    router.push('/gastos/historial')
   }
 
   const canSave =
@@ -123,15 +171,38 @@ export function GastosApp() {
     if (!canSave) return
     setSaving(true)
     try {
+      const body: Record<string, unknown> = {
+        concepto: concepto.trim(),
+        categoria_id: categoriaId,
+        monto,
+        fecha,
+        pagador_id: pagadorId,
+      }
+      if (gastoId) {
+        body.id = gastoId
+        // Edición: solo mandamos recibo_path si el usuario lo tocó (null borra,
+        // string aplica). Si no lo tocó, OMITIMOS la clave → el RPC lo preserva.
+        if (reciboTouched) body.recibo_path = reciboPath
+      } else if (reciboPath) {
+        // Alta con recibo adjunto.
+        body.recibo_path = reciboPath
+      }
+
       const res = await fetch('/api/gastos', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ concepto: concepto.trim(), categoria_id: categoriaId, monto, fecha, pagador_id: pagadorId }),
+        body: JSON.stringify(body),
       })
       const data = await res.json()
       if (!res.ok || !data.ok) throw new Error(data.error ?? 'No se pudo guardar el gasto')
-      showToast({ kind: 'ok', msg: 'Gasto guardado' })
-      resetForm()
+
+      if (gastoId) {
+        // Tras editar, volvemos al historial (donde se ve el cambio).
+        router.push('/gastos/historial')
+      } else {
+        showToast({ kind: 'ok', msg: 'Gasto guardado' })
+        resetForm()
+      }
     } catch (e) {
       showToast({ kind: 'err', msg: e instanceof Error ? e.message : 'Error al guardar' })
     } finally {
@@ -151,17 +222,20 @@ export function GastosApp() {
     <>
       {step === 'monto' ? (
         <MontoScreen
+          editing={!!gastoId}
           montoLabel={montoLabel}
           concepto={concepto}
           canNext={monto > 0}
           onDigit={(d) => setMontoDigits((s) => appendDigit(s, d))}
           onClear={() => setMontoDigits('')}
           onBackspace={() => setMontoDigits((s) => s.slice(0, -1))}
+          onClose={closeToHistorial}
           onConcept={() => monto > 0 && setStep('detalle')}
           onNext={() => setStep('detalle')}
         />
       ) : (
         <DetalleScreen
+          editing={!!gastoId}
           montoLabel={montoLabel}
           concepto={concepto}
           setConcepto={setConcepto}
@@ -180,6 +254,8 @@ export function GastosApp() {
           yesterday={yesterday}
           setFecha={setFecha}
           dateRef={dateRef}
+          reciboPath={reciboPath}
+          onRecibo={setRecibo}
           canSave={canSave}
           saving={saving}
           onEditMonto={() => setStep('monto')}
@@ -200,31 +276,35 @@ export function GastosApp() {
  * Pantalla 1 · Monto
  * ======================================================================== */
 function MontoScreen({
+  editing,
   montoLabel,
   concepto,
   canNext,
   onDigit,
   onClear,
   onBackspace,
+  onClose,
   onConcept,
   onNext,
 }: {
+  editing: boolean
   montoLabel: string
   concepto: string
   canNext: boolean
   onDigit: (d: string) => void
   onClear: () => void
   onBackspace: () => void
+  onClose: () => void
   onConcept: () => void
   onNext: () => void
 }) {
   return (
     <div className="gs-screen">
       <div className="gs-header">
-        <button type="button" className="gs-iconbtn" aria-label="Cancelar" onClick={onClear}>
+        <button type="button" className="gs-iconbtn" aria-label="Cerrar" onClick={onClose}>
           <X size={16} strokeWidth={2.2} />
         </button>
-        <span className="gs-title">Nuevo gasto</span>
+        <span className="gs-title">{editing ? 'Editar monto' : 'Nuevo gasto'}</span>
         <span className="gs-spacer40" aria-hidden />
       </div>
 
@@ -262,6 +342,7 @@ function MontoScreen({
  * Pantalla 2 · Detalle
  * ======================================================================== */
 function DetalleScreen(props: {
+  editing: boolean
   montoLabel: string
   concepto: string
   setConcepto: (v: string) => void
@@ -280,12 +361,15 @@ function DetalleScreen(props: {
   yesterday: string
   setFecha: (v: string) => void
   dateRef: React.RefObject<HTMLInputElement | null>
+  reciboPath: string | null
+  onRecibo: (path: string | null) => void
   canSave: boolean
   saving: boolean
   onEditMonto: () => void
   onSave: () => void
 }) {
   const {
+    editing,
     montoLabel,
     concepto,
     setConcepto,
@@ -304,6 +388,8 @@ function DetalleScreen(props: {
     yesterday,
     setFecha,
     dateRef,
+    reciboPath,
+    onRecibo,
     canSave,
     saving,
     onEditMonto,
@@ -326,7 +412,7 @@ function DetalleScreen(props: {
         <button type="button" className="gs-iconbtn" aria-label="Volver" onClick={onEditMonto}>
           <ArrowLeft size={18} strokeWidth={2.2} />
         </button>
-        <span className="gs-title">Detalle del gasto</span>
+        <span className="gs-title">{editing ? 'Editar gasto' : 'Detalle del gasto'}</span>
         <span className="gs-spacer40" aria-hidden />
       </div>
 
@@ -455,11 +541,8 @@ function DetalleScreen(props: {
         </div>
       </div>
 
-      {/* Adjuntar recibo — placeholder visual (subida a Storage: fuera de alcance AIR-167) */}
-      <div className="gs-uploader" aria-hidden>
-        <Camera size={16} strokeWidth={2} />
-        Adjuntar foto del recibo
-      </div>
+      {/* Adjuntar recibo — uploader real a Storage privado (AIR-168). */}
+      <ReceiptUploader value={reciboPath} onChange={onRecibo} />
 
       <div className="gs-flex1" />
 
