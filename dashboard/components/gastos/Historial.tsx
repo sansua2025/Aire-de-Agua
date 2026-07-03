@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ChevronDown, Search, Pencil, Trash2, Paperclip, X, Download } from 'lucide-react'
+import Link from 'next/link'
+import { ChevronDown, Search, Pencil, Trash2, Paperclip, X, Download, Upload } from 'lucide-react'
 import { TabBar } from './TabBar'
 import { groupThousands, isoToLabel } from '@/lib/gastos/format'
 import { rangoFromPeriodo, PERIODO_OPCIONES, type PeriodoKey } from '@/lib/gastos/periodo'
@@ -201,14 +202,23 @@ export function Historial() {
       <header className="gs-hist-head">
         <div className="gs-hist-head-row">
           <h1 className="gs-hist-title">Historial</h1>
-          <button
-            type="button"
-            className="gs-hist-export"
-            aria-label="Exportar"
-            onClick={() => setExportOpen(true)}
-          >
-            <Download size={18} strokeWidth={2.2} />
-          </button>
+          <div className="gs-hist-actions">
+            <Link
+              href="/gastos/importar"
+              className="gs-hist-export"
+              aria-label="Importar CSV"
+            >
+              <Upload size={18} strokeWidth={2.2} />
+            </Link>
+            <button
+              type="button"
+              className="gs-hist-export"
+              aria-label="Exportar"
+              onClick={() => setExportOpen(true)}
+            >
+              <Download size={18} strokeWidth={2.2} />
+            </button>
+          </div>
         </div>
         <p className="gs-hist-sub">
           <span>{rango.label}</span>

@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { CSV_HEADER, escapeCsvField, gastosToCsv, type GastoCsvRow } from './csv'
+import {
+  CSV_HEADER,
+  escapeCsvField,
+  gastosToCsv,
+  parseGastosCsv,
+  type GastoCsvRow,
+} from './csv'
 
 /** Parser CSV mínimo (RFC 4180, sin newlines embebidos) para probar round-trip. */
 function parseCsvLine(line: string): string[] {
@@ -96,5 +102,92 @@ describe('gastosToCsv', () => {
   it('sin filas: BOM + solo header', () => {
     const csv = gastosToCsv([])
     expect(csv).toBe('﻿concepto,tipo,categoria,monto,fecha,pagador')
+  })
+})
+
+describe('parseGastosCsv', () => {
+  it('parsea un CSV simple con LF y sin BOM', () => {
+    const csv = 'concepto,tipo,categoria,monto,fecha,pagador\nCafé,Operations,Gastos Fijos,10000,2026-06-01,Aire de Agua'
+    const res = parseGastosCsv(csv)
+    expect(res.ok).toBe(true)
+    if (!res.ok) return
+    expect(res.rows).toHaveLength(1)
+    expect(res.rows[0]).toEqual({
+      concepto: 'Café',
+      tipo: 'Operations',
+      categoria: 'Gastos Fijos',
+      monto: '10000',
+      fecha: '2026-06-01',
+      pagador: 'Aire de Agua',
+    })
+  })
+
+  it('acepta BOM, CRLF y salta la línea vacía final', () => {
+    const csv = '﻿concepto,tipo,categoria,monto,fecha,pagador\r\nTela,COGS,COGS,150000,2026-06-02,Santi & Susi\r\n'
+    const res = parseGastosCsv(csv)
+    expect(res.ok).toBe(true)
+    if (!res.ok) return
+    expect(res.rows).toHaveLength(1)
+    expect(res.rows[0].concepto).toBe('Tela')
+    expect(res.rows[0].pagador).toBe('Santi & Susi')
+  })
+
+  it('rechaza header distinto con 400 claro', () => {
+    const res = parseGastosCsv('a,b,c,d,e,f\n1,2,3,4,5,6')
+    expect(res.ok).toBe(false)
+    if (res.ok) return
+    expect(res.error).toContain('Encabezado inválido')
+  })
+
+  it('header tolerante a mayúsculas y espacios', () => {
+    const res = parseGastosCsv(' Concepto , TIPO ,Categoria,Monto,Fecha,Pagador\nX,Marketing,Feria,1,2026-01-01,Aire de Agua')
+    expect(res.ok).toBe(true)
+  })
+
+  it('reporta fila con nº de columnas incorrecto', () => {
+    const res = parseGastosCsv('concepto,tipo,categoria,monto,fecha,pagador\nsolo,tres,columnas')
+    expect(res.ok).toBe(false)
+    if (res.ok) return
+    expect(res.error).toContain('Fila 2')
+  })
+
+  it('preserva comas y comillas embebidas (RFC 4180)', () => {
+    const csv =
+      'concepto,tipo,categoria,monto,fecha,pagador\r\n' +
+      '"Tela, ""premium""",COGS,COGS,150000,2026-06-01,Aire de Agua'
+    const res = parseGastosCsv(csv)
+    expect(res.ok).toBe(true)
+    if (!res.ok) return
+    expect(res.rows[0].concepto).toBe('Tela, "premium"')
+  })
+
+  it('respeta el tope de filas', () => {
+    const body = Array.from({ length: 5 }, (_, i) => `c${i},Marketing,Feria,1,2026-01-01,Aire de Agua`).join('\n')
+    const res = parseGastosCsv(`${CSV_HEADER}\n${body}`, 3)
+    expect(res.ok).toBe(false)
+    if (res.ok) return
+    expect(res.error).toContain('Demasiadas filas')
+  })
+
+  it('ROUND-TRIP real: la salida de gastosToCsv se re-parsea sin editar', () => {
+    const rows: GastoCsvRow[] = [
+      { concepto: 'Pago envíos, coordinadora', tipo: 'Shipping', categoria_nombre: 'Shipping', monto: 84000, fecha: '2026-06-10', pagador_nombre: 'Aire de Agua' },
+      { concepto: 'Bordado "premium"', tipo: 'COGS', categoria_nombre: 'COGS', monto: 220000, fecha: '2026-06-11', pagador_nombre: 'Santi & Susi' },
+    ]
+    const csv = gastosToCsv(rows)
+    const res = parseGastosCsv(csv)
+    expect(res.ok).toBe(true)
+    if (!res.ok) return
+    expect(res.rows).toHaveLength(2)
+    expect(res.rows[0]).toEqual({
+      concepto: 'Pago envíos, coordinadora',
+      tipo: 'Shipping',
+      categoria: 'Shipping',
+      monto: '84000',
+      fecha: '2026-06-10',
+      pagador: 'Aire de Agua',
+    })
+    expect(res.rows[1].concepto).toBe('Bordado "premium"')
+    expect(res.rows[1].monto).toBe('220000')
   })
 })

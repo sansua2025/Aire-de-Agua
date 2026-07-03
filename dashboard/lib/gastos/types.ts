@@ -121,3 +121,46 @@ export interface GastoDesglose {
   n: number
   tipos: DesgloseTipo[]
 }
+
+/* --------------------------------------------------------------------------
+ * Carga masiva CSV (AIR-181) · respuestas de POST /api/gastos/import
+ * ------------------------------------------------------------------------ */
+
+/** Una fila omitida en la carga (fila 1-based sobre los datos, sin header). */
+export interface ImportOmitEntry {
+  fila: number
+  motivo: string
+}
+
+/** Fila válida mostrada en la muestra del preview. */
+export interface ImportPreviewRow {
+  concepto: string
+  tipo: string
+  categoria: string
+  monto: number
+  fecha: string
+  pagador: string
+}
+
+/** Respuesta del PREVIEW (POST /api/gastos/import?dry_run=true). No escribe. */
+export interface ImportPreviewResponse {
+  ok: true
+  total: number
+  validas: number
+  omitidas: ImportOmitEntry[]
+  muestra: ImportPreviewRow[]
+}
+
+/** Resultado del RPC public.gastos_importar (mig 111), envuelto por el commit. */
+export interface ImportResultado {
+  total: number
+  insertadas: number
+  duplicadas: number
+  omitidas: ImportOmitEntry[]
+}
+
+/** Respuesta del COMMIT (POST /api/gastos/import). */
+export interface ImportCommitResponse {
+  ok: true
+  resultado: ImportResultado
+}
