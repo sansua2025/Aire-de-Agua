@@ -36,11 +36,48 @@ export function monthLabel(iso: string): string {
   return `${MESES_LARGOS[(m - 1) % 12]} ${y}`
 }
 
-/** Resta `n` meses a un 'YYYY-MM' → 'YYYY-MM-01' (primer día). */
-function shiftMonth(iso: string, months: number): string {
+const MESES_CORTOS = [
+  'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
+  'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic',
+]
+
+/** Etiqueta corta del mes de una clave 'YYYY-MM' (o ISO): '2026-06' → 'Jun'. */
+export function monthShortLabel(monthKeyOrISO: string): string {
+  const m = Number(monthKeyOrISO.slice(5, 7))
+  return MESES_CORTOS[(m - 1) % 12]
+}
+
+/**
+ * Suma `months` meses a un ISO → 'YYYY-MM-01' (primer día del mes resultante).
+ * `months` negativo resta. Determinista (UTC), sin arrastre de zona horaria.
+ */
+export function shiftMonth(iso: string, months: number): string {
   const [y, m] = iso.split('-').map(Number)
   const dt = new Date(Date.UTC(y, m - 1 + months, 1))
   return dt.toISOString().slice(0, 10)
+}
+
+export interface SeisMeses {
+  desde: string // primer día del mes (sel - 5)
+  hasta: string // último día del mes seleccionado
+  keys: string[] // 6 claves 'YYYY-MM' consecutivas, de (sel - 5) a sel
+}
+
+/**
+ * Ventana de 6 meses anclada al mes de `selISO` (inclusive), hacia atrás.
+ * Devuelve el rango [primer día de mes-5 .. último día del mes sel] para pedir la
+ * `serie_mensual` al RPC, y las 6 claves 'YYYY-MM' para rellenar con 0 los meses
+ * ausentes (rellenar ceros NO es agregar montos).
+ */
+export function sixMonthWindow(selISO: string): SeisMeses {
+  const first = firstDayOfMonth(selISO)
+  const keys: string[] = []
+  for (let i = 5; i >= 0; i--) keys.push(shiftMonth(first, -i).slice(0, 7))
+  return {
+    desde: shiftMonth(first, -5),
+    hasta: lastDayOfMonth(first),
+    keys,
+  }
 }
 
 /**
