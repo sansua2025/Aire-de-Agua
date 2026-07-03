@@ -3,8 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { auth } from '@/auth'
 import { getAdminClient } from '@/lib/supabase/admin'
 import { isValidReciboPath } from '@/lib/gastos/recibo-path'
-
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
+import { parseGastoFiltros, applyGastoFiltros } from '@/lib/gastos/filtros'
 
 /**
  * GET /api/gastos
@@ -30,23 +29,12 @@ export async function GET(req: NextRequest) {
 
   const sp = req.nextUrl.searchParams
 
-  const desde = sp.get('desde')
-  const hasta = sp.get('hasta')
-  if (desde && !ISO_DATE.test(desde)) {
-    return NextResponse.json({ error: 'desde inválido' }, { status: 400 })
+  // Filtros compartidos con el export (`/api/gastos/export`) — "exportas lo que ves".
+  const parsed = parseGastoFiltros(sp)
+  if (!parsed.ok) {
+    return NextResponse.json({ error: parsed.error }, { status: 400 })
   }
-  if (hasta && !ISO_DATE.test(hasta)) {
-    return NextResponse.json({ error: 'hasta inválido' }, { status: 400 })
-  }
-
-  const tipo = sp.get('tipo')
-  const categoriaId = sp.get('categoria_id')
-  const pagadorId = sp.get('pagador_id')
-
-  // Búsqueda: quitar metacaracteres que PostgREST interpreta en un filtro
-  // (`,()*%` y comillas) — supabase-js no los escapa dentro de .ilike(). Cap 100.
-  const qRaw = (sp.get('q') ?? '').trim()
-  const q = qRaw.replace(/[,()*%"'\\]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 100)
+  const filtros = parsed.filtros
 
   const limit = clampInt(sp.get('limit'), 30, 1, 100)
   const offset = clampInt(sp.get('offset'), 0, 0, 100_000)
@@ -54,13 +42,7 @@ export async function GET(req: NextRequest) {
   try {
     const admin = getAdminClient() as unknown as SupabaseClient
     let query = admin.from('v_gastos_detalle').select('*', { count: 'exact' })
-
-    if (desde) query = query.gte('fecha', desde)
-    if (hasta) query = query.lte('fecha', hasta)
-    if (tipo) query = query.eq('tipo', tipo)
-    if (categoriaId) query = query.eq('categoria_id', categoriaId)
-    if (pagadorId) query = query.eq('pagador_id', pagadorId)
-    if (q) query = query.ilike('concepto', `%${q}%`)
+    query = applyGastoFiltros(query, filtros)
 
     query = query
       .order('fecha', { ascending: false })
