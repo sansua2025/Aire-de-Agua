@@ -23,9 +23,22 @@ const inter = Inter({
 })
 
 export const metadata: Metadata = {
+  // Base propia del dominio de gastos para el og:image absoluto (override por env).
+  metadataBase: new URL(
+    process.env.NEXT_PUBLIC_GASTOS_SITE_URL ?? 'https://gastos.airedeagua.com'
+  ),
   title: 'Gastos · Aire de Agua',
   description: 'Captura de gastos · Aire de Agua',
   robots: { index: false, follow: false },
+  // OG de las páginas internas de gastos (con sesión). Bajo /gastos siempre es la
+  // app de captura, así que se fija directo sin lógica host-aware (AIR-176).
+  openGraph: {
+    title: 'Gastos · Aire de Agua',
+    description: 'Registro de egresos de Aire de Agua',
+    siteName: 'Aire de Agua',
+    images: ['/og-gastos.png'],
+  },
+  twitter: { card: 'summary_large_image' },
 }
 
 export default async function GastosLayout({
