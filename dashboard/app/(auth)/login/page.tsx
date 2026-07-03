@@ -10,17 +10,54 @@ interface LoginPageProps {
 }
 
 /**
- * Título de pestaña host-aware (AIR-173). Solo en el host de gastos se sobrescribe
- * el título heredado del root layout ("Aire de Agua · el Cerebro"); en cualquier
- * otro host se devuelve `{}` para que el login del dashboard herede su título SIN
- * cambios.
+ * Metadata host-aware del login (AIR-173 + AIR-176). El crawler de WhatsApp/redes
+ * entra a `/` sin sesión → redirect a `/login`, así que el Open Graph que se ve al
+ * compartir `gastos.airedeagua.com` o el dashboard se define AQUÍ.
+ *
+ * - Host de gastos: título/descripción/OG de la app de captura de egresos.
+ * - Cualquier otro host: título del dashboard (heredado del root layout) + OG del
+ *   dashboard. Se devuelve title/description explícitos para poblar el OG sin
+ *   depender de que Next herede campos anidados.
  */
 export async function generateMetadata(): Promise<Metadata> {
-  const host = (await headers()).get('host')
+  const h = await headers()
+  const host = h.get('host')
+  // metadataBase derivado del request → el og:image absoluto apunta al mismo
+  // dominio desde el que se comparte (gastos.* o dashboard.*), sin hardcodear.
+  const proto = h.get('x-forwarded-proto')?.split(',')[0].trim() || 'https'
+  const metadataBase = host ? new URL(`${proto}://${host}`) : undefined
+
   if (isGastosHost(host)) {
-    return { title: 'Gastos · Aire de Agua' }
+    const title = 'Gastos · Aire de Agua'
+    const description = 'Registro de egresos de Aire de Agua'
+    return {
+      metadataBase,
+      title,
+      description,
+      openGraph: {
+        title,
+        description,
+        siteName: 'Aire de Agua',
+        images: ['/og-gastos.png'],
+      },
+      twitter: { card: 'summary_large_image', title, description },
+    }
   }
-  return {}
+
+  const title = 'Aire de Agua · el Cerebro'
+  const description = 'Dashboard ejecutivo · Aire de Agua'
+  return {
+    metadataBase,
+    title,
+    description,
+    openGraph: {
+      title,
+      description,
+      siteName: 'Aire de Agua',
+      images: ['/og-dashboard.png'],
+    },
+    twitter: { card: 'summary_large_image', title, description },
+  }
 }
 
 // Inter para la variante de gastos. La `variable` solo se aplica al contenedor
