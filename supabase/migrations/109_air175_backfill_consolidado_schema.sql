@@ -3,7 +3,7 @@
 --
 -- CONTEXTO
 --   El backfill consolidado (Excel histórico + export BigQuery/Firestore) trae
---   557 egresos 2022-04-01 → 2026-07-02 por $476.958.557,50. Respecto al seed de
+--   557 egresos 2022-04-01 → 2026-07-02 (montos: ver validación fuera del repo). Respecto al seed de
 --   la mig 106 aparecen:
 --     · 3 categorías nuevas: Claude, Influencers, Legal.
 --     · 1 pagador histórico: Mandre (ya no opera; no debe salir en el form).
