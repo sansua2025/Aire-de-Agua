@@ -149,19 +149,30 @@ export function ImportarGastos() {
               }}
               onDragLeave={() => setDragOver(false)}
               onDrop={onDrop}
-              onClick={() => inputRef.current?.click()}
               role="button"
               tabIndex={0}
               onKeyDown={(e) => {
+                // Solo teclado: el foco está en el div (no en el input nativo),
+                // así que aquí sí corresponde disparar el picker programáticamente.
                 if (e.key === 'Enter' || e.key === ' ') inputRef.current?.click()
               }}
             >
+              {/* El input overlay (inset:0, opacity:0) captura el tap/click
+                  directamente. NO añadir onClick al div contenedor: en iOS el
+                  re-click programático durante el picker resetea el input y
+                  pierde el evento change de la selección (AIR-184 parte 2). */}
               <input
                 ref={inputRef}
                 type="file"
                 accept=".csv,text/csv,text/comma-separated-values,application/csv,text/plain"
                 className="gs-imp-file"
-                onChange={(e) => onPickFile(e.target.files?.[0] ?? null)}
+                onChange={(e) => {
+                  const f = e.currentTarget.files?.[0] ?? null
+                  onPickFile(f)
+                  // Permite re-seleccionar el mismo archivo tras un reset: el
+                  // File ya quedó capturado arriba, limpiar value no lo afecta.
+                  e.currentTarget.value = ''
+                }}
               />
               {file ? (
                 <span className="gs-imp-filename">
