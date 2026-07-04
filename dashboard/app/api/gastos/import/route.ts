@@ -5,8 +5,12 @@ import { getAdminClient } from '@/lib/supabase/admin'
 import { parseGastosCsv, type GastoImportRow } from '@/lib/gastos/csv'
 import {
   validateImportRows,
+  markCrossOriginDuplicates,
+  buildExistingCounts,
+  toPublicPreviewRow,
   type ImportConfigCategoria,
   type ImportConfigPagador,
+  type ExistingGasto,
 } from '@/lib/gastos/import'
 
 /**
@@ -14,8 +18,10 @@ import {
  *
  * Carga masiva de gastos desde CSV, en DOS fases (SOLO-INSERT, nunca update):
  *
- *   ?dry_run=true  → PREVIEW: parsea + valida contra config (queries read-only),
- *                    NO escribe. Responde { validas, omitidas, muestra }.
+ *   ?dry_run=true  → PREVIEW: parsea + valida contra config y COTEJA contra `gastos`
+ *                    para excluir filas ya idénticas (anti-dup AIR-185). Queries
+ *                    read-only, NO escribe. Responde { validas, omitidas, muestra }
+ *                    donde `validas` = lo que el commit realmente insertaría.
  *   (sin dry_run)  → COMMIT: llama el RPC gobernado public.gastos_importar con
  *                    TODAS las filas parseadas (el RPC re-valida — defensa en
  *                    profundidad) y responde su resultado
@@ -94,12 +100,38 @@ export async function POST(req: NextRequest) {
         (pays.data ?? []) as ImportConfigPagador[]
       )
 
+      // Anti-dup cross-origen (AIR-185): trae de `gastos` solo el espacio (fecha,
+      // pagador) que aparece en las filas válidas — acotado, no una query por fila —
+      // y cuenta cuántas idénticas ya existen. Las que el commit NO insertaría se
+      // marcan omitidas con el MISMO motivo del RPC, para que `validas` del preview
+      // sea exactamente lo que se insertará.
+      let existingCounts = new Map<string, number>()
+      if (validas.length > 0) {
+        const fechas = Array.from(new Set(validas.map((v) => v.fecha)))
+        const pagadorIds = Array.from(new Set(validas.map((v) => v.pagadorId)))
+        const existentes = await admin
+          .from('gastos')
+          .select('concepto, monto, fecha, pagador_id')
+          .in('fecha', fechas)
+          .in('pagador_id', pagadorIds)
+        if (existentes.error) throw existentes.error
+        existingCounts = buildExistingCounts((existentes.data ?? []) as ExistingGasto[])
+      }
+
+      const { aInsertar, omitidas: dupOmitidas } = markCrossOriginDuplicates(
+        validas,
+        existingCounts
+      )
+      // Fusiona omisiones de validación + anti-dup, ordenadas por fila (mismo orden
+      // en que el RPC las reporta al recorrer el archivo).
+      const todasOmitidas = [...omitidas, ...dupOmitidas].sort((a, b) => a.fila - b.fila)
+
       return NextResponse.json({
         ok: true,
         total: rows.length,
-        validas: validas.length,
-        omitidas,
-        muestra: validas.slice(0, 5),
+        validas: aInsertar.length,
+        omitidas: todasOmitidas,
+        muestra: aInsertar.slice(0, 5).map(toPublicPreviewRow),
       })
     }
 

@@ -251,43 +251,65 @@ export function ImportarGastos() {
                 </div>
               </div>
             ) : (
-              preview && (
-                <div className="gs-imp-preview">
-                  <div className="gs-imp-counts">
-                    <div className="gs-imp-count gs-imp-count--ok">
-                      <span className="gs-imp-count-n">{preview.validas}</span>
-                      <span className="gs-imp-count-l">
-                        {preview.validas === 1 ? 'válida' : 'válidas'}
-                      </span>
+              preview && (() => {
+                // El motivo anti-dup (AIR-185) empieza siempre por "ya existe un
+                // gasto idéntico" (texto del RPC/preview). Se separa en su propio
+                // contador "ya existen"; el resto son omisiones por validación.
+                const yaExisten = preview.omitidas.filter((o) =>
+                  o.motivo.startsWith('ya existe un gasto idéntico')
+                )
+                const invalidas = preview.omitidas.filter(
+                  (o) => !o.motivo.startsWith('ya existe un gasto idéntico')
+                )
+                const nada = preview.validas === 0
+                return (
+                  <div className="gs-imp-preview">
+                    <div className="gs-imp-counts">
+                      <div className="gs-imp-count gs-imp-count--ok">
+                        <span className="gs-imp-count-n">{preview.validas}</span>
+                        <span className="gs-imp-count-l">
+                          {preview.validas === 1 ? 'nueva' : 'nuevas'}
+                        </span>
+                      </div>
+                      {yaExisten.length > 0 && (
+                        <div className="gs-imp-count gs-imp-count--dup">
+                          <span className="gs-imp-count-n">{yaExisten.length}</span>
+                          <span className="gs-imp-count-l">
+                            {yaExisten.length === 1 ? 'ya existe' : 'ya existen'}
+                          </span>
+                        </div>
+                      )}
+                      {invalidas.length > 0 && (
+                        <div className="gs-imp-count gs-imp-count--warn">
+                          <span className="gs-imp-count-n">{invalidas.length}</span>
+                          <span className="gs-imp-count-l">
+                            {invalidas.length === 1 ? 'omitida' : 'omitidas'}
+                          </span>
+                        </div>
+                      )}
                     </div>
-                    <div className="gs-imp-count gs-imp-count--warn">
-                      <span className="gs-imp-count-n">{preview.omitidas.length}</span>
-                      <span className="gs-imp-count-l">
-                        {preview.omitidas.length === 1 ? 'omitida' : 'omitidas'}
-                      </span>
-                    </div>
+
+                    {preview.omitidas.length > 0 && <OmitList omitidas={preview.omitidas} />}
+
+                    <button
+                      type="button"
+                      className="gs-imp-cta"
+                      onClick={onImport}
+                      disabled={importing || nada}
+                    >
+                      {importing ? (
+                        <>
+                          <Loader2 size={16} strokeWidth={2.2} className="gs-imp-spin" /> Importando…
+                        </>
+                      ) : nada ? (
+                        'Nada nuevo que importar'
+                      ) : (
+                        `Importar ${preview.validas} ${preview.validas === 1 ? 'gasto' : 'gastos'}`
+                      )}
+                    </button>
                   </div>
-
-                  {preview.omitidas.length > 0 && <OmitList omitidas={preview.omitidas} />}
-
-                  <button
-                    type="button"
-                    className="gs-imp-cta"
-                    onClick={onImport}
-                    disabled={importing || preview.validas === 0}
-                  >
-                    {importing ? (
-                      <>
-                        <Loader2 size={16} strokeWidth={2.2} className="gs-imp-spin" /> Importando…
-                      </>
-                    ) : preview.validas === 0 ? (
-                      'No hay filas válidas para importar'
-                    ) : (
-                      `Importar ${preview.validas} ${preview.validas === 1 ? 'gasto' : 'gastos'}`
-                    )}
-                  </button>
-                </div>
-              )
+                )
+              })()
             )}
           </div>
         </div>
