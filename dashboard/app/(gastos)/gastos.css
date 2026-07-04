@@ -1257,9 +1257,12 @@ a.gs-hist-export { text-decoration: none; }
 }
 .gs-imp-count--ok { background: #E9EBDD; }
 .gs-imp-count--warn { background: #F3E1D8; }
+/* "ya existen" (anti-dup AIR-185): neutral crema/oliva suave — ni alerta ni éxito. */
+.gs-imp-count--dup { background: #EFECE0; }
 .gs-imp-count-n { font-size: 24px; font-weight: 700; color: var(--g-ink); font-variant-numeric: tabular-nums; }
 .gs-imp-count--ok .gs-imp-count-n { color: #5C6637; }
 .gs-imp-count--warn .gs-imp-count-n { color: #B06A47; }
+.gs-imp-count--dup .gs-imp-count-n { color: #8A8560; }
 .gs-imp-count-l { font-size: 12px; font-weight: 500; color: var(--g-ink-secondary); }
 
 /* Lista scrolleable de filas omitidas */
