@@ -63,6 +63,10 @@ export default auth((req) => {
       pathname === '/login' ||
       pathname.startsWith('/.well-known') ||
       pathname === '/favicon.ico' ||
+      // Archivos estáticos de public/ (último segmento con extensión, p.ej.
+      // /plantilla_gastos.csv, /icon.png): no son rutas de la app de gastos,
+      // no reescribir a /gastos/... (daría 404). AIR-184.
+      /\.[^/]+$/.test(pathname) ||
       pathname === '/gastos' ||
       pathname.startsWith('/gastos/')
     if (!excluded) {

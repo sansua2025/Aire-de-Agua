@@ -159,7 +159,7 @@ export function ImportarGastos() {
               <input
                 ref={inputRef}
                 type="file"
-                accept=".csv,text/csv"
+                accept=".csv,text/csv,text/comma-separated-values,application/csv,text/plain"
                 className="gs-imp-file"
                 onChange={(e) => onPickFile(e.target.files?.[0] ?? null)}
               />
