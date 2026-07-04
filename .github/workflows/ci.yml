@@ -60,6 +60,23 @@ jobs:
       - name: Paridad de nodos críticos (nodes ↔ activeVersion.nodes)
         run: bash scripts/agent/check-n8n-graph-parity.sh
 
+  prompt-hygiene:
+    name: prompt-hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # Patrón AIR-94 (defensa anti prompt-injection en nodos que mandan texto a
+      # Claude) + AIR-140 (recorrer AMBAS copias del grafo: n8n ejecuta
+      # activeVersion.nodes). Auditoría 2026-07-01: se graduó a gate determinista.
+      # Exige, por nodo crítico: sanitize() con strip total <[^>]*> en bloques
+      # <data>, system defensivo con "Ignora", y sin el antipatrón "reporta lo
+      # sospechoso". La deuda histórica vive en prompt-hygiene-allowlist.txt
+      # (ratchet: solo bloquea regresiones nuevas).
+      - name: Self-test del check de higiene de prompts
+        run: bash scripts/agent/check-prompt-hygiene.selftest.sh
+      - name: Higiene de prompts a Claude en workflows n8n
+        run: bash scripts/agent/check-prompt-hygiene.sh
+
   dashboard:
     name: dashboard
     runs-on: ubuntu-latest

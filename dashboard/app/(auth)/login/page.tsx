@@ -1,12 +1,92 @@
+import type { Metadata } from 'next'
+import { headers } from 'next/headers'
+import { Inter } from 'next/font/google'
 import { signIn } from '@/auth'
+import { isGastosHost } from '@/lib/gastos/hosts'
+import './gastos-login.css'
 
 interface LoginPageProps {
   searchParams: Promise<{ callbackUrl?: string; error?: string }>
 }
 
+/**
+ * Metadata host-aware del login (AIR-173 + AIR-176). El crawler de WhatsApp/redes
+ * entra a `/` sin sesión → redirect a `/login`, así que el Open Graph que se ve al
+ * compartir `gastos.airedeagua.com` o el dashboard se define AQUÍ.
+ *
+ * - Host de gastos: título/descripción/OG de la app de captura de egresos.
+ * - Cualquier otro host: título del dashboard (heredado del root layout) + OG del
+ *   dashboard. Se devuelve title/description explícitos para poblar el OG sin
+ *   depender de que Next herede campos anidados.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const h = await headers()
+  const host = h.get('host')
+  // metadataBase derivado del request → el og:image absoluto apunta al mismo
+  // dominio desde el que se comparte (gastos.* o dashboard.*), sin hardcodear.
+  const proto = h.get('x-forwarded-proto')?.split(',')[0].trim() || 'https'
+  const metadataBase = host ? new URL(`${proto}://${host}`) : undefined
+
+  if (isGastosHost(host)) {
+    const title = 'Gastos · Aire de Agua'
+    const description = 'Registro de egresos de Aire de Agua'
+    return {
+      metadataBase,
+      title,
+      description,
+      openGraph: {
+        title,
+        description,
+        siteName: 'Aire de Agua',
+        images: ['/og-gastos.png'],
+      },
+      twitter: { card: 'summary_large_image', title, description },
+    }
+  }
+
+  const title = 'Aire de Agua · el Cerebro'
+  const description = 'Dashboard ejecutivo · Aire de Agua'
+  return {
+    metadataBase,
+    title,
+    description,
+    openGraph: {
+      title,
+      description,
+      siteName: 'Aire de Agua',
+      images: ['/og-dashboard.png'],
+    },
+    twitter: { card: 'summary_large_image', title, description },
+  }
+}
+
+// Inter para la variante de gastos. La `variable` solo se aplica al contenedor
+// `.gastos-login`, así que la variante del dashboard no la referencia.
+const inter = Inter({
+  subsets: ['latin'],
+  weight: ['400', '500', '600', '700'],
+  variable: '--font-gastos-login',
+  display: 'swap',
+})
+
 export default async function LoginPage({ searchParams }: LoginPageProps) {
   const { callbackUrl, error } = await searchParams
+  const host = (await headers()).get('host')
 
+  // Variante host-aware: el login de gastos se viste con la línea gráfica de la
+  // app (AIR-173). En cualquier otro host se sirve el login del dashboard SIN
+  // cambios (más abajo).
+  if (isGastosHost(host)) {
+    return (
+      <GastosLogin
+        variableClass={inter.variable}
+        callbackUrl={callbackUrl}
+        error={error}
+      />
+    )
+  }
+
+  // ── Login del dashboard (el Cerebro) — INTACTO ────────────────────────────
   return (
     <div className="min-h-screen grid place-items-center bg-[#f5f5f5] p-6">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-sm border border-gray-100 p-10">
@@ -71,6 +151,79 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         <p className="text-xs text-gray-400 text-center mt-8 font-mono">
           AIR-55 · Fase 1
         </p>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Variante de login para el host de gastos (AIR-173). Línea gráfica de la app de
+ * captura: fondo cálido, oliva/terracota, CTA estilo producto, sin footer AIR-55.
+ * El `redirectTo` respeta `callbackUrl` (que en el host de gastos ya viene de una
+ * ruta de gastos) y cae en `/` — el rewrite del proxy lo lleva a la captura.
+ */
+function GastosLogin({
+  variableClass,
+  callbackUrl,
+  error,
+}: {
+  variableClass: string
+  callbackUrl?: string
+  error?: string
+}) {
+  return (
+    <div className={`gastos-login ${variableClass}`} data-gastos-login="true">
+      <div className="gl-screen">
+        <div className="gl-brand">
+          <span className="gl-eyebrow">Gastos</span>
+          <h1 className="gl-title">Aire de Agua</h1>
+          <p className="gl-copy">
+            Registra y consulta los egresos de la marca. Iniciá sesión con tu
+            cuenta autorizada.
+          </p>
+        </div>
+
+        {error && (
+          <div className="gl-error">
+            {error === 'AccessDenied'
+              ? 'Tu cuenta no está autorizada para registrar gastos.'
+              : 'Hubo un problema al iniciar sesión. Intentá de nuevo.'}
+          </div>
+        )}
+
+        <form
+          className="gl-form"
+          action={async () => {
+            'use server'
+            await signIn('google', { redirectTo: callbackUrl || '/' })
+          }}
+        >
+          <button type="submit" className="gl-cta">
+            <span className="gl-gicon" aria-hidden>
+              <svg width="18" height="18" viewBox="0 0 18 18">
+                <path
+                  fill="#4285F4"
+                  d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"
+                />
+                <path
+                  fill="#34A853"
+                  d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.836.86-3.048.86-2.344 0-4.328-1.583-5.036-3.71H.957v2.332A8.997 8.997 0 0 0 9 18z"
+                />
+                <path
+                  fill="#FBBC05"
+                  d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z"
+                />
+                <path
+                  fill="#EA4335"
+                  d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z"
+                />
+              </svg>
+            </span>
+            <span>Continuar con Google</span>
+          </button>
+        </form>
+
+        <p className="gl-foot">Acceso restringido al equipo de Aire de Agua.</p>
       </div>
     </div>
   )

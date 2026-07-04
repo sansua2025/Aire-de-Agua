@@ -1,7 +1,8 @@
 ---
 name: retro
 description: Tras mergear un PR, destila lo aprendido a la memoria del proyecto, a la tabla insights de Supabase y como comentario en el issue de Linear, gradúa patrones repetidos a reglas deterministas y poda la memoria que crezca. Cierra el loop de aprendizaje. Úsalo después de cada merge.
-tools: Read, Write, Edit, Bash, Grep, Glob
+# disallowedTools (no lista positiva): garantiza MCP en entorno remoto (lección AIR-71/119)
+disallowedTools: NotebookEdit
 model: sonnet
 color: pink
 memory: project
