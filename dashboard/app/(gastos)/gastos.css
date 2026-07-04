@@ -77,7 +77,7 @@
   align-items: center;
   justify-content: space-between;
 }
-.gs-iconbtn {
+.gastos-shell .gs-iconbtn {
   width: 40px;
   height: 40px;
   border-radius: 20px;
@@ -98,7 +98,7 @@
 /* ---------------------------------------------------------------------------
  * CTA principal (full-width oliva)
  * ------------------------------------------------------------------------- */
-.gs-cta {
+.gastos-shell .gs-cta {
   width: 100%;
   padding: 18px;
   border-radius: 30px;
@@ -178,7 +178,7 @@
   gap: 10px;
   padding-top: 12px;
 }
-.gs-key {
+.gastos-shell .gs-key {
   background: var(--g-surface);
   border-radius: 20px;
   padding: 17px 0;
@@ -192,12 +192,12 @@
   transition: transform 0.05s ease, background 0.1s ease;
 }
 .gs-key:active { transform: scale(0.97); }
-.gs-key--clear {
+.gastos-shell .gs-key--clear {
   background: var(--g-surface-muted);
   box-shadow: none;
   color: var(--g-accent);
 }
-.gs-key--back { color: var(--g-ink); }
+.gastos-shell .gs-key--back { color: var(--g-ink); }
 
 /* ---------------------------------------------------------------------------
  * Pantalla 2 · Detalle
@@ -227,7 +227,7 @@
   color: var(--g-ink);
   font-variant-numeric: tabular-nums;
 }
-.gs-editlink {
+.gastos-shell .gs-editlink {
   font-size: 13px;
   font-weight: 600;
   color: var(--g-accent);
@@ -401,8 +401,8 @@
 .gs-uploader.has-file { justify-content: space-between; }
 .gs-uploader-name { flex: 1 1 auto; text-align: left; }
 .gs-uploader-actions { display: flex; align-items: center; gap: 12px; flex: none; }
-.gs-uploader-link { font-size: 13px; font-weight: 600; color: var(--g-accent); padding: 2px; }
-.gs-uploader-remove { color: var(--g-ink-tertiary); display: grid; place-items: center; padding: 2px; }
+.gastos-shell .gs-uploader-link { font-size: 13px; font-weight: 600; color: var(--g-accent); padding: 2px; }
+.gastos-shell .gs-uploader-remove { color: var(--g-ink-tertiary); display: grid; place-items: center; padding: 2px; }
 .gs-uploader-error { font-size: 12px; color: var(--g-danger); }
 .gs-spin { animation: gs-spin 0.8s linear infinite; }
 @keyframes gs-spin { to { transform: rotate(360deg); } }
@@ -488,7 +488,7 @@
   display: flex;
   flex-direction: column;
 }
-.gs-filter-opt {
+.gastos-shell .gs-filter-opt {
   text-align: left;
   padding: 9px 12px;
   border-radius: 10px;
@@ -520,7 +520,7 @@
   min-width: 0;
 }
 .gs-search-input::placeholder { color: var(--g-ink-tertiary); }
-.gs-search-clear { color: var(--g-ink-tertiary); display: grid; place-items: center; flex: none; }
+.gastos-shell .gs-search-clear { color: var(--g-ink-tertiary); display: grid; place-items: center; flex: none; }
 
 /* Lista + estados */
 .gs-hist-list { display: flex; flex-direction: column; gap: 10px; }
@@ -534,7 +534,7 @@
   align-items: center;
   gap: 10px;
 }
-.gs-linkbtn { color: var(--g-accent); font-size: 13px; font-weight: 600; }
+.gastos-shell .gs-linkbtn { color: var(--g-accent); font-size: 13px; font-weight: 600; }
 .gs-hist-hint {
   display: flex;
   align-items: center;
@@ -815,7 +815,7 @@
   border: 1px solid var(--g-border);
   background: var(--g-surface);
 }
-.gs-monthsel-nav {
+.gastos-shell .gs-monthsel-nav {
   width: 26px;
   height: 26px;
   border-radius: 999px;
@@ -1060,7 +1060,7 @@
 
 /* Nivel 2 · categorías (indentadas, barra de color del tipo a la izquierda) */
 .gs-desg-children { display: flex; flex-direction: column; padding-left: 24px; }
-.gs-desg-cat {
+.gastos-shell .gs-desg-cat {
   border-left: 3px solid var(--g-border);
   padding-left: 12px;
 }
@@ -1211,7 +1211,7 @@ a.gs-hist-export { text-decoration: none; }
   color: var(--g-ink);
   word-break: break-all;
 }
-.gs-imp-reset {
+.gastos-shell .gs-imp-reset {
   align-self: flex-start;
   display: inline-flex;
   align-items: center;
@@ -1299,7 +1299,7 @@ a.gs-hist-export { text-decoration: none; }
 .gs-imp-omit-motivo { color: var(--g-ink-tertiary); line-height: 1.4; }
 
 /* CTA de importar / resultado */
-.gs-imp-cta {
+.gastos-shell .gs-imp-cta {
   width: 100%;
   padding: 14px;
   border-radius: 16px;
