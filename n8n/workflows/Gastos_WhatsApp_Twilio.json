@@ -818,7 +818,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ evento: 'wa_gastos', entidad: 'gastos_wa_mensajes', entidad_id: $json.message_sid || null, estado: $json.accion, error_mensaje: $json.error_detalle || null }) }}",
+        "jsonBody": "={{ JSON.stringify({ evento: 'wa_gastos', entidad: 'gastos_wa_mensajes', entidad_id: $json.message_sid || null, estado: ['guardado','pregunta','duplicado'].indexOf($json.accion) >= 0 ? 'ok' : (['no_autorizado','stub_media','stub_comando','stub_pendiente'].indexOf($json.accion) >= 0 ? 'skip' : 'error'), error_mensaje: ['guardado','pregunta','duplicado'].indexOf($json.accion) >= 0 ? null : (String($json.accion || 'error') + ($json.error_detalle ? ': ' + $json.error_detalle : '')) }) }}",
         "options": {
           "timeout": 15000
         }
