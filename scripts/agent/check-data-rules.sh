@@ -26,6 +26,22 @@ FAILS=0; WARNS=0
 fail() { echo "FAIL  $1"; FAILS=$((FAILS+1)); }
 warn() { echo "WARN  $1"; WARNS=$((WARNS+1)); }
 
+# R5 — mapa tabla -> columnas GENERATED STORED (fuente: CLAUDE.md).
+# Postgres las calcula; incluirlas en un INSERT/UPSERT es un error en runtime.
+# Nombres como ctr/roas/aov/cpc son GENÉRICOS: por eso R5 NO se dispara con el
+# solo nombre; exige que la columna esté en la lista de columnas de un INSERT de
+# SU tabla, o como asignación en ON CONFLICT ... DO UPDATE SET. Formato de cada
+# entrada: "<tabla>:col1,col2,...".
+GEN_MAP=(
+  "amplitude_daily_metrics:cvr_vista_carrito,cvr_carrito_checkout,cvr_checkout_compra,cvr_total,aov"
+  "inventario:cantidad_disponible"
+  "klaviyo_campaigns:open_rate,click_rate,conversion_rate"
+  "meta_ads_performance:ctr,cpc,roas,cpa"
+  "variantes:margen_pct"
+  "productos_cogs:margen_pct"
+  "venta_items:total_linea,margen_linea"
+)
+
 # Allowlist de migraciones-respaldo ya APLICADAS en PROD (AIR-161).
 # check-data-rules está pensado para queries/analytics NUEVAS; estas migraciones
 # son respaldo fiel inmutable (AIR-90, no se edita el .sql) y ya viven en PROD,
@@ -117,6 +133,65 @@ for f in ${FILES[@]+"${FILES[@]}"}; do
     supabase/migrations/*.sql)
       if printf '%s' "$ADDED" | grep -qiE '\b(create|alter|add)\b' && ! grep -qiE 'down|rollback|drop|revert' "$f"; then
         warn "$f — migración sin reversa documentada. Incluye el rollback o documéntalo."
+      fi ;;
+  esac
+
+  # R5 — columnas GENERATED STORED nunca en INSERT/UPSERT (FAIL). Solo SQL/TS/TSX
+  # (ya garantizado por el case de arriba). GATILLO: la columna aparece como
+  # palabra en $ADDED. CONFIRMACIÓN por análisis de bloque sobre el ARCHIVO
+  # COMPLETO: se extrae cada statement `INSERT INTO <tabla> ... ;` (whitespace
+  # normalizado a una sola línea) y solo se marca si la columna cae (a) en la
+  # lista de columnas del INSERT (paréntesis entre el nombre de tabla y
+  # VALUES/SELECT) o (b) como asignación en `ON CONFLICT ... DO UPDATE SET col =`.
+  # Un SELECT de cvr_total o un `CREATE TABLE ... GENERATED ALWAYS AS (...) STORED`
+  # NUNCA disparan (no hay bloque INSERT de esa tabla).
+  FLAT="$(tr '\n\t' '  ' < "$f" | tr -s ' ')"
+  for entry in "${GEN_MAP[@]}"; do
+    tbl="${entry%%:*}"; cols="${entry#*:}"
+    IFS=',' read -ra COLARR <<< "$cols"
+    for col in "${COLARR[@]}"; do
+      # GATILLO barato: si la columna no aparece como palabra en $ADDED, saltar.
+      printf '%s' "$ADDED" | grep -qiE "\\b${col}\\b" || continue
+      # Bloques INSERT INTO <tbl> ... ; sobre el archivo aplanado.
+      blocks="$(printf '%s' "$FLAT" | grep -oiE "insert[[:space:]]+into[[:space:]]+${tbl}\\b[^;]*;")"
+      [ -z "$blocks" ] && continue
+      hit=0
+      while IFS= read -r blk; do
+        [ -z "$blk" ] && continue
+        # (a) lista de columnas = contenido del PRIMER paréntesis tras el nombre
+        # de tabla, SOLO si antes de ese paréntesis no hay VALUES/SELECT (si los
+        # hay, ese primer paréntesis es el de VALUES/SELECT, no una lista).
+        pre="${blk%%(*}"
+        after="${blk#*(}"; collist="${after%%)*}"
+        if ! printf '%s' "$pre" | grep -qiE '\b(values|select)\b'; then
+          printf '%s' "$collist" | grep -qiE "\\b${col}\\b" && hit=1
+        fi
+        # (b) ON CONFLICT ... DO UPDATE SET ... col = ...
+        if printf '%s' "$blk" | grep -qiE 'do[[:space:]]+update[[:space:]]+set'; then
+          setpart="$(printf '%s' "$blk" | sed -nE 's/.*[Dd][Oo][[:space:]]+[Uu][Pp][Dd][Aa][Tt][Ee][[:space:]]+[Ss][Ee][Tt](.*)/\1/p')"
+          printf '%s' "$setpart" | grep -qiE "\\b${col}\\b[[:space:]]*=" && hit=1
+        fi
+      done <<< "$blocks"
+      [ "$hit" -eq 1 ] && fail "$f — columna GENERATED STORED '${col}' en INSERT/UPSERT de ${tbl}. Postgres la calcula; quítala (ver CLAUDE.md)."
+    done
+  done
+
+  # R6a — ciudad debe venir de JOIN clientes (WARN, no bloquea). GATILLO sobre
+  # $ADDED (ciudad + ventas introducidos por el PR); COMPLEMENTO ('JOIN clientes',
+  # tolerando alias) sobre el archivo completo.
+  if printf '%s' "$ADDED" | grep -qiE '\bciudad\b' && printf '%s' "$ADDED" | grep -qiE 'ventas' \
+     && ! grep -qiE 'join[[:space:]]+clientes' "$f"; then
+    warn "$f — ciudad debe venir de JOIN clientes (c.id = v.cliente_id)."
+  fi
+
+  # R6b — margen sin verificar cobertura_cogs (WARN). GATILLO sobre $ADDED
+  # ('margen'); COMPLEMENTO ('cobertura_cogs') sobre el archivo completo.
+  # Excluye supabase/migrations/ (DDL de columnas margen_* legítimo).
+  case "$f" in
+    supabase/migrations/*.sql) ;;
+    *)
+      if printf '%s' "$ADDED" | grep -qiE '\bmargen' && ! grep -qiE 'cobertura_cogs' "$f"; then
+        warn "$f — margen sin verificar cobertura_cogs."
       fi ;;
   esac
 done

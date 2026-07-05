@@ -1,0 +1,121 @@
+/* =============================================================================
+ * Login · gastos.airedeagua.com (AIR-173)
+ * Variante host-aware del login. Estilos SCOPEADOS a `.gastos-login` — NO
+ * heredan tokens data-theme del dashboard ni tocan el scope `.gastos-shell` de
+ * la app de captura. Tokens literales del design-spec (misma paleta que gastos).
+ * Mobile-first (390px). Cuando el host NO es de gastos esta clase no se aplica,
+ * así que el login del dashboard queda intacto.
+ * =========================================================================== */
+
+.gastos-login {
+  --gl-bg: #F5F3EF;
+  --gl-surface: #FFFFFF;
+  --gl-border: #E7E3DB;
+  --gl-ink: #23231F;
+  --gl-ink-secondary: #5B564C;
+  --gl-ink-tertiary: #8C877B;
+  --gl-ink-faint: #B0AA9C;
+  --gl-primary: #4C5A2E;   /* oliva */
+  --gl-accent: #C98B6E;    /* terracota */
+  --gl-danger: #C0563F;
+  --gl-shadow-cta: 0 6px 16px rgba(36, 31, 20, 0.18);
+
+  position: fixed;
+  inset: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  background: var(--gl-bg);
+  color: var(--gl-ink);
+  font-family: var(--font-gastos-login, 'Inter'), -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.4;
+  display: flex;
+  flex-direction: column;
+  z-index: 0;
+}
+
+.gastos-login *,
+.gastos-login *::before,
+.gastos-login *::after { box-sizing: border-box; }
+
+/* Columna centrada, ancho de teléfono */
+.gl-screen {
+  width: 100%;
+  max-width: 430px;
+  margin: 0 auto;
+  flex: 1 1 auto;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 26px;
+  padding: 32px 24px calc(32px + env(safe-area-inset-bottom, 0px));
+}
+
+/* Marca */
+.gl-brand { display: flex; flex-direction: column; gap: 8px; }
+.gl-eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--gl-accent);
+}
+.gl-title {
+  font-size: 30px;
+  font-weight: 700;
+  color: var(--gl-ink);
+  letter-spacing: -0.5px;
+  line-height: 1.1;
+  margin: 0;
+}
+.gl-copy {
+  font-size: 15px;
+  color: var(--gl-ink-secondary);
+  line-height: 1.5;
+  margin: 0;
+  max-width: 34ch;
+}
+
+/* Aviso de error (cuenta no autorizada / fallo) */
+.gl-error {
+  padding: 13px 16px;
+  border-radius: 14px;
+  background: #F6E4DE;
+  border: 1px solid #E7C6BB;
+  color: #8A3B28;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+/* CTA · Continuar con Google (estilo app: oliva, radio 30, sombra) */
+.gl-form { display: flex; flex-direction: column; }
+.gl-cta {
+  width: 100%;
+  padding: 18px;
+  border-radius: 30px;
+  background: var(--gl-primary);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: none;
+  cursor: pointer;
+  box-shadow: var(--gl-shadow-cta);
+  transition: opacity 0.15s ease, transform 0.05s ease;
+}
+.gl-cta:hover { opacity: 0.94; }
+.gl-cta:active { transform: translateY(1px); }
+.gl-cta .gl-gicon { flex: none; background: #fff; border-radius: 999px; padding: 2px; display: grid; place-items: center; }
+
+.gl-foot {
+  font-size: 12px;
+  color: var(--gl-ink-faint);
+  margin: 0;
+}

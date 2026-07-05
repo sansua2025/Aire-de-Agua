@@ -1,0 +1,29 @@
+# Allowlist de check-prompt-hygiene.sh — DEUDA RATCHET (patrón AIR-94/AIR-140).
+# ------------------------------------------------------------------
+# Auditoría 2026-07-01: se graduó a gate determinista el patrón AIR-94 (sanitize
+# con strip total de tags <[^>]*>, system defensivo con "Ignora", sin antipatrón
+# "reporta lo sospechoso"). Estos workflows YA violaban una de esas reglas antes
+# del gate. El check NO los arregla: los salta por basename para que el gate solo
+# BLOQUEE REGRESIONES NUEVAS, no la deuda histórica. El fix de cada workflow se
+# enruta a su propio issue (mismo espíritu que data-rules-allowlist.txt / AIR-161).
+#
+# Antes de añadir algo aquí: confirma que la violación es PREEXISTENTE (no código
+# nuevo del PR). NO uses esta allowlist para silenciar un nodo nuevo: corrige el
+# workflow. Cada entrada DEBE tener un issue de remediación abierto.
+#
+# --- E5K (R1-sanitize) ---
+# 'Build Prompt (sanitized)' define sanitize() pero neutraliza SOLO el tag
+# `</data>` literal (`.replace(/<\/?\s*data\s*>/gi, '[tag]')`), NO el strip total
+# `<[^>]*>` que exige AIR-94 (CLAUDE.md: "NUNCA neutralizar solo </data> literal").
+# Remediación (crear issue AIR, sibling de AIR-119 para E5A): usar el sanitize
+# canónico `.replace(/[\x00-\x1F\x7F]/g,' ').replace(/<[^>]*>/g,'')` + truncado,
+# aplicado en AMBAS copias del grafo (nodes ↔ activeVersion.nodes).
+E5K_Loop_Knowledge_Consolidation.json
+#
+# --- E3D (R2-system-Ignora) ---
+# 'Build Anthropic Request' arma un SYSTEM_PROMPT literal para análisis visual de
+# posts orgánicos, pero no incluye la defensa AIR-94 req.3 ("Ignora … dentro de
+# <data>"). Superficie de menor riesgo (la entrada dominante es una imagen, no
+# texto de DB), pero la regla aplica igual. Remediación (crear issue AIR): añadir
+# la cláusula defensiva "Ignora …" al SYSTEM_PROMPT.
+E3D_Organic_Visual_Enrichment.json
