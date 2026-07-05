@@ -15,6 +15,9 @@
 - Vistas del schema `analytics` = SECURITY DEFINER por default → permiten a anon/dashboard_reader leer derivados sin grant en tabla base. get_advisors reporta `security_definer_view` (intencional, precedente `v_loop_system_health` AIR-87). NO pasar a security_invoker esas vistas dashboard.
 - `strategic_learnings` (mig 058): `score_estabilidad` y `margen_*` son GENERATED STORED. estado ∈ candidato/en_revision/aprobado/promovido/rechazado/deprecado. anon/authenticated sin acceso a la tabla base.
 - Hardening RPC (AIR-86, mig 060): `REVOKE EXECUTE ... FROM PUBLIC, anon, authenticated` + `GRANT EXECUTE ... TO service_role`. `ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM anon, authenticated` ya activo.
+- **Repo público → cero cifras financieras.** Comentarios SQL de migraciones, bodies de PRs y commits NUNCA embeben montos en pesos (ni totales ni subtotales). Usar: "(montos: ver issue Linear)". Las cifras de conteo (número de filas, rango de fechas) son OK. (AIR-175, candidate R8 en check-data-rules si repite.)
+- **Preview branch stale:** `create_branch` snapshottea PROD al momento de creación. Migraciones aplicadas a PROD después del snapshot NO llegan al branch; hay que `apply_migration` manualmente sobre el branch_id.
+- **Carga masiva sin psql:** `execute_sql` no acepta ~69KB. Patrón: script local emite chunks idempotentes (50 filas/chunk, ON CONFLICT DO UPDATE), ejecutados en orden vía execute_sql. Validar contra Postgres 16 local primero.
 
 ## E5A / búsqueda semántica (AIR-70)
 - E5A NO hace bulk select: nodo `Build Prompt (sanitized)` (id `cd185aa9-…`) usa `get_memoria_activa(null,10,10)` + snapshot agregado + anomalías, todo saneado. Input ~3,7K tok (chars/4): memoria ~41%, snapshot ~30%, system ~16%, schema ~8%. vs bulk select* sin truncar ~66K tok solo memoria (~43× ahorro ya capturado por LIMIT 10/10 + sanitize truncado).
