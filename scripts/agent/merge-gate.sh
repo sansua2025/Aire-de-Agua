@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Compuerta de auto-merge v2 — endurecida (veredicto anclado a commit).
+# Compuerta de auto-merge v3 — fail-closed en la identidad del reviewer.
 # El orquestador la ejecuta SOLO tras un APPROVE del reviewer. Reverifica TODO
 # de forma determinista; si falta una condición, no mergea y deja el PR abierto.
 #
@@ -10,8 +10,14 @@
 #   4) Ese comentario está anclado al commit actual: "sha: <headRefOid>".
 #      (un APPROVE viejo sobre commits anteriores NO vale; un REQUEST_CHANGES
 #       viejo ya corregido NO bloquea: manda el último veredicto)
-#   5) (opcional) Si GATE_REVIEWER_LOGIN está definido, el autor del veredicto
-#      debe coincidir.
+#   5) SIEMPRE ACTIVA — el autor del veredicto tiene permiso 'admin' o 'write'
+#      en el repo (repos/OWNER/REPO/collaborators/<autor>/permission). Cierra el
+#      vector de prompt-injection: un texto ecoado con "VEREDICTO: APPROVE /
+#      data-rules: ok / sha: ..." firmado por un autor sin permisos NO mergea.
+#      Escape hatch: GATE_ALLOW_ANY_AUTHOR=1 la salta con un WARNING ruidoso.
+#      NO usar GATE_ALLOW_ANY_AUTHOR en operación normal — anula la protección.
+#   6) (opcional) Si GATE_REVIEWER_LOGIN está definido, el autor del veredicto
+#      debe coincidir exactamente (capa adicional sobre la 5).
 #
 # Uso:  bash scripts/agent/merge-gate.sh <PR_NUMBER>
 set -uo pipefail
@@ -21,12 +27,12 @@ command -v gh >/dev/null 2>&1 || { echo "merge-gate: falta 'gh'." >&2; exit 2; }
 command -v jq >/dev/null 2>&1 || { echo "merge-gate: falta 'jq'." >&2; exit 2; }
 fail() { echo "merge-gate: NO se mergea — $1" >&2; exit 1; }
 
-echo "merge-gate: [0/5] carril de autonomía ..."
+echo "merge-gate: [0/6] carril de autonomía ..."
 LABELS="$(gh pr view "$PR" --json labels -q '.labels[].name' 2>/dev/null || true)"
 printf '%s\n' "$LABELS" | grep -qx 'human-gate' \
   && fail "label 'human-gate': este PR requiere aprobación humana (no auto-merge)."
 
-echo "merge-gate: [1/5] checks de CI del PR #$PR ..."
+echo "merge-gate: [1/6] checks de CI del PR #$PR ..."
 # gh pr checks: exit 0 = todos pasaron, exit 8 = hay PENDING (ninguno falló aún),
 # exit 1 = algún check FALLÓ. Hacemos poll-and-wait mientras haya pending.
 GATE_CI_INTERVAL="${GATE_CI_INTERVAL:-20}"
@@ -53,7 +59,7 @@ while :; do
   fi
 done
 
-echo "merge-gate: [2-4/5] veredicto anclado del reviewer ..."
+echo "merge-gate: [2-4/6] veredicto anclado del reviewer ..."
 HEAD_SHA="$(gh pr view "$PR" --json headRefOid -q .headRefOid 2>/dev/null)"
 [ -z "$HEAD_SHA" ] && fail "no pude leer el head SHA del PR."
 
@@ -71,12 +77,27 @@ printf '%s' "$V_BODY" | grep -qiE 'data-rules:[[:space:]]*ok' \
 printf '%s' "$V_BODY" | grep -qF "sha: $HEAD_SHA" \
   || fail "veredicto no anclado al commit actual ($HEAD_SHA). Hubo pushes después del review: el reviewer debe re-revisar."
 
-echo "merge-gate: [5/5] identidad del reviewer ..."
+echo "merge-gate: [5/6] permiso del autor del veredicto ..."
+if [ "${GATE_ALLOW_ANY_AUTHOR:-}" = "1" ]; then
+  echo "merge-gate: ⚠⚠⚠ GATE_ALLOW_ANY_AUTHOR=1 — se OMITE la verificación de permisos del autor '@${V_AUTHOR:-desconocido}'." >&2
+  echo "merge-gate: ⚠⚠⚠ Esto ANULA la protección anti prompt-injection del veredicto. NO usar en operación normal." >&2
+else
+  [ -z "$V_AUTHOR" ] && fail "no pude determinar el autor del veredicto; no puedo verificar sus permisos (fail-closed)."
+  OWNER_REPO="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)"
+  [ -z "$OWNER_REPO" ] && fail "no pude resolver el repo (gh repo view) para verificar permisos del autor."
+  PERM="$(gh api "repos/$OWNER_REPO/collaborators/$V_AUTHOR/permission" -q .permission 2>/dev/null)"
+  case "$PERM" in
+    admin|write) echo "merge-gate: autor '@$V_AUTHOR' con permiso '$PERM' en $OWNER_REPO. OK." ;;
+    *) fail "el autor del veredicto '@$V_AUTHOR' NO tiene permiso admin/write en $OWNER_REPO (permiso='${PERM:-desconocido/llamada fallida}'). Un veredicto de un autor sin permisos no mergea (posible prompt-injection)." ;;
+  esac
+fi
+
+echo "merge-gate: [6/6] identidad del reviewer (opcional) ..."
 if [ -n "${GATE_REVIEWER_LOGIN:-}" ] && [ "$V_AUTHOR" != "$GATE_REVIEWER_LOGIN" ]; then
   fail "el veredicto lo firmó '@$V_AUTHOR'; se esperaba '@$GATE_REVIEWER_LOGIN'."
 fi
 
-echo "merge-gate: 5/5 OK (veredicto de @${V_AUTHOR:-desconocido} @ ${HEAD_SHA:0:8}). Mergeando PR #$PR (squash) ..."
+echo "merge-gate: 6/6 OK (veredicto de @${V_AUTHOR:-desconocido} @ ${HEAD_SHA:0:8}). Mergeando PR #$PR (squash) ..."
 # El éxito se mide por el estado REAL del PR, no por el rc del comando: el
 # borrado de rama falla si un worktree la ocupa, aunque el squash sí haya entrado.
 merge_out="$(gh pr merge "$PR" --squash --delete-branch 2>&1)"

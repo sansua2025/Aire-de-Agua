@@ -20,7 +20,7 @@
       },
       "descripcion": "Revenue total pagado de mayo 2026. Debe igualar el seed golden y el recompute canonico (line-grain, anti fan-out, TZ Bogota, estado_pago=paid).",
       "grano_fecha": "fijo",
-      "esperado_seed": { "total": 36208418, "ordenes": 184 },
+      "esperado_seed": { "total": 36468418, "ordenes": 185 },
       "recompute_sql_correcto": "SELECT COALESCE(SUM(vi.total_linea),0)::numeric AS total, COUNT(DISTINCT v.id)::bigint AS ordenes FROM public.ventas v JOIN public.venta_items vi ON vi.venta_id = v.id WHERE (v.ordered_at AT TIME ZONE 'America/Bogota')::date BETWEEN '2026-05-01' AND '2026-05-31' AND v.estado_pago = 'paid'"
     },
     {

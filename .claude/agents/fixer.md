@@ -1,7 +1,8 @@
 ---
 name: fixer
 description: Especialista en depuración. Diagnostica y arregla fallos de verify (tsc/build/advisors) o los cambios pedidos por el reviewer, con el mínimo cambio. Úsalo cuando verify da FAIL o reviewer da REQUEST_CHANGES.
-tools: Read, Edit, Bash, Grep, Glob
+# disallowedTools (no lista positiva): garantiza MCP en entorno remoto (lección AIR-71/119)
+disallowedTools: Write, NotebookEdit
 model: opus
 color: orange
 memory: project

@@ -1,6 +1,17 @@
 import { auth } from '@/auth'
 import { NextResponse } from 'next/server'
 
+/**
+ * Hosts que sirven la app de captura de gastos (AIR-167). Se puede añadir uno
+ * extra por env (GASTOS_HOSTNAME) sin tocar código. `gastos.localhost` permite
+ * probar el rewrite en local con `-H "Host: gastos.localhost"`.
+ */
+const GASTOS_HOSTS = new Set(
+  ['gastos.airedeagua.com', 'gastos.localhost', process.env.GASTOS_HOSTNAME]
+    .filter((h): h is string => !!h)
+    .map((h) => h.toLowerCase())
+)
+
 export default auth((req) => {
   const { pathname } = req.nextUrl
   const isAuth = !!req.auth
@@ -37,6 +48,31 @@ export default auth((req) => {
   // Si está autenticado y va a login, mandalo al home
   if (isAuth && pathname === '/login') {
     return NextResponse.redirect(new URL('/', req.url))
+  }
+
+  // ── Rewrite por hostname para la app de gastos (AIR-167) ──────────────────
+  // Se ejecuta DESPUÉS del gate de sesión (solo alcanzan requests autenticados).
+  // En el host de gastos, servir el route group (gastos) montado en /gastos, sin
+  // exponerlo como subruta en los demás dominios. Blast radius acotado: solo
+  // reescribe si el host es de gastos y el path no es API/estático/login/gastos.
+  const host = (req.headers.get('host') ?? '').split(':')[0].toLowerCase()
+  if (GASTOS_HOSTS.has(host)) {
+    const excluded =
+      pathname.startsWith('/api') ||
+      pathname.startsWith('/_next') ||
+      pathname === '/login' ||
+      pathname.startsWith('/.well-known') ||
+      pathname === '/favicon.ico' ||
+      // Archivos estáticos de public/ (último segmento con extensión, p.ej.
+      // /plantilla_gastos.csv, /icon.png): no son rutas de la app de gastos,
+      // no reescribir a /gastos/... (daría 404). AIR-184.
+      /\.[^/]+$/.test(pathname) ||
+      pathname === '/gastos' ||
+      pathname.startsWith('/gastos/')
+    if (!excluded) {
+      const target = '/gastos' + (pathname === '/' ? '' : pathname)
+      return NextResponse.rewrite(new URL(target, req.url))
+    }
   }
 
   return NextResponse.next()

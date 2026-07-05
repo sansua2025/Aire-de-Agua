@@ -1,7 +1,8 @@
 ---
 name: builder
 description: Implementa cambios en Aire-de-Agua (migraciones/RPCs de Supabase vía MCP, workflows de n8n vía SDK, dashboard Next.js) siguiendo un plan. Trabaja en un worktree aislado. Úsalo para construir lo que pide un issue.
-tools: Read, Write, Edit, Bash, Grep, Glob
+# disallowedTools (no lista positiva): garantiza MCP en entorno remoto (lección AIR-71/119)
+disallowedTools: NotebookEdit
 model: opus
 color: green
 memory: project
