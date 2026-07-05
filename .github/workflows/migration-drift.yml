@@ -2,17 +2,23 @@
 #
 # Recolecta de forma determinista (scripts/agent/migration-drift-collect.sh) lo
 # aplicado en PROD (vnctmzsgemefgbtjctlo) y los archivos versionados en
-# supabase/migrations/, y deja que la Claude Code Action los reconcilie con
-# juicio (convención AIR-90: nombres tempranos sin prefijo NNN_, renumeraciones
-# vía git mv) reportando SOLO drift genuino al GitHub Step Summary.
+# supabase/migrations/, y los reconcilia con un analizador 100% DETERMINISTA
+# (scripts/agent/migration-drift-analyze.sh) — sin LLM, sin la claude-code-action
+# que se colgaba (>25 min) en contexto schedule/workflow_dispatch.
 #
-# Informativo: si hay drift genuino el job FALLA (visible en la pestaña Actions),
+# El baseline scripts/agent/migration-drift-baseline.txt bendice el estado
+# reconciliado actual (convención AIR-90: nombres tempranos sin prefijo NNN_,
+# renumeraciones vía git mv). El analizador normaliza los slugs de git y PROD,
+# calcula la diferencia simétrica y resta el baseline: el job solo FALLA ante
+# divergencias NUEVAS que no estén bendecidas. Para re-bendecir tras una
+# reconciliación intencional, regenerar el baseline.
+#
+# Informativo: si hay drift nuevo el job FALLA (visible en la pestaña Actions),
 # pero NO es un required check de branch protection y por tanto no bloquea PRs.
 #
 # Secrets requeridos (Settings → Secrets and variables → Actions):
-#   - SUPABASE_DB_URL         connection string Postgres (idealmente read-only)
-#                             hacia vnctmzsgemefgbtjctlo.
-#   - CLAUDE_CODE_OAUTH_TOKEN token de la Claude Code Action (ya existe).
+#   - SUPABASE_DB_URL  connection string Postgres (idealmente read-only)
+#                      hacia vnctmzsgemefgbtjctlo.
 #
 # TODO (fase 2): cablear notificación a Linear/Slack cuando haya drift en lugar
 # de solo fallar el job. Por ahora la señal vive en Actions + el Step Summary.
@@ -28,7 +34,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   drift:
@@ -48,22 +53,7 @@ jobs:
           bash scripts/agent/migration-drift-collect.sh > /tmp/drift_data.txt
           echo "Collected $(wc -l < /tmp/drift_data.txt) lines."
 
-      - name: Analyze drift (Claude agent)
-        uses: anthropics/claude-code-action@v1
-        with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          claude_args: '--allowed-tools "Read,Bash(cat:*),Bash(echo:*),Bash(printf:*),Bash(ls:*),Bash(sort:*),Bash(grep:*)"'
-          prompt: |
-            Eres un auditor de drift de migraciones del proyecto Supabase vnctmzsgemefgbtjctlo. Lee el archivo /tmp/drift_data.txt (secciones === APPLIED_PROD === con líneas version<TAB>name de lo aplicado en PROD, y === GIT_FILES === con los basenames de supabase/migrations/*.sql del repo). Tu trabajo: reconciliar ambas listas y reportar SOLO drift genuino.
-            Reglas de juicio (convención AIR-90): las migraciones tempranas en PROD tienen nombres descriptivos SIN prefijo numérico NNN_ (p.ej. 'create_ad_performance_history', 'fix_venta_items_unique_constraint') y corresponden por CONTENIDO/slug a los archivos git 001_..008_.. y a varios sin número; algunas fueron renumeradas con git mv. Hacia adelante (desde ~037 en adelante) el name aplicado SÍ incluye el prefijo NNN_ y debe matchear el basename git por ese slug. NO reportes como drift un match evidente por slug/contenido aunque el string no sea idéntico.
-            Reporta dos categorías de drift GENUINO:
-            (A) Forward drift: un archivo git NNN_*.sql cuyo contenido NO aparece aplicado en PROD (riesgo: migración versionada pero nunca corrida en prod).
-            (B) Reverse drift: una migración aplicada en PROD que NO tiene archivo de respaldo en git por ningún criterio razonable (riesgo: cambio en prod sin respaldo versionado).
-            Escribe un reporte markdown CONCISO al archivo cuya ruta está en la env var GITHUB_STEP_SUMMARY (usa: cat o echo redirigido con >> "$GITHUB_STEP_SUMMARY"). El reporte debe tener: un título, un resumen de 1 línea (¿hay drift sí/no?), y si hay drift, listas con viñetas de las categorías A y B (solo las entradas genuinamente driftadas, con su version/name o filename). Si NO hay drift genuino, dilo explícitamente.
-            IMPORTANTE: si y solo si encuentras drift genuino en A o B, crea además un archivo vacío en /tmp/drift_found con: printf '' > /tmp/drift_found  — NO lo crees si no hay drift. No modifiques ningún archivo del repo ni la base de datos.
-
-      - name: Fail on drift
-        if: always()
+      - name: Analyze drift
         run: |
-          if [ -f /tmp/drift_found ]; then echo "Drift genuino detectado — ver Step Summary."; exit 1; fi
-          echo "Sin drift genuino."
+          set -euo pipefail
+          bash scripts/agent/migration-drift-analyze.sh /tmp/drift_data.txt | tee -a "$GITHUB_STEP_SUMMARY"
