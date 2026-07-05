@@ -218,6 +218,39 @@ Si en la validación de fase 1 se decide portar el ledger (asientos persistidos,
 
 ---
 
+## Addendum empírico — inspección read-only de la base Neon de VP (2026-07-05)
+
+Con autorización explícita se inspeccionó la base de producción de VP (Neon, vía SQL-over-HTTP, solo SELECTs). Convierte varios supuestos del análisis en hechos:
+
+**A1 · El tenant real de VP es Aire de Agua.** Tienda `749941.myshopify.com` conectada (status CONNECTED), tenant `Aire de Agua` con config financiera real cargada: COP, `America/Bogota`, caja disponible, gastos fijos y de marketing mensuales, y comisión de mercadopago ajustada a mano respecto del preset (los valores exactos quedan fuera del repo — convención de la mig 109; fueron reportados en la sesión). Hay 3 tenants más (admin/pruebas) sin datos. **Implicación:** el ledger de VP es un oráculo de reconciliación directo para el paso 0 del plan — son los mismos datos de la misma tienda, computados por la implementación de referencia.
+
+**A2 · Ventana de datos: 2025-12-10 → 2026-03-10, congelada.** 290 órdenes vigentes (SCD2), todo COP, canales web+POS (POS = 201 órdenes, 72% del neto — consistente con el "~75% POS" de AdeA). El último sync COMPLETED fue 2026-03-10; VP dejó de sincronizar ahí. El oráculo sirve solo para esa ventana.
+
+**A3 · D1 resuelta empíricamente: los precios son IVA-incluido al 19% y el "neto" de VP INCLUYE IVA.** El `totalTax` agregado de la ventana coincide **al peso** con `neto × 19/119` (diferencia de centavos por redondeo por línea; 5 órdenes sin tax). `TAX_COLLECTED` se asienta como línea separada pero `getPnLSummary` **no lo resta del net** — la política 6 ("revenue neto de impuesto") es aspiracional, nunca se ejecutó. Para AdeA: `get_pnl` debe declarar explícitamente si su "Ventas Netas" es IVA-incluido (consistente con `get_revenue` y con VP-en-la-práctica) y mostrar el IVA teórico (`neto × 19/119`) como línea informativa.
+
+**A4 · Las devoluciones son materiales: ~3,1% del neto.** 12 refunds en los 3 meses de la ventana, mezcla de `restock_type` `return` (reversa COGS) y `cancel` (no reversa). Supera 3× la tolerancia MAJOR (1%) de la propia política de reconciliación de VP. **El paso 2 del plan (captura de devoluciones) deja de ser condicional: es necesario.** La verificación 0.4 queda respondida.
+
+**A5 · VP asienta también órdenes `pending`.** 4 órdenes pending tienen asientos en el ledger — VP no filtra por estado de pago, a diferencia del canon de AdeA (`estado_pago='paid'`). Al reconciliar contra `get_revenue` hay que restar las pending del lado VP (y normalizar el IVA, A3).
+
+**A6 · Las capas "Semantic" de VP nunca se materializaron.** Vacías: `ExpenseLineItem` (confirma que el P&L corrió con los dos escalares del Tenant), `RunwaySnapshot`, `Action`, `Scenario`, `CalculationRun`, `TenantPolicySnapshot`, `SkuCostOverride`, `WhatsappSession`. Todo eso se calcula on-the-fly o jamás se usó. Refuerza §2.3: nada de esa infraestructura merece portarse.
+
+**A7 · Calidad del dato de VP en su ventana: alta.** Cobertura COGS 100% (395 líneas con COGS, 0 sin), consistencia línea↔header exacta (muestras: `li_neto == netAmount`, descuentos asignados a nivel línea vía `discount_allocations`).
+
+**A8 · Números del oráculo por mes (ledger VP, TZ Bogotá).** Los totales mensuales (bruto, descuentos, refunds, COGS neto; dic-2025 → mar-2026) quedaron extraídos y reportados en la sesión — los montos no se versionan aquí (repo público, convención mig 109). Para el paso 0.8 se regeneran con esta query sobre el ledger de VP (ilustrativa):
+
+```sql
+SELECT to_char("postedAt" AT TIME ZONE 'America/Bogota','YYYY-MM') AS mes,
+       sum(amount) FILTER (WHERE "entryType"='REVENUE_GROSS')   AS bruto,
+       sum(amount) FILTER (WHERE "entryType"='DISCOUNT')        AS descuentos,
+       sum(amount) FILTER (WHERE "entryType"='REFUND_REVENUE')  AS refunds,
+       sum(amount) FILTER (WHERE "entryType" IN ('COGS','COGS_REVERSAL')) AS cogs_neto
+FROM "LedgerEntry" GROUP BY 1 ORDER BY 1;
+```
+
+**Nota de seguridad:** la connection string usada es del rol `neondb_owner` y quedó en el historial del chat. Rotar esa contraseña en Neon al cerrar esta validación; si se repite el ejercicio, crear un rol de solo lectura.
+
+---
+
 ## Supuestos y límites de este análisis
 
 - No se consultó la DB de PROD (sesión read-only sin MCP de Supabase): las columnas de tablas pre-repo (`ventas`, `venta_items`, `ventas_offline`) se infirieron de `CLAUDE.md` y de las migraciones que las referencian. Las verificaciones marcadas ⚠️ en §3 deben correrse contra PROD (read-only) al inicio de la fase 1.

@@ -15,15 +15,18 @@
 
 Cerrar los ⚠️ del análisis antes de escribir una línea de SQL. Sin código, solo queries read-only y lectura de workflows.
 
+> **Actualización 2026-07-05:** la inspección read-only de la base Neon de VP (addendum A1–A8 del análisis) ya resolvió parte de este paso: **0.4 respondida** (refunds ≈ 3,1% del neto → el paso 2 es necesario, no condicional) y **la mitad IVA de 0.1 respondida** (precios IVA-incluido al 19%, verificado al peso). Además VP queda disponible como **oráculo de reconciliación** para la ventana 2025-12-10 → 2026-03-10 (A8: query al ledger; montos fuera del repo), normalizando antes: VP incluye órdenes `pending` y su neto incluye IVA.
+
 | # | Verificación | Cómo | Resuelve |
 |---|---|---|---|
-| 0.1 | ¿`total_linea` es neto o bruto de descuento? ¿IVA incluido? | Tomar 5 órdenes reales, comparar `venta_items` vs el admin de Shopify (subtotal, descuentos, tax) | D1 y la línea Descuentos |
+| 0.1 | ¿`total_linea` es neto o bruto de descuento? (IVA ya resuelto: incluido, A3) | Tomar 5 órdenes reales, comparar `venta_items` vs el admin de Shopify (subtotal, descuentos) | Línea Descuentos |
 | 0.2 | Semántica de `ventas.costo_envio` e `impuesto` | Mismas 5 órdenes | Línea Envío cobrado |
 | 0.3 | ¿`E2_Webhook_Shopify_Orders` procesa refunds? ¿Cómo actualiza una orden reembolsada? (¿pisa `total`? ¿cambia `estado_pago`?) | Leer el workflow nodo a nodo + buscar en PROD órdenes con refund conocido | Gap devoluciones (paso 2) |
-| 0.4 | Volumen real de refunds | API Shopify: contar refunds últimos 12 meses y su monto | Dimensionar el paso 2 (si es <1% del revenue, baja de prioridad) |
+| 0.4 | ~~Volumen real de refunds~~ **RESUELTA:** ≈3,1% del neto (12 refunds en dic–mar), mezcla `return`/`cancel` | Base Neon de VP (addendum A4) | Paso 2 confirmado como necesario |
 | 0.5 | ¿`ventas_offline` solapa con `ventas.canal='pos'` o es otra cosa? | Comparar conteos/rangos de fechas entre ambas tablas | D5 (alcance de ventas) |
 | 0.6 | Cobertura COGS actual del período a validar | `cobertura_cogs` de `vista_atribucion_web_con_margen` sobre 2026 | Calidad esperada del margen |
 | 0.7 | Solape pauta: `SUM(meta_ads_performance.gasto)` vs `gastos` categorías publicidad/agencia, por mes | Query comparativa 6 meses | D2 (qué categorías se excluyen del OPEX) |
+| 0.8 | **Reconciliación cruzada AdeA↔VP:** `analytics.get_revenue` por mes (ene/feb 2026) vs los totales mensuales del ledger de VP (query A8), restando pending y normalizando IVA | Query en Supabase + query al ledger de Neon | Confianza en ambas fuentes antes de construir |
 
 **Entregable:** decisiones D1–D5 cerradas y escritas (idealmente como ADR-004), con los números de la verificación. **Riesgo si se salta:** el P&L nace con semántica ambigua y cada reconciliación posterior es indistinguible de un bug.
 
