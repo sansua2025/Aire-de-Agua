@@ -58,9 +58,6 @@ export function PnLWaterfall({ pnl }: { pnl: PnLSummary }) {
 
   return (
     <div className="gs-wf" role="list">
-      {/* Línea de base (cero) — referencia del eje monetario compartido. */}
-      <div className="gs-wf-zero" style={{ left: `${geo.zeroPct}%` }} aria-hidden />
-
       {steps.map((step, i) => {
         const bar = geo.bars[i]
         const open = openKey === step.key
