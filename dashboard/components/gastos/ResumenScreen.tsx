@@ -20,6 +20,7 @@ import {
   type RangoFechas,
 } from '@/lib/gastos/periodo'
 import { pagadorDot } from '@/lib/gastos/resumen-colors'
+import { buildResumenInsight } from '@/lib/gastos/resumen-insight'
 import type { GastoResumen, GastoDesglose } from '@/lib/gastos/types'
 
 /**
@@ -136,6 +137,10 @@ export function ResumenScreen() {
 
   const porPagador = resumen?.por_pagador ?? []
   const maxTrend = serie && serie.length ? Math.max(...serie.map((p) => p.total)) : 0
+  const total = Number(resumen?.total ?? 0)
+  const count = resumen?.count ?? 0
+  // Insight llano del hero desktop (nodo 50) — derivado del mismo desglose.
+  const insight = useMemo(() => buildResumenInsight(desglose, total), [desglose, total])
 
   // Meses (clave 'YYYY-MM') incluidos en el rango activo → barras resaltadas.
   const desdeKey = rango.desde.slice(0, 7)
@@ -174,78 +179,88 @@ export function ResumenScreen() {
     <div className="gs-res">
       <ReportNav active="resumen" />
 
-      {/* Header + navegación de período */}
-      <header className="gs-res-head">
-        <h1 className="gs-res-title">Resumen</h1>
-        <div className="gs-monthsel">
-          <button
-            type="button"
-            className="gs-monthsel-nav"
-            aria-label="Período anterior"
-            onClick={() => navBy(-1)}
-            disabled={!canNav}
-          >
-            <ChevronLeft size={15} strokeWidth={2.4} />
-          </button>
-          <span className="gs-monthsel-label">{periodLabel}</span>
-          <button
-            type="button"
-            className="gs-monthsel-nav"
-            aria-label="Período siguiente"
-            onClick={() => navBy(1)}
-            disabled={!canNext}
-          >
-            <ChevronRight size={15} strokeWidth={2.4} />
-          </button>
-        </div>
-      </header>
+      {/* Topbar: título + selector de período. En mobile fluye como hoy
+          (display:contents); en desktop es un grid título-izquierda /
+          controles-derecha (nodo Figma 50). */}
+      <div className="gs-res-topbar">
+        <header className="gs-res-head">
+          <div className="gs-res-titleblock">
+            <h1 className="gs-res-title">
+              <span className="gs-only-m">Resumen</span>
+              <span className="gs-only-d">En qué gastaste</span>
+            </h1>
+            <p className="gs-res-subtitle">Aire de Agua · {periodLabel}</p>
+          </div>
+          <div className="gs-monthsel">
+            <button
+              type="button"
+              className="gs-monthsel-nav"
+              aria-label="Período anterior"
+              onClick={() => navBy(-1)}
+              disabled={!canNav}
+            >
+              <ChevronLeft size={15} strokeWidth={2.4} />
+            </button>
+            <span className="gs-monthsel-label">{periodLabel}</span>
+            <button
+              type="button"
+              className="gs-monthsel-nav"
+              aria-label="Período siguiente"
+              onClick={() => navBy(1)}
+              disabled={!canNext}
+            >
+              <ChevronRight size={15} strokeWidth={2.4} />
+            </button>
+          </div>
+        </header>
 
-      {/* Selector de rango */}
-      <div className="gs-chips gs-res-chips" role="group" aria-label="Rango de fechas">
-        {CHIPS.map((c) => (
-          <Chip
-            key={c.key}
-            label={c.label}
-            selected={mode === c.key}
-            onClick={() => selectChip(c.key)}
-          />
-        ))}
+        {/* Selector de rango */}
+        <div className="gs-chips gs-res-chips" role="group" aria-label="Rango de fechas">
+          {CHIPS.map((c) => (
+            <Chip
+              key={c.key}
+              label={c.label}
+              selected={mode === c.key}
+              onClick={() => selectChip(c.key)}
+            />
+          ))}
+        </div>
+
+        {/* Sheet Personalizado (2 date inputs nativos, mobile-friendly) */}
+        {mode === 'custom' && customOpen && (
+          <div className="gs-daterange" role="group" aria-label="Rango personalizado">
+            <label className="gs-daterange-field">
+              <span className="gs-daterange-lbl">Desde</span>
+              <input
+                type="date"
+                className="gs-daterange-input"
+                value={customDraft.desde}
+                max={customDraft.hasta || today}
+                onChange={(e) => setCustomDraft((d) => ({ ...d, desde: e.target.value }))}
+              />
+            </label>
+            <label className="gs-daterange-field">
+              <span className="gs-daterange-lbl">Hasta</span>
+              <input
+                type="date"
+                className="gs-daterange-input"
+                value={customDraft.hasta}
+                min={customDraft.desde}
+                max={today}
+                onChange={(e) => setCustomDraft((d) => ({ ...d, hasta: e.target.value }))}
+              />
+            </label>
+            <button
+              type="button"
+              className="gs-daterange-apply"
+              onClick={applyCustom}
+              disabled={!customDraft.desde || !customDraft.hasta || customDraft.desde > customDraft.hasta}
+            >
+              Aplicar
+            </button>
+          </div>
+        )}
       </div>
-
-      {/* Sheet Personalizado (2 date inputs nativos, mobile-friendly) */}
-      {mode === 'custom' && customOpen && (
-        <div className="gs-daterange" role="group" aria-label="Rango personalizado">
-          <label className="gs-daterange-field">
-            <span className="gs-daterange-lbl">Desde</span>
-            <input
-              type="date"
-              className="gs-daterange-input"
-              value={customDraft.desde}
-              max={customDraft.hasta || today}
-              onChange={(e) => setCustomDraft((d) => ({ ...d, desde: e.target.value }))}
-            />
-          </label>
-          <label className="gs-daterange-field">
-            <span className="gs-daterange-lbl">Hasta</span>
-            <input
-              type="date"
-              className="gs-daterange-input"
-              value={customDraft.hasta}
-              min={customDraft.desde}
-              max={today}
-              onChange={(e) => setCustomDraft((d) => ({ ...d, hasta: e.target.value }))}
-            />
-          </label>
-          <button
-            type="button"
-            className="gs-daterange-apply"
-            onClick={applyCustom}
-            disabled={!customDraft.desde || !customDraft.hasta || customDraft.desde > customDraft.hasta}
-          >
-            Aplicar
-          </button>
-        </div>
-      )}
 
       {error ? (
         <div className="gs-res-state">{error}</div>
@@ -253,77 +268,102 @@ export function ResumenScreen() {
         <div className="gs-res-state">Cargando…</div>
       ) : (
         <>
-          {/* Card total del período */}
+          {/* Card total del período — mobile (oliva). En desktop la reemplaza el
+              hero claro con el insight (se ocultan mutuamente por breakpoint). */}
           <section className="gs-res-total">
             <span className="gs-res-total-lbl">TOTAL DEL PERÍODO</span>
-            <span className="gs-res-total-val">
-              $ {groupThousands(Number(resumen?.total ?? 0))}
-            </span>
+            <span className="gs-res-total-val">$ {groupThousands(total)}</span>
             <span className="gs-res-total-sub">
-              {resumen?.count ?? 0} {resumen?.count === 1 ? 'gasto registrado' : 'gastos registrados'}
+              {count} {count === 1 ? 'gasto registrado' : 'gastos registrados'}
             </span>
           </section>
 
-          {/* Desglose (drill-down tipo → categoría → concepto) */}
-          <section className="gs-res-card">
-            <h2 className="gs-res-card-title">Desglose</h2>
-            {desglose ? (
-              <DesgloseTree desglose={desglose} />
-            ) : (
-              <p className="gs-res-empty">Sin gastos en este período.</p>
-            )}
-          </section>
-
-          {/* Tendencia · 6 meses (barras clickeables) */}
-          <section className="gs-res-card">
-            <h2 className="gs-res-card-title">Tendencia · últimos 6 meses</h2>
-            <div className="gs-res-trend">
-              {(serie ?? []).map((p) => {
-                const isActive = p.key >= desdeKey && p.key <= hastaKey
-                const pct = maxTrend > 0 ? (p.total / maxTrend) * 100 : 0
-                return (
-                  <button
-                    type="button"
-                    className="gs-trend-col"
-                    key={p.key}
-                    onClick={() => selectMonth(p.key)}
-                    aria-label={`${monthShortLabel(p.key)}: $ ${groupThousands(p.total)}`}
-                    aria-pressed={isActive}
-                  >
-                    <div className="gs-trend-track" aria-hidden>
-                      <div
-                        className={`gs-trend-bar${isActive ? ' is-current' : ''}`}
-                        style={{ height: `${pct}%` }}
-                      />
-                    </div>
-                    <span className={`gs-trend-lbl${isActive ? ' is-current' : ''}`}>
-                      {monthShortLabel(p.key)}
-                    </span>
-                  </button>
-                )
-              })}
+          {/* Hero desktop (nodo 50): total a la izquierda + insight a la derecha.
+              display:none en mobile (los mismos datos van en la card oliva). */}
+          <section className="gs-res-hero">
+            <div className="gs-res-hero-main">
+              <span className="gs-res-hero-lbl">GASTO TOTAL DEL PERÍODO</span>
+              <span className="gs-res-hero-val">$ {groupThousands(total)}</span>
+              <span className="gs-res-hero-sub">
+                {count} {count === 1 ? 'gasto registrado' : 'gastos registrados'}
+              </span>
             </div>
-          </section>
-
-          {/* Pagado por */}
-          <section className="gs-res-card">
-            <h2 className="gs-res-card-title">Pagado por</h2>
-            {porPagador.length === 0 ? (
-              <p className="gs-res-empty">Sin gastos en este período.</p>
-            ) : (
-              <div className="gs-res-payers">
-                {porPagador.map((p, i) => (
-                  <div className="gs-payer-row" key={p.pagador_id ?? p.pagador ?? i}>
-                    <span className="gs-payer-name">
-                      <span className="gs-payer-dot" style={{ background: pagadorDot(i) }} aria-hidden />
-                      {p.pagador ?? 'Sin pagador'}
-                    </span>
-                    <span className="gs-payer-monto">$ {groupThousands(Number(p.total))}</span>
-                  </div>
-                ))}
+            {insight && (
+              <div className="gs-res-hero-insight">
+                <p className="gs-res-hero-insight-title">{insight.title}</p>
+                <p className="gs-res-hero-insight-body">{insight.body}</p>
               </div>
             )}
           </section>
+
+          {/* Grid de tarjetas: en desktop Desglose ocupa la columna ancha y
+              Tendencia + Pagado por se apilan en el riel derecho (nodo 50). En
+              mobile es display:contents → se apilan como hoy. */}
+          <div className="gs-res-grid">
+            {/* Desglose (drill-down tipo → categoría → concepto) */}
+            <section className="gs-res-card gs-res-desglose">
+              <h2 className="gs-res-card-title">
+                <span className="gs-only-m">Desglose</span>
+                <span className="gs-only-d">En qué categorías</span>
+              </h2>
+              {desglose ? (
+                <DesgloseTree desglose={desglose} />
+              ) : (
+                <p className="gs-res-empty">Sin gastos en este período.</p>
+              )}
+            </section>
+
+            {/* Tendencia · 6 meses (barras clickeables) */}
+            <section className="gs-res-card gs-res-trend-card">
+              <h2 className="gs-res-card-title">Tendencia · últimos 6 meses</h2>
+              <div className="gs-res-trend">
+                {(serie ?? []).map((p) => {
+                  const isActive = p.key >= desdeKey && p.key <= hastaKey
+                  const pct = maxTrend > 0 ? (p.total / maxTrend) * 100 : 0
+                  return (
+                    <button
+                      type="button"
+                      className="gs-trend-col"
+                      key={p.key}
+                      onClick={() => selectMonth(p.key)}
+                      aria-label={`${monthShortLabel(p.key)}: $ ${groupThousands(p.total)}`}
+                      aria-pressed={isActive}
+                    >
+                      <div className="gs-trend-track" aria-hidden>
+                        <div
+                          className={`gs-trend-bar${isActive ? ' is-current' : ''}`}
+                          style={{ height: `${pct}%` }}
+                        />
+                      </div>
+                      <span className={`gs-trend-lbl${isActive ? ' is-current' : ''}`}>
+                        {monthShortLabel(p.key)}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            </section>
+
+            {/* Pagado por */}
+            <section className="gs-res-card gs-res-payers-card">
+              <h2 className="gs-res-card-title">Pagado por</h2>
+              {porPagador.length === 0 ? (
+                <p className="gs-res-empty">Sin gastos en este período.</p>
+              ) : (
+                <div className="gs-res-payers">
+                  {porPagador.map((p, i) => (
+                    <div className="gs-payer-row" key={p.pagador_id ?? p.pagador ?? i}>
+                      <span className="gs-payer-name">
+                        <span className="gs-payer-dot" style={{ background: pagadorDot(i) }} aria-hidden />
+                        {p.pagador ?? 'Sin pagador'}
+                      </span>
+                      <span className="gs-payer-monto">$ {groupThousands(Number(p.total))}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          </div>
         </>
       )}
 

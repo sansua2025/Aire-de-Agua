@@ -1721,3 +1721,196 @@ a.gs-hist-export { text-decoration: none; }
   transition: width 0.3s ease;
 }
 .gs-pnl-opex-iva { font-size: 11px; color: var(--g-ink-faint); line-height: 1.45; margin: 0; }
+
+/* ===========================================================================
+ * DESKTOP (≥ 900px) · capa ADITIVA (AIR desktop)
+ * Todo lo de arriba es mobile-first e INTACTO. Aquí se agrega el chrome de
+ * escritorio (sidebar en vez de TabBar, captura como modal) y el re-layout de
+ * cada pantalla según el Figma de desktop (nodos 48/49/50/52/53). Los elementos
+ * "solo-desktop" nacen ocultos; los "solo-mobile" se ocultan en el breakpoint.
+ * Mono-tema (la app de gastos no usa dark).
+ * ========================================================================= */
+
+/* Utilidades de visibilidad por breakpoint (base = mobile). */
+.gs-only-d { display: none; }
+.gs-res-subtitle { display: none; }
+.gs-res-hero { display: none; }
+.gs-desg-bar { display: none; }
+.gs-desg-pct { display: none; }
+
+/* Chrome de escritorio: oculto en mobile. El shell es transparente (contents)
+   para no alterar el flujo de las pantallas en mobile. */
+.gs-side { display: none; }
+.gs-main { display: contents; }
+
+/* Agrupadores que en mobile NO deben generar caja (para no romper el gap del
+   contenedor de pantalla). En desktop sí maquetan. */
+.gs-res-topbar { display: contents; }
+.gs-res-grid { display: contents; }
+
+@media (min-width: 900px) {
+  /* ---- Shell: sidebar fijo + columna de contenido ---- */
+  .gastos-shell { display: flex; flex-direction: row; align-items: stretch; }
+  .gs-main { display: block; flex: 1 1 auto; min-width: 0; }
+
+  .gs-side {
+    display: flex;
+    flex-direction: column;
+    width: 236px;
+    flex: none;
+    align-self: flex-start;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    padding: 28px 20px;
+    background: var(--g-bg);
+    border-right: 1px solid var(--g-border);
+  }
+  .gs-side-brand { display: flex; flex-direction: column; gap: 2px; padding: 0 12px 26px; }
+  .gs-side-brand-name { font-size: 17px; font-weight: 700; color: var(--g-ink); }
+  .gs-side-brand-sub { font-size: 12px; color: var(--g-ink-faint); }
+
+  .gs-side-nav { display: flex; flex-direction: column; gap: 2px; }
+  .gastos-shell a.gs-side-link {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 11px 12px;
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--g-ink-secondary);
+    text-decoration: none;
+    transition: background 0.12s ease, color 0.12s ease;
+  }
+  .gs-side-link:hover { background: var(--g-surface-soft); }
+  .gs-side-link.is-active { background: var(--g-surface-inset); color: var(--g-ink); font-weight: 600; }
+  .gs-side-dot { width: 7px; height: 7px; border-radius: 999px; background: var(--g-ink-faint); flex: none; }
+  .gs-side-link.is-active .gs-side-dot { background: var(--g-primary); }
+
+  .gastos-shell a.gs-side-cta,
+  .gastos-shell button.gs-side-cta {
+    margin-top: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    padding: 14px;
+    border-radius: 16px;
+    background: var(--g-accent);
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+    text-decoration: none;
+    box-shadow: var(--g-shadow-cta);
+    transition: opacity 0.12s ease;
+  }
+  .gs-side-cta:hover { opacity: 0.94; }
+
+  /* El chrome mobile desaparece: la nav vive en el sidebar. */
+  .gs-tabbar { display: none; }
+  .gs-report-nav { display: none; }
+
+  /* Utilidades de visibilidad invertidas en desktop. */
+  .gs-only-d { display: revert; }
+  .gs-only-m { display: none; }
+
+  /* ---- Resumen (nodo 50) ---- */
+  .gs-res {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 36px 44px 56px;
+    gap: 24px;
+  }
+
+  /* Topbar: título+subtítulo a la izquierda, chips y navegación a la derecha. */
+  .gs-res-topbar {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "title chips"
+      "title monthsel";
+    align-items: start;
+    column-gap: 24px;
+    row-gap: 12px;
+  }
+  .gs-res-topbar .gs-res-head { display: contents; }
+  .gs-res-titleblock { grid-area: title; display: flex; flex-direction: column; gap: 4px; }
+  .gs-res-title { font-size: 34px; letter-spacing: -0.5px; }
+  .gs-res-subtitle { display: block; font-size: 14px; color: var(--g-ink-tertiary); margin: 0; }
+  .gs-res-topbar .gs-res-chips { grid-area: chips; justify-self: end; }
+  .gs-res-topbar .gs-monthsel { grid-area: monthsel; justify-self: end; }
+  .gs-res-topbar .gs-daterange { grid-column: 1 / -1; justify-self: end; max-width: 420px; }
+
+  /* Hero desktop: total (izq) + insight (der). Oculta la card oliva mobile. */
+  .gs-res-total { display: none; }
+  .gs-res-hero {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 32px;
+    background: var(--g-surface-soft);
+    border-radius: 22px;
+    padding: 26px 32px;
+    box-shadow: var(--g-shadow-key);
+  }
+  .gs-res-hero-main { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+  .gs-res-hero-lbl {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--g-ink-faint);
+  }
+  .gs-res-hero-val {
+    font-size: 44px;
+    font-weight: 700;
+    color: var(--g-ink);
+    letter-spacing: -1px;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  .gs-res-hero-sub { font-size: 13px; color: var(--g-ink-tertiary); }
+  .gs-res-hero-insight {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-width: 380px;
+    flex: none;
+  }
+  .gs-res-hero-insight-title { font-size: 17px; font-weight: 700; color: var(--g-ink); margin: 0; }
+  .gs-res-hero-insight-body { font-size: 13px; color: var(--g-ink-secondary); line-height: 1.5; margin: 0; }
+
+  /* Grid de tarjetas: Desglose ancho (izq), Tendencia + Pagadores riel (der). */
+  .gs-res-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+    grid-template-areas:
+      "desg trend"
+      "desg payers";
+    gap: 24px;
+    align-items: start;
+  }
+  .gs-res-desglose { grid-area: desg; }
+  .gs-res-trend-card { grid-area: trend; }
+  .gs-res-payers-card { grid-area: payers; }
+
+  /* Barras de participación por tipo + % (nodo 50). */
+  .gs-desg-pct {
+    display: inline;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--g-ink-tertiary);
+    font-variant-numeric: tabular-nums;
+  }
+  .gs-desg-bar {
+    display: block;
+    height: 6px;
+    border-radius: 4px;
+    background: var(--g-surface-muted);
+    overflow: hidden;
+    margin: -2px 0 12px 33px;
+  }
+  .gs-desg-bar-fill { display: block; height: 6px; border-radius: 4px; transition: width 0.3s ease; }
+}
