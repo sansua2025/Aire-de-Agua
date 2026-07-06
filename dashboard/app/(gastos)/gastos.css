@@ -1748,6 +1748,8 @@ a.gs-hist-export { text-decoration: none; }
    contenedor de pantalla). En desktop sí maquetan. */
 .gs-res-topbar { display: contents; }
 .gs-res-grid { display: contents; }
+.gs-pnl-grid { display: contents; }
+.gs-pnl-rail { display: contents; }
 
 @media (min-width: 900px) {
   /* ---- Shell: sidebar fijo + columna de contenido ---- */
@@ -2004,6 +2006,41 @@ a.gs-hist-export { text-decoration: none; }
   }
   .gastos-shell .gs-table-more { color: var(--g-accent); font-weight: 600; font-size: 13px; padding: 2px; }
   .gs-table-more:disabled { opacity: 0.5; }
+
+  /* ---- P&L (nodos 48 pérdida / 49 ganancia) ---- */
+  .gs-pnl {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 36px 44px 56px; /* sin reserva para la tab bar */
+    gap: 24px;
+  }
+
+  /* Hero en dos columnas: el resultado (izq) + la estructura "de cada $100"
+     (der). Mismos elementos y estados (ganancia oliva / pérdida terracota) que
+     mobile, solo reacomodados. */
+  .gs-pnl-hero {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+      "head p100"
+      "val  p100";
+    align-items: start;
+    column-gap: 40px;
+    row-gap: 10px;
+    padding: 26px 32px;
+  }
+  .gs-pnl-hero-top { grid-area: head; }
+  .gs-pnl-hero-val { grid-area: val; font-size: 46px; }
+  .gs-pnl-per100 { grid-area: p100; align-self: center; }
+
+  /* Contenido: cascada ancha (izq) + riel de tiles/opex/calidad (der). */
+  .gs-pnl-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
+    gap: 24px;
+    align-items: start;
+  }
+  .gs-pnl-rail { display: flex; flex-direction: column; gap: 20px; }
 }
 
 /* ---------------------------------------------------------------------------
