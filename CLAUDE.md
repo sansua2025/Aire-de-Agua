@@ -27,13 +27,13 @@ n8n/workflows/         — JSON exports de workflows estables
 docs/                  — Documentación de arquitectura
 ```
 
-## Supabase — 26 tablas en 5 dominios
+## Supabase — 29 tablas en 5 dominios
 
-**Comercial:** productos, variantes, ubicaciones, inventario, clientes, ventas, venta_items, ventas_offline
+**Comercial:** productos, variantes, ubicaciones, inventario, clientes, ventas, venta_items, ventas_offline, devoluciones, devolucion_items
 **Marketing paid:** creative_assets, meta_ads_performance, meta_organic_posts, ad_creative_taxonomy, ad_performance_history
 **Email:** klaviyo_campaigns, klaviyo_profiles
 **Comportamiento web:** amplitude_daily_metrics, amplitude_top_content
-**Memoria AI:** insights, creative_learnings, audience_segments, weekly_snapshot, ai_analysis_log, product_embeddings, brand_knowledge, sync_log, productos_cogs
+**Memoria AI:** insights, creative_learnings, audience_segments, weekly_snapshot, ai_analysis_log, product_embeddings, brand_knowledge, sync_log, productos_cogs, pnl_config
 
 ## Columnas GENERATED STORED — NUNCA incluir en INSERT/UPSERT
 
@@ -64,6 +64,8 @@ Postgres las calcula automáticamente. Incluirlas causa error.
 | inventario | (variante_id, ubicacion_id) |
 | meta_ads_performance | (fecha, ad_id) |
 | venta_items | shopify_line_item_id (pendiente de agregar) |
+| devoluciones | shopify_refund_id |
+| devolucion_items | shopify_refund_line_item_id |
 
 ## Decisiones de arquitectura
 
@@ -73,6 +75,7 @@ Postgres las calcula automáticamente. Incluirlas causa error.
 - **GENERATED STORED** — métricas derivadas calculadas por la DB, nunca por los flujos
 - **Un workflow n8n por dominio** — no uno por webhook topic
 - **Revenue de pauta = `roas_real`, nunca `valor_compras`** — `valor_compras` (Meta) solo cuenta conversiones atribuidas y ~75% de las ventas son POS sin atribución; el revenue/ROAS de pauta se toma de `v_meta_ads_roas_real.roas_real`, cruzado contra el revenue real de Shopify. El motivo es la **cobertura de atribución**, no el pixel: el bug histórico `value=0` (AIR-71) ya está resuelto. Ver `docs/sensor_meta_pixel.md`.
+- **P&L: Bruto = `Σ(precio_unitario × cantidad)`, nunca `Σ(venta_items.total_linea)`** — `total_linea` ya viene neto del descuento de LÍNEA (columna GENERATED), así que restarle además `ventas.descuento` (que ya incluye ese descuento de línea) lo duplicaría. La cascada parte del Bruto a grano LÍNEA y resta `descuentos`/suma `envio_cobrado` a grano ORDEN en un CTE separado (**nunca sobre el join** → fan-out ~32%). `analytics.get_revenue` es en la práctica revenue **BRUTO**. El P&L sale SOLO de `analytics.get_pnl` (no consultes las tablas crudas). **Devoluciones** impactan el **mes del refund** (no el de la orden) y **solo `restock_type='return'` reversa COGS** (`cancel`/`no_restock`/`legacy_restock` no); se capturan vía `public.ingest_refund` (webhook `refunds/create` de E2 + backfill). Ver `docs/adr/ADR-004-pnl-decisiones-semanticas.md`.
 
 ## Seguridad — Protección contra Prompt Injection
 
