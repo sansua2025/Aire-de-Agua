@@ -12,6 +12,28 @@ export function groupThousands(n: number): string {
     .replace(/\B(?=(\d{3})+(?!\d))/g, '.')
 }
 
+/**
+ * Monto COP con signo, es-CO. `groupThousands` ya aplica `Math.abs`, así que el
+ * signo se decide aquí y NUNCA se pierde:
+ *   - sin `forceSign`: el valor manda → negativo "− $ 1.234"; si no, "$ 1.234".
+ *   - con `forceSign`: el operador es fijo por semántica del paso (una resta
+ *     muestra "− $ 0" aunque el monto sea 0; una suma, "+ $ …").
+ * Es la única fuente de verdad del signo monetario en el P&L (hero + cascada):
+ * evita el bug de formatear el `abs` y dejar caer el "−" en una utilidad neta
+ * negativa.
+ */
+export function signedCOP(n: number, forceSign?: '+' | '−'): string {
+  const abs = `$ ${groupThousands(n)}`
+  if (forceSign) return `${forceSign} ${abs}`
+  return n < 0 ? `− ${abs}` : abs
+}
+
+/** Porcentaje es-CO con 1 decimal y signo EXPLÍCITO: "+17,9%" / "−66,6%". */
+export function signedPct(n: number): string {
+  const body = Math.abs(n).toFixed(1).replace('.', ',')
+  return `${n < 0 ? '−' : '+'}${body}%`
+}
+
 /** Convierte los dígitos crudos del numpad a texto formateado. '' → '0'. */
 export function formatMontoDigits(digits: string): string {
   const clean = digits.replace(/\D/g, '').replace(/^0+(?=\d)/, '')

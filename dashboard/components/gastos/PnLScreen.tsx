@@ -1,12 +1,12 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { ChevronLeft, ChevronRight, ShieldCheck, TriangleAlert, Info } from 'lucide-react'
+import { ChevronLeft, ChevronRight, ShieldCheck, TriangleAlert } from 'lucide-react'
 import { TabBar } from './TabBar'
 import { Chip } from './Chip'
 import { ReportNav } from './ReportNav'
 import { PnLWaterfall } from './PnLWaterfall'
-import { groupThousands, bogotaTodayISO } from '@/lib/gastos/format'
+import { groupThousands, signedCOP, signedPct, bogotaTodayISO } from '@/lib/gastos/format'
 import {
   firstDayOfMonth,
   lastDayOfMonth,
@@ -17,7 +17,6 @@ import {
   type RangoMode,
   type RangoFechas,
 } from '@/lib/gastos/periodo'
-import { categoriaColor } from '@/lib/gastos/resumen-colors'
 import type { PnLSummary, DerivedMetrics } from '@/lib/finanzas'
 
 /**
@@ -133,7 +132,7 @@ export function PnLScreen() {
       <ReportNav active="pnl" />
 
       <header className="gs-res-head">
-        <h1 className="gs-res-title">P&amp;L</h1>
+        <h1 className="gs-res-title">Tu resultado</h1>
         <div className="gs-monthsel">
           <button
             type="button"
@@ -208,31 +207,30 @@ export function PnLScreen() {
         <div className="gs-res-state">Cargando…</div>
       ) : pnl ? (
         <>
-          {/* Hero · Utilidad neta (la tesis del P&L) + estructura "de cada $100" */}
+          {/* Hero · "Lo que te quedó" (la tesis del P&L) + estructura "de cada $100" */}
           <HeroUtilidad pnl={pnl} metrics={metrics} />
 
-          {/* Cascada (pieza central) */}
+          {/* Cascada (pieza central) · de la venta a lo que quedó, paso a paso */}
           <section className="gs-res-card">
-            <h2 className="gs-res-card-title">Cascada del P&amp;L</h2>
+            <div className="gs-pnl-cardhead">
+              <h2 className="gs-res-card-title">De la venta a lo que quedó</h2>
+              <p className="gs-pnl-cardhead-sub">el P&amp;L, paso a paso</p>
+            </div>
             <PnLWaterfall pnl={pnl} />
             <p className="gs-pnl-hint">Toca una línea para ver el acumulado y su detalle.</p>
           </section>
 
-          {/* Indicadores de calidad — SIEMPRE visibles (no esconder los gaps) */}
-          <CalidadCard pnl={pnl} />
-
-          {/* Tiles de métricas del módulo finanzas */}
+          {/* Tiles de métricas del módulo finanzas (retorno · producto · resultado) */}
           {metrics && <MetricTiles pnl={pnl} metrics={metrics} />}
 
-          {/* Desglose de OPEX por tipo */}
+          {/* Aclaración del retorno (MER solo cuenta pauta de Meta) */}
+          {metrics && <RetornoNota pnl={pnl} />}
+
+          {/* Desglose de OPEX por tipo (+ IVA informativo dentro de la card) */}
           <OpexPorTipo pnl={pnl} />
 
-          {/* IVA teórico — línea informativa discreta (ADR D1) */}
-          <p className="gs-pnl-iva">
-            <Info size={13} strokeWidth={2} aria-hidden />
-            IVA teórico (informativo): $ {groupThousands(pnl.impuestos.iva_teorico)} · el envío
-            cobrado no está gravado.
-          </p>
+          {/* Indicadores de calidad — SIEMPRE visibles (no esconder los gaps) */}
+          <CalidadCard pnl={pnl} />
         </>
       ) : null}
 
@@ -241,33 +239,53 @@ export function PnLScreen() {
   )
 }
 
-/** Hero: bottom-line grande + barra "de cada $100 que vendes". */
+/** Entero es-CO redondeado (para la estructura "de cada $100"). */
+function round0(n: number): string {
+  return String(Math.round(n))
+}
+
+/** Entero con signo explícito: "+18" / "−67" (para "Te queda …"). */
+function signedRound0(n: number): string {
+  const r = Math.round(n)
+  return `${r < 0 ? '−' : '+'}${Math.abs(r)}`
+}
+
+/**
+ * Hero · "Lo que te quedó" (la tesis del P&L) + estructura "de cada $100".
+ * Dos estados derivados del signo de la utilidad neta (Figma 45 vs 47):
+ *   - GANANCIA → card olivo, texto claro; badge y "te queda" en positivo.
+ *   - PÉRDIDA  → card blanca, borde/acentos terracota; signos y textos negativos.
+ */
 function HeroUtilidad({ pnl, metrics }: { pnl: PnLSummary; metrics: DerivedMetrics | null }) {
   const neta = pnl.utilidad.neta
   const loss = neta < 0
   const per100 = metrics?.per100
+  const g = per100?.ganancia ?? 0
   return (
     <section className={`gs-pnl-hero${loss ? ' is-loss' : ''}`}>
       <div className="gs-pnl-hero-top">
-        <span className="gs-pnl-hero-lbl">UTILIDAD NETA</span>
-        <span className="gs-pnl-hero-margen">margen {pct(pnl.utilidad.neta_pct)}</span>
+        <span className="gs-pnl-hero-lbl">LO QUE TE QUEDÓ</span>
+        {per100 && (
+          <span className="gs-pnl-hero-badge">
+            {g >= 0 ? '+' : '−'}${Math.abs(Math.round(g))} de cada $100
+          </span>
+        )}
       </div>
-      <span className="gs-pnl-hero-val">
-        {loss ? '− ' : ''}$ {groupThousands(Math.abs(neta))}
-      </span>
+      <span className="gs-pnl-hero-val">{signedCOP(neta)}</span>
 
       {per100 && (
         <div className="gs-pnl-per100">
           <span className="gs-pnl-per100-cap">De cada $100 que vendes</span>
           <Per100Bar per100={per100} />
+          <p className="gs-pnl-hero-warn">
+            {loss
+              ? `Gastar te costó $${Math.round(100 - g)} por cada $100 que vendiste.`
+              : `Te quedan $${Math.round(g)} de cada $100 que vendiste.`}
+          </p>
           <div className="gs-pnl-per100-legend">
-            <LegendDot color="var(--g-ink-tertiary)" label="Costos" value={per100.costos} />
-            <LegendDot color="var(--g-accent)" label="Gastos" value={per100.gastos} />
-            <LegendDot
-              color={per100.ganancia >= 0 ? 'var(--g-primary)' : 'var(--g-danger)'}
-              label="Ganancia"
-              value={per100.ganancia}
-            />
+            <LegendDot seg="costos" label="Producto" value={round0(per100.costos)} />
+            <LegendDot seg="gastos" label="Vender y operar" value={round0(per100.gastos)} />
+            <LegendDot seg="ganancia" label="Te queda" value={signedRound0(g)} />
           </div>
         </div>
       )}
@@ -281,7 +299,7 @@ function Per100Bar({ per100 }: { per100: { costos: number; gastos: number; ganan
   const gastosW = Math.max(0, Math.min(100 - costosW, per100.gastos))
   const gananciaW = Math.max(0, 100 - costosW - gastosW)
   return (
-    <div className="gs-pnl-stack" role="img" aria-label={`Costos ${per100.costos}%, gastos ${per100.gastos}%, ganancia ${per100.ganancia}%`}>
+    <div className="gs-pnl-stack" role="img" aria-label={`Producto ${round0(per100.costos)} de 100, vender y operar ${round0(per100.gastos)}, te queda ${signedRound0(per100.ganancia)}`}>
       <span className="gs-pnl-stack-seg gs-pnl-stack-seg--costos" style={{ width: `${costosW}%` }} />
       <span className="gs-pnl-stack-seg gs-pnl-stack-seg--gastos" style={{ width: `${gastosW}%` }} />
       <span className="gs-pnl-stack-seg gs-pnl-stack-seg--ganancia" style={{ width: `${gananciaW}%` }} />
@@ -289,25 +307,120 @@ function Per100Bar({ per100 }: { per100: { costos: number; gastos: number; ganan
   )
 }
 
-function LegendDot({ color, label, value }: { color: string; label: string; value: number }) {
+/** Ítem de leyenda de la estructura "de cada $100": punto + etiqueta llana + valor. */
+function LegendDot({ seg, label, value }: { seg: 'costos' | 'gastos' | 'ganancia'; label: string; value: string }) {
   return (
     <span className="gs-pnl-legend-item">
-      <span className="gs-pnl-legend-dot" style={{ background: color }} aria-hidden />
-      {label} <strong>{value.toFixed(1).replace('.', ',')}</strong>
+      <span className={`gs-pnl-legend-dot gs-pnl-legend-dot--${seg}`} aria-hidden />
+      {label} <strong>{value}</strong>
     </span>
   )
 }
 
-/** Indicadores de calidad — cobertura COGS y captura de devoluciones. */
+/**
+ * Tiles: retorno en ads (MER), lo que deja el producto (margen bruto) y el
+ * resultado (margen neto, coloreado por signo). Etiqueta llana GRANDE + término
+ * contable en gris, textos exactos del Figma.
+ */
+function MetricTiles({ pnl, metrics }: { pnl: PnLSummary; metrics: DerivedMetrics }) {
+  const mer = metrics.mer
+  const merOk = mer != null && mer >= metrics.merTarget
+  const netaPct = pnl.utilidad.neta_pct
+  const netaLoss = netaPct != null && netaPct < 0
+  return (
+    <section className="gs-pnl-tiles">
+      <div className="gs-pnl-tile">
+        <span className="gs-pnl-tile-lbl">RETORNO EN ADS</span>
+        <span className={`gs-pnl-tile-val${mer != null ? (merOk ? ' is-good' : ' is-under') : ''}`}>
+          {mer != null ? `${mer.toFixed(1).replace('.', ',')}×` : '—'}
+        </span>
+        <span className="gs-pnl-tile-sub">MER · meta {metrics.merTarget.toFixed(1).replace('.', ',')}×</span>
+      </div>
+      <div className="gs-pnl-tile">
+        <span className="gs-pnl-tile-lbl">TE DEJA EL PRODUCTO</span>
+        <span className="gs-pnl-tile-val">{pct(pnl.utilidad.bruta_pct)}</span>
+        <span className="gs-pnl-tile-sub">margen bruto</span>
+      </div>
+      <div className="gs-pnl-tile">
+        <span className="gs-pnl-tile-lbl">TU RESULTADO</span>
+        <span
+          className={`gs-pnl-tile-val${netaPct == null ? '' : netaLoss ? ' is-loss' : ' is-good'}`}
+        >
+          {netaPct != null ? signedPct(netaPct) : '—'}
+        </span>
+        <span className="gs-pnl-tile-sub">margen neto</span>
+      </div>
+    </section>
+  )
+}
+
+/** Aclaración del alcance del retorno: el MER solo cuenta la pauta de Meta. */
+function RetornoNota({ pnl }: { pnl: PnLSummary }) {
+  const pauta = pnl.pauta.meta_gasto
+  const mkt = pnl.opex.por_tipo.find((t) => /marketing/i.test(t.tipo))
+  const mktTotal = mkt ? Number(mkt.total) : 0
+  return (
+    <p className="gs-pnl-note">
+      El retorno solo cuenta la pauta de Meta ($ {groupThousands(pauta)})
+      {mktTotal > 0
+        ? `; no incluye los $ ${groupThousands(mktTotal)} de marketing dentro de gastos de operar.`
+        : '.'}
+    </p>
+  )
+}
+
+/** Desglose de OPEX por tipo — barras terracota uniformes (Figma) + IVA informativo. */
+function OpexPorTipo({ pnl }: { pnl: PnLSummary }) {
+  const items = useMemo(
+    () => [...pnl.opex.por_tipo].sort((a, b) => Number(b.total) - Number(a.total)),
+    [pnl.opex.por_tipo]
+  )
+  const max = items.length ? Math.max(...items.map((i) => Number(i.total))) : 0
+  return (
+    <section className="gs-res-card">
+      <div className="gs-pnl-cardhead">
+        <h2 className="gs-res-card-title">En qué se te va el gasto de operar</h2>
+        <p className="gs-pnl-cardhead-sub">gastos operativos por tipo</p>
+      </div>
+      {items.length === 0 ? (
+        <p className="gs-res-empty">Sin gastos operativos en este período.</p>
+      ) : (
+        <div className="gs-pnl-opex-list">
+          {items.map((it) => {
+            const total = Number(it.total)
+            const w = max > 0 ? (total / max) * 100 : 0
+            return (
+              <div className="gs-pnl-opex-row" key={it.tipo}>
+                <div className="gs-pnl-opex-top">
+                  <span className="gs-pnl-opex-name">{it.tipo}</span>
+                  <span className="gs-pnl-opex-val">$ {groupThousands(total)}</span>
+                </div>
+                <div className="gs-pnl-opex-track">
+                  <div className="gs-pnl-opex-fill" style={{ width: `${w}%` }} />
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+      <p className="gs-pnl-opex-iva">
+        IVA estimado (solo informativo): $ {groupThousands(pnl.impuestos.iva_teorico)} · el envío
+        cobrado no paga IVA.
+      </p>
+    </section>
+  )
+}
+
+/** ¿Puedes confiar en estos números? — costos cargados (cobertura) + devoluciones. */
 function CalidadCard({ pnl }: { pnl: PnLSummary }) {
   const cob = pnl.calidad.cobertura_cogs_pct
   const devOk = pnl.calidad.devoluciones_capturadas
   return (
     <section className="gs-res-card gs-pnl-calidad">
-      <h2 className="gs-res-card-title">Calidad del dato</h2>
+      <h2 className="gs-res-card-title">¿Puedes confiar en estos números?</h2>
       <div className="gs-pnl-quality-grid">
         <div className="gs-pnl-quality-item">
-          <span className="gs-pnl-quality-lbl">Cobertura COGS</span>
+          <span className="gs-pnl-quality-lbl">COSTOS CARGADOS</span>
           <span className="gs-pnl-quality-val">{pct(cob)}</span>
           <div className="gs-pnl-quality-meter" aria-hidden>
             <span
@@ -317,7 +430,7 @@ function CalidadCard({ pnl }: { pnl: PnLSummary }) {
           </div>
         </div>
         <div className="gs-pnl-quality-item">
-          <span className="gs-pnl-quality-lbl">Devoluciones</span>
+          <span className="gs-pnl-quality-lbl">DEVOLUCIONES</span>
           <span className={`gs-pnl-badge${devOk ? ' is-ok' : ' is-warn'}`}>
             {devOk ? (
               <>
@@ -336,69 +449,6 @@ function CalidadCard({ pnl }: { pnl: PnLSummary }) {
           )}
         </div>
       </div>
-    </section>
-  )
-}
-
-/** Tiles secundarios: MER, margen bruto, margen neto. */
-function MetricTiles({ pnl, metrics }: { pnl: PnLSummary; metrics: DerivedMetrics }) {
-  const mer = metrics.mer
-  const merOk = mer != null && mer >= metrics.merTarget
-  return (
-    <section className="gs-pnl-tiles">
-      <div className="gs-pnl-tile">
-        <span className="gs-pnl-tile-lbl">MER</span>
-        <span className={`gs-pnl-tile-val${mer != null ? (merOk ? ' is-good' : ' is-under') : ''}`}>
-          {mer != null ? `${mer.toFixed(1).replace('.', ',')}×` : '—'}
-        </span>
-        <span className="gs-pnl-tile-sub">objetivo {metrics.merTarget.toFixed(1).replace('.', ',')}×</span>
-      </div>
-      <div className="gs-pnl-tile">
-        <span className="gs-pnl-tile-lbl">Margen bruto</span>
-        <span className="gs-pnl-tile-val">{pct(pnl.utilidad.bruta_pct)}</span>
-        <span className="gs-pnl-tile-sub">sobre ventas netas</span>
-      </div>
-      <div className="gs-pnl-tile">
-        <span className="gs-pnl-tile-lbl">Margen neto</span>
-        <span className="gs-pnl-tile-val">{pct(pnl.utilidad.neta_pct)}</span>
-        <span className="gs-pnl-tile-sub">sobre ventas netas</span>
-      </div>
-    </section>
-  )
-}
-
-/** Desglose de OPEX por tipo — barras (reusa el patrón "por categoría" del Resumen). */
-function OpexPorTipo({ pnl }: { pnl: PnLSummary }) {
-  const items = useMemo(
-    () => [...pnl.opex.por_tipo].sort((a, b) => Number(b.total) - Number(a.total)),
-    [pnl.opex.por_tipo]
-  )
-  const max = items.length ? Math.max(...items.map((i) => Number(i.total))) : 0
-  return (
-    <section className="gs-res-card">
-      <h2 className="gs-res-card-title">Gastos operativos por tipo</h2>
-      {items.length === 0 ? (
-        <p className="gs-res-empty">Sin gastos operativos en este período.</p>
-      ) : (
-        <div className="gs-res-catlist">
-          {items.map((it) => {
-            const total = Number(it.total)
-            const w = max > 0 ? (total / max) * 100 : 0
-            const color = categoriaColor(null, it.tipo)
-            return (
-              <div className="gs-cat" key={it.tipo}>
-                <div className="gs-cat-row">
-                  <span className="gs-cat-label">{it.tipo}</span>
-                  <span className="gs-cat-value">$ {groupThousands(total)}</span>
-                </div>
-                <div className="gs-cat-track">
-                  <div className="gs-cat-fill" style={{ width: `${w}%`, background: color }} />
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      )}
     </section>
   )
 }

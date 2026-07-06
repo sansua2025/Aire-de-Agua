@@ -13,6 +13,7 @@
 // P&L miente. Ref: ADR-004 (fórmulas canónicas) · PLAN-FASE-1-PL (Paso 4).
 // =============================================================================
 
+import { signedCOP } from '../gastos/format'
 import type { PnLSummary } from './types'
 
 /**
@@ -181,6 +182,20 @@ export function buildWaterfall(pnl: PnLSummary): WaterfallStep[] {
   })
 
   return steps
+}
+
+/**
+ * Formatea el monto de un paso con el signo correcto para PINTARLO en la cascada.
+ *   - `add`      → operador fijo "+" (contribución positiva).
+ *   - `subtract` → operador fijo "−" (siempre; "− $ 0" en devoluciones sin captura).
+ *   - `base`/`subtotal`/`total` → el signo lo decide el VALOR: una utilidad neta
+ *     negativa conserva el "−". (Bug histórico: se formateaba `Math.abs` y sólo se
+ *     anteponía signo a add/subtract, así que un `total` en pérdida perdía el "−".)
+ */
+export function formatStepAmount(step: Pick<WaterfallStep, 'kind' | 'amount'>): string {
+  if (step.kind === 'add') return signedCOP(step.amount, '+')
+  if (step.kind === 'subtract') return signedCOP(step.amount, '−')
+  return signedCOP(step.amount)
 }
 
 // -----------------------------------------------------------------------------
