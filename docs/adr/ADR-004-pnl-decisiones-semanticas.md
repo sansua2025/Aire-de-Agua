@@ -1,6 +1,6 @@
 # ADR-004 · Decisiones semánticas del P&L (get_pnl) — cierre del Paso 0
 
-**Estado:** Propuesto — pendiente aprobación de Santiago antes de la mig 115 (Paso 1 del plan)
+**Estado:** Aceptado (2026-07-05)
 **Fecha:** 2026-07-05
 **Decisores:** Santiago Suárez
 **Referencias:** `PLAN-FASE-1-PL.md` (Paso 0) · `ANALISIS-VP-ADEA.md` (decisiones D1–D5, políticas de VP §2.2b, addendum A1–A8) · ADR-003 (dominio gastos, nota COGS caja vs devengado)
