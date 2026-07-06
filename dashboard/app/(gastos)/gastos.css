@@ -1337,3 +1337,320 @@ a.gs-hist-export { text-decoration: none; }
 .gs-imp-dup { color: var(--g-ink-tertiary); font-size: 13px; }
 .gs-imp-actions { display: flex; gap: 10px; margin-top: 4px; }
 .gs-imp-actions .gs-imp-cta { flex: 1 1 0; }
+
+/* ===========================================================================
+ * Pantalla 5 · P&L (Paso 4 · Fase 1) · /gastos/pnl
+ * Misma familia visual que Resumen (tokens, cards, tipografía). La pieza
+ * distintiva es la CASCADA (waterfall). Colores semánticos derivados de la
+ * paleta de marca: olivo = suma/positivo, terracota = resta/costo, piedra =
+ * base, tinta = checkpoint. Cada barra lleva signo + monto + nombre → el color
+ * nunca es el único canal (dataviz). Mono-tema (la app de gastos no usa dark).
+ * ========================================================================= */
+
+.gs-pnl {
+  width: 100%;
+  max-width: 430px;
+  margin: 0 auto;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px 20px 112px; /* pb deja aire para la tab bar fija */
+}
+
+/* Sub-navegación Resumen · P&L (segmented con Links) */
+.gastos-shell .gs-report-nav { text-decoration: none; }
+.gastos-shell a.gs-seg-opt { text-decoration: none; }
+
+/* ---------------------------------------------------------------------------
+ * Hero · Utilidad neta (la tesis) + "de cada $100 que vendes"
+ * ------------------------------------------------------------------------- */
+.gs-pnl-hero {
+  background: var(--g-surface);
+  border-radius: 20px;
+  padding: 18px 20px;
+  box-shadow: var(--g-shadow-key);
+  border-left: 4px solid var(--g-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.gs-pnl-hero.is-loss { border-left-color: var(--g-danger); }
+.gs-pnl-hero-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.gs-pnl-hero-lbl {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--g-ink-faint);
+}
+.gs-pnl-hero-margen {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--g-ink-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.gs-pnl-hero-val {
+  font-size: 34px;
+  font-weight: 700;
+  color: var(--g-primary);
+  letter-spacing: -0.5px;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.gs-pnl-hero.is-loss .gs-pnl-hero-val { color: var(--g-danger); }
+
+.gs-pnl-per100 { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.gs-pnl-per100-cap {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: var(--g-ink-tertiary);
+}
+.gs-pnl-stack {
+  display: flex;
+  gap: 2px; /* separación de 2px entre segmentos (dataviz) */
+  height: 12px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--g-surface-muted);
+}
+.gs-pnl-stack-seg { height: 100%; min-width: 0; transition: width 0.3s ease; }
+.gs-pnl-stack-seg--costos { background: var(--g-ink-tertiary); }
+.gs-pnl-stack-seg--gastos { background: var(--g-accent); }
+.gs-pnl-stack-seg--ganancia { background: var(--g-primary); }
+.gs-pnl-per100-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.gs-pnl-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--g-ink-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.gs-pnl-legend-item strong { color: var(--g-ink); font-weight: 600; }
+.gs-pnl-legend-dot { width: 8px; height: 8px; border-radius: 999px; flex: none; }
+
+/* ---------------------------------------------------------------------------
+ * Waterfall (cascada) — lista vertical, eje monetario compartido
+ * ------------------------------------------------------------------------- */
+.gs-wf { position: relative; display: flex; flex-direction: column; }
+/* Línea de base (cero) — guía tenue detrás de las barras. */
+.gs-wf-zero {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--g-border);
+  z-index: 0;
+}
+.gs-wf-item { position: relative; z-index: 1; }
+.gs-wf > .gs-wf-item + .gs-wf-item { border-top: 1px solid var(--g-surface-muted); }
+
+.gastos-shell .gs-wf-row {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 11px 0;
+  text-align: left;
+}
+.gs-wf-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.gs-wf-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--g-ink-secondary);
+  min-width: 0;
+}
+.gs-wf-conn {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--g-ink-faint);
+  width: 10px;
+  flex: none;
+  text-align: center;
+}
+.gs-wf-amount {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--g-ink);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+.gs-wf-amount--subtract { color: var(--g-ink-secondary); font-weight: 500; }
+.gs-wf-amount--add { color: var(--g-ink-secondary); font-weight: 500; }
+
+/* Track + barra posicionada por la geometría (left/width %). */
+.gs-wf-track {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 13px;
+}
+.gs-wf-bar {
+  position: absolute;
+  top: 0;
+  height: 13px;
+  min-width: 4px;
+  border-radius: 5px; /* extremos redondeados (dataviz) */
+  transition: width 0.3s ease, left 0.3s ease;
+}
+.gs-wf-bar--base { background: var(--g-ink-tertiary); }        /* piedra */
+.gs-wf-bar--add { background: var(--g-primary); }               /* olivo (+) */
+.gs-wf-bar--subtract { background: var(--g-accent); }           /* terracota (−) */
+.gs-wf-bar--subtotal { background: #3A3A32; }                   /* tinta (checkpoint) */
+.gs-wf-bar--total { background: var(--g-primary); }
+.gs-wf-bar--total.is-loss { background: var(--g-danger); }
+
+/* Filas checkpoint (subtotal/total) — se leen como cortes destacados.
+   Padding SÓLO vertical: si tuvieran padding horizontal, su track se angostaría y
+   la barra dejaría de alinearse con el eje monetario compartido de las flotantes. */
+.gs-wf-row--subtotal,
+.gs-wf-row--total {
+  background: var(--g-surface-soft);
+  border-radius: 12px;
+  padding: 12px 0;
+  margin: 2px 0;
+}
+.gs-wf-row--subtotal .gs-wf-label,
+.gs-wf-row--total .gs-wf-label { font-weight: 700; color: var(--g-ink); }
+.gs-wf-row--subtotal .gs-wf-amount,
+.gs-wf-row--total .gs-wf-amount { font-weight: 700; font-size: 14px; }
+.gs-wf-row--total { background: var(--g-surface-muted); }
+
+/* Detalle revelado al tocar (acumulado + nota semántica) */
+.gs-wf-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-top: 4px;
+}
+.gs-wf-detail-acum { font-size: 12px; color: var(--g-ink-secondary); font-variant-numeric: tabular-nums; }
+.gs-wf-detail-acum strong { color: var(--g-ink); font-weight: 700; }
+.gs-wf-detail-nota { font-size: 12px; color: var(--g-ink-tertiary); line-height: 1.45; }
+
+.gs-pnl-hint {
+  font-size: 11px;
+  color: var(--g-ink-faint);
+  text-align: center;
+  margin: 6px 0 0;
+}
+
+/* ---------------------------------------------------------------------------
+ * Calidad del dato (cobertura COGS + captura de devoluciones)
+ * ------------------------------------------------------------------------- */
+.gs-pnl-quality-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.gs-pnl-quality-item { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.gs-pnl-quality-lbl {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: var(--g-ink-faint);
+}
+.gs-pnl-quality-val {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--g-ink);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.gs-pnl-quality-meter {
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--g-surface-muted);
+  overflow: hidden;
+}
+.gs-pnl-quality-meter-fill {
+  display: block;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--g-primary);
+  transition: width 0.3s ease;
+}
+.gs-pnl-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  align-self: flex-start;
+  padding: 6px 11px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.gs-pnl-badge.is-ok { background: #E9EBDD; color: #5C6637; }
+.gs-pnl-badge.is-warn { background: #F3E1D8; color: #B06A47; }
+.gs-pnl-quality-note { font-size: 11px; color: var(--g-ink-tertiary); line-height: 1.4; }
+
+/* ---------------------------------------------------------------------------
+ * Tiles de métricas (MER, margen bruto, margen neto)
+ * ------------------------------------------------------------------------- */
+.gs-pnl-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.gs-pnl-tile {
+  background: var(--g-surface);
+  border-radius: 16px;
+  padding: 14px 12px;
+  box-shadow: var(--g-shadow-key);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.gs-pnl-tile-lbl {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--g-ink-faint);
+}
+.gs-pnl-tile-val {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--g-ink);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.05;
+}
+.gs-pnl-tile-val.is-good { color: var(--g-primary); }
+.gs-pnl-tile-val.is-under { color: var(--g-accent); }
+.gs-pnl-tile-sub { font-size: 11px; color: var(--g-ink-tertiary); }
+
+/* ---------------------------------------------------------------------------
+ * IVA teórico — línea informativa discreta
+ * ------------------------------------------------------------------------- */
+.gs-pnl-iva {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--g-ink-tertiary);
+  line-height: 1.45;
+  padding: 2px 4px;
+  margin: 0;
+}
+.gs-pnl-iva svg { flex: none; color: var(--g-ink-faint); }
