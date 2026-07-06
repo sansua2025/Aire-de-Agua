@@ -2,7 +2,7 @@
   "id": "TChWc5Jc6R8JUUyZ",
   "name": "E2 - Webhook Shopify Orders",
   "active": true,
-  "description": "Recibe webhook de Shopify orders/create y orders/updated, sanitiza datos, sincroniza orden y campos de pago a Supabase. La atribucion UTM se maneja desde el WF E5A via shopify_customer_journeys.",
+  "description": "Recibe webhooks de Shopify orders/create, orders/updated y refunds/create. Sanitiza datos y sincroniza a Supabase: ordenes/pago via backfill_orders, refunds via ingest_refund (tabla devoluciones). La atribucion UTM se maneja desde el WF E5A via shopify_customer_journeys.",
   "settings": {
     "executionOrder": "v1",
     "availableInMCP": true,
@@ -140,6 +140,80 @@
           "name": "Supabase AdeA"
         }
       }
+    },
+    {
+      "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+      "name": "Refund Created",
+      "type": "n8n-nodes-base.shopifyTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        720
+      ],
+      "parameters": {
+        "authentication": "accessToken",
+        "topic": "refunds/create"
+      },
+      "webhookId": "d3f4a5b6-c7d8-49e0-a1b2-c3d4e5f6a7b8",
+      "credentials": {
+        "shopifyAccessTokenApi": {
+          "id": "PLACEHOLDER",
+          "name": "Shopify Access Token account"
+        }
+      }
+    },
+    {
+      "id": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e",
+      "name": "Sanitize Refund Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        720
+      ],
+      "parameters": {
+        "jsCode": "const r = $input.first().json;\n// Sanea texto libre (patron AIR-94): elimina tags y caracteres de control, trunca.\nconst sanitize = (str) => str\n  ? String(str).replace(/[\\x00-\\x1F\\x7F]/g, \" \").replace(/<[^>]*>/g, \"\").substring(0, 5000)\n  : null;\nconst num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };\n\nconst rli = Array.isArray(r.refund_line_items) ? r.refund_line_items : [];\nconst adj = Array.isArray(r.order_adjustments) ? r.order_adjustments : [];\n\nlet subtotal = 0;\nlet impuesto = 0;\nconst refund_line_items = rli.map((li) => {\n  const li_subtotal = num(li.subtotal ?? li.subtotal_set?.shop_money?.amount);\n  const li_tax = num(li.total_tax ?? li.total_tax_set?.shop_money?.amount);\n  subtotal += li_subtotal;\n  impuesto += li_tax;\n  return {\n    shopify_refund_line_item_id: li.id != null ? String(li.id) : null,\n    shopify_line_item_id: li.line_item_id != null ? String(li.line_item_id) : null,\n    cantidad: parseInt(li.quantity, 10) || 0,\n    monto: li_subtotal,\n    restock_type: li.restock_type || null,\n  };\n});\n\n// order_adjustments: shipping_refund y ajustes de impuesto (montos negativos = dinero devuelto).\nlet envio = 0;\nfor (const a of adj) {\n  if (a.kind === \"shipping_refund\") envio += Math.abs(num(a.amount));\n  impuesto += Math.abs(num(a.tax_amount));\n}\n\nconst total = subtotal + impuesto + envio;\n\nconst payload = {\n  shopify_refund_id: r.id != null ? String(r.id) : null,\n  shopify_order_id: r.order_id != null ? String(r.order_id) : null,\n  fecha_refund: r.created_at || r.processed_at || null,\n  nota: sanitize(r.note),\n  subtotal,\n  impuesto,\n  envio,\n  total,\n  refund_line_items,\n};\n\nreturn [{ json: payload }];"
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "c3d4e5f6-a7b8-4c9d-0e1f-2a3b4c5d6e7f",
+      "name": "Upsert Refund RPC",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        704,
+        720
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/rpc/ingest_refund",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_refund: $json }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Supabase AdeA"
+        }
+      },
+      "onError": "stopWorkflow",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     }
   ],
   "connections": {
@@ -181,6 +255,28 @@
         [
           {
             "node": "Asignar Segmento Nuevo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refund Created": {
+      "main": [
+        [
+          {
+            "node": "Sanitize Refund Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sanitize Refund Data": {
+      "main": [
+        [
+          {
+            "node": "Upsert Refund RPC",
             "type": "main",
             "index": 0
           }
