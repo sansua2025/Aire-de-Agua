@@ -1348,14 +1348,42 @@ a.gs-hist-export { text-decoration: none; }
  * ========================================================================= */
 
 .gs-pnl {
+  /* Tokens SCOPEADOS al P&L: donde el Figma choca con un token global de gastos,
+     gana el del Figma sólo en este ámbito (sin tocar las demás páginas). */
+  --pnl-loss: #B4492E;              /* terracota profunda (pérdida) — Figma 45 */
+  --pnl-stone: #8F897B;             /* piedra: producto/costos (barras) */
+  --pnl-ink-bar: #3A382F;           /* tinta: barras de checkpoint */
+  --pnl-pill-ok-bg: #E7ECD9;        /* pill "Capturadas" */
+  --pnl-meter-track: #EDE9E1;       /* riel del medidor de cobertura */
+  /* Acentos sobre el hero olivo (estado ganancia, Figma 47) */
+  --pnl-olive-track: #3D4A24;
+  --pnl-tint: #C9D0B4;              /* texto tenue sobre olivo */
+  --pnl-tint2: #DBE3C4;             /* badge / ganancia sobre olivo */
+  --pnl-legend-on-olive: #DFE4D2;
+  --pnl-stone-on-olive: #B8B2A3;
+  --pnl-terra-on-olive: #D9A68A;
+
   width: 100%;
   max-width: 430px;
   margin: 0 auto;
   min-height: 100%;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
   padding: 16px 20px 112px; /* pb deja aire para la tab bar fija */
+}
+
+/* Encabezado de card en dos líneas: título llano + subtítulo contable gris. */
+.gs-pnl-cardhead { display: flex; flex-direction: column; gap: 1px; }
+.gs-pnl-cardhead-sub { font-size: 11px; color: var(--g-ink-faint); margin: 0; }
+
+/* Nota informativa discreta (aclaración del retorno). */
+.gs-pnl-note {
+  font-size: 11px;
+  color: var(--g-ink-faint);
+  line-height: 1.45;
+  margin: 0;
+  padding: 0 2px;
 }
 
 /* Sub-navegación Resumen · P&L (segmented con Links) */
@@ -1365,65 +1393,86 @@ a.gs-hist-export { text-decoration: none; }
 /* ---------------------------------------------------------------------------
  * Hero · Utilidad neta (la tesis) + "de cada $100 que vendes"
  * ------------------------------------------------------------------------- */
+/* Estado GANANCIA (default) — card olivo, texto claro (Figma 47). */
 .gs-pnl-hero {
-  background: var(--g-surface);
+  background: var(--g-primary);
   border-radius: 20px;
   padding: 18px 20px;
-  box-shadow: var(--g-shadow-key);
-  border-left: 4px solid var(--g-primary);
+  box-shadow: 0 6px 8px rgba(36, 31, 20, 0.15);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 12px;
+  color: #fff;
 }
-.gs-pnl-hero.is-loss { border-left-color: var(--g-danger); }
+/* Estado PÉRDIDA — card blanca, borde y acentos terracota (Figma 45). */
+.gs-pnl-hero.is-loss {
+  background: var(--g-surface);
+  box-shadow: var(--g-shadow-key);
+  border-left: 4px solid var(--pnl-loss);
+  color: var(--g-ink-secondary);
+}
 .gs-pnl-hero-top {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 10px;
 }
 .gs-pnl-hero-lbl {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: 1px;
+  letter-spacing: 0.8px;
   text-transform: uppercase;
-  color: var(--g-ink-faint);
+  color: var(--pnl-tint);
 }
-.gs-pnl-hero-margen {
+.gs-pnl-hero.is-loss .gs-pnl-hero-lbl { color: var(--g-ink-faint); }
+.gs-pnl-hero-badge {
   font-size: 12px;
   font-weight: 600;
-  color: var(--g-ink-tertiary);
+  color: var(--pnl-tint2);
   font-variant-numeric: tabular-nums;
 }
+.gs-pnl-hero.is-loss .gs-pnl-hero-badge { color: var(--pnl-loss); }
 .gs-pnl-hero-val {
   font-size: 34px;
   font-weight: 700;
-  color: var(--g-primary);
+  color: #fff;
   letter-spacing: -0.5px;
   line-height: 1.1;
   font-variant-numeric: tabular-nums;
 }
-.gs-pnl-hero.is-loss .gs-pnl-hero-val { color: var(--g-danger); }
+.gs-pnl-hero.is-loss .gs-pnl-hero-val { color: var(--pnl-loss); }
 
-.gs-pnl-per100 { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.gs-pnl-per100 { display: flex; flex-direction: column; gap: 12px; }
 .gs-pnl-per100-cap {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.3px;
-  color: var(--g-ink-tertiary);
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--pnl-tint);
 }
+.gs-pnl-hero.is-loss .gs-pnl-per100-cap { color: var(--g-ink-secondary); }
+.gs-pnl-hero-warn {
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--pnl-tint2);
+  margin: 0;
+}
+.gs-pnl-hero.is-loss .gs-pnl-hero-warn { color: var(--pnl-loss); }
 .gs-pnl-stack {
   display: flex;
   gap: 2px; /* separación de 2px entre segmentos (dataviz) */
   height: 12px;
-  border-radius: 6px;
+  border-radius: 999px;
   overflow: hidden;
-  background: var(--g-surface-muted);
+  background: var(--pnl-olive-track);
 }
+.gs-pnl-hero.is-loss .gs-pnl-stack { background: var(--g-surface-inset); }
 .gs-pnl-stack-seg { height: 100%; min-width: 0; transition: width 0.3s ease; }
-.gs-pnl-stack-seg--costos { background: var(--g-ink-tertiary); }
-.gs-pnl-stack-seg--gastos { background: var(--g-accent); }
-.gs-pnl-stack-seg--ganancia { background: var(--g-primary); }
+.gs-pnl-stack-seg--costos { background: var(--pnl-stone-on-olive); }
+.gs-pnl-stack-seg--gastos { background: var(--pnl-terra-on-olive); }
+.gs-pnl-stack-seg--ganancia { background: var(--pnl-tint2); }
+.gs-pnl-hero.is-loss .gs-pnl-stack-seg--costos { background: var(--pnl-stone); }
+.gs-pnl-hero.is-loss .gs-pnl-stack-seg--gastos { background: var(--g-accent); }
+.gs-pnl-hero.is-loss .gs-pnl-stack-seg--ganancia { background: var(--g-primary); }
 .gs-pnl-per100-legend {
   display: flex;
   flex-wrap: wrap;
@@ -1434,17 +1483,26 @@ a.gs-hist-export { text-decoration: none; }
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: var(--g-ink-secondary);
+  font-weight: 500;
+  color: var(--pnl-legend-on-olive);
   font-variant-numeric: tabular-nums;
 }
-.gs-pnl-legend-item strong { color: var(--g-ink); font-weight: 600; }
+.gs-pnl-hero.is-loss .gs-pnl-legend-item { color: var(--g-ink-secondary); }
+.gs-pnl-legend-item strong { color: inherit; font-weight: 500; }
 .gs-pnl-legend-dot { width: 8px; height: 8px; border-radius: 999px; flex: none; }
+/* Los puntos espejan los colores del segmento correspondiente del stack. */
+.gs-pnl-legend-dot--costos { background: var(--pnl-stone-on-olive); }
+.gs-pnl-legend-dot--gastos { background: var(--pnl-terra-on-olive); }
+.gs-pnl-legend-dot--ganancia { background: var(--pnl-tint2); }
+.gs-pnl-hero.is-loss .gs-pnl-legend-dot--costos { background: var(--pnl-stone); }
+.gs-pnl-hero.is-loss .gs-pnl-legend-dot--gastos { background: var(--g-accent); }
+.gs-pnl-hero.is-loss .gs-pnl-legend-dot--ganancia { background: var(--pnl-loss); }
 
 /* ---------------------------------------------------------------------------
  * Waterfall (cascada) — lista vertical, eje monetario compartido
  * ------------------------------------------------------------------------- */
-.gs-wf { position: relative; display: flex; flex-direction: column; }
-/* Línea de base (cero) — guía tenue detrás de las barras. */
+.gs-wf { position: relative; display: flex; flex-direction: column; gap: 6px; }
+/* Línea de base (cero) — guía tenue detrás de las barras (eje compartido). */
 .gs-wf-zero {
   position: absolute;
   top: 0;
@@ -1454,86 +1512,81 @@ a.gs-hist-export { text-decoration: none; }
   z-index: 0;
 }
 .gs-wf-item { position: relative; z-index: 1; }
-.gs-wf > .gs-wf-item + .gs-wf-item { border-top: 1px solid var(--g-surface-muted); }
 
 .gastos-shell .gs-wf-row {
   width: 100%;
   display: flex;
   flex-direction: column;
   gap: 7px;
-  padding: 11px 0;
+  padding: 6px 0;
   text-align: left;
 }
 .gs-wf-head {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
 }
 .gs-wf-label {
   display: inline-flex;
-  align-items: baseline;
+  align-items: flex-start;
   gap: 7px;
-  font-size: 13px;
-  color: var(--g-ink-secondary);
   min-width: 0;
 }
 .gs-wf-conn {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--g-ink-faint);
-  width: 10px;
-  flex: none;
-  text-align: center;
-}
-.gs-wf-amount {
   font-size: 13px;
+  font-weight: 500;
+  line-height: 17px; /* alinea con la primera línea del nombre (14px) */
+  color: var(--g-ink-faint);
+  width: 9px;
+  flex: none;
+  text-align: left;
+}
+.gs-wf-names { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.gs-wf-name { font-size: 14px; color: var(--g-ink-secondary); line-height: 1.2; }
+.gs-wf-sub { font-size: 10px; color: var(--g-ink-faint); line-height: 1.2; }
+.gs-wf-amount {
+  font-size: 14px;
   font-weight: 600;
+  line-height: 17px;
   color: var(--g-ink);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
   flex: none;
 }
+.gs-wf-amount--base { color: var(--g-ink); font-weight: 600; }
+.gs-wf-amount--add { color: var(--g-primary); font-weight: 500; }        /* olivo (+) */
 .gs-wf-amount--subtract { color: var(--g-ink-secondary); font-weight: 500; }
-.gs-wf-amount--add { color: var(--g-ink-secondary); font-weight: 500; }
+.gs-wf-amount--subtotal { color: var(--g-ink); font-weight: 700; }
+.gs-wf-amount--total { color: var(--g-primary); font-weight: 700; }      /* ganancia */
+.gs-wf-amount--total.is-loss { color: var(--pnl-loss); }                 /* pérdida */
+
+/* Checkpoints (subtotal/total): mismo layout de fila, sólo el texto se enfatiza
+   (el fondo se mantiene plano, como en Figma; el peso + la barra anclada bastan). */
+.gs-wf-row--subtotal .gs-wf-name,
+.gs-wf-row--total .gs-wf-name { font-weight: 600; color: var(--g-ink); }
 
 /* Track + barra posicionada por la geometría (left/width %). */
 .gs-wf-track {
   position: relative;
   display: block;
   width: 100%;
-  height: 13px;
+  height: 8px;
 }
 .gs-wf-bar {
   position: absolute;
   top: 0;
-  height: 13px;
-  min-width: 4px;
-  border-radius: 5px; /* extremos redondeados (dataviz) */
+  height: 8px;
+  min-width: 3px;
+  border-radius: 4px; /* extremos redondeados (dataviz) */
   transition: width 0.3s ease, left 0.3s ease;
 }
-.gs-wf-bar--base { background: var(--g-ink-tertiary); }        /* piedra */
+.gs-wf-bar--base { background: var(--pnl-stone); }              /* piedra */
 .gs-wf-bar--add { background: var(--g-primary); }               /* olivo (+) */
 .gs-wf-bar--subtract { background: var(--g-accent); }           /* terracota (−) */
-.gs-wf-bar--subtotal { background: #3A3A32; }                   /* tinta (checkpoint) */
-.gs-wf-bar--total { background: var(--g-primary); }
-.gs-wf-bar--total.is-loss { background: var(--g-danger); }
-
-/* Filas checkpoint (subtotal/total) — se leen como cortes destacados.
-   Padding SÓLO vertical: si tuvieran padding horizontal, su track se angostaría y
-   la barra dejaría de alinearse con el eje monetario compartido de las flotantes. */
-.gs-wf-row--subtotal,
-.gs-wf-row--total {
-  background: var(--g-surface-soft);
-  border-radius: 12px;
-  padding: 12px 0;
-  margin: 2px 0;
-}
-.gs-wf-row--subtotal .gs-wf-label,
-.gs-wf-row--total .gs-wf-label { font-weight: 700; color: var(--g-ink); }
-.gs-wf-row--subtotal .gs-wf-amount,
-.gs-wf-row--total .gs-wf-amount { font-weight: 700; font-size: 14px; }
-.gs-wf-row--total { background: var(--g-surface-muted); }
+.gs-wf-bar--subtotal { background: var(--pnl-ink-bar); }        /* tinta (checkpoint) */
+.gs-wf-bar--total { background: var(--g-primary); }             /* ganancia */
+.gs-wf-bar--total.is-loss { background: var(--pnl-loss); }      /* pérdida */
 
 /* Detalle revelado al tocar (acumulado + nota semántica) */
 .gs-wf-detail {
@@ -1563,14 +1616,14 @@ a.gs-hist-export { text-decoration: none; }
 }
 .gs-pnl-quality-item { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .gs-pnl-quality-lbl {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.3px;
+  letter-spacing: 0.5px;
   text-transform: uppercase;
   color: var(--g-ink-faint);
 }
 .gs-pnl-quality-val {
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 700;
   color: var(--g-ink);
   font-variant-numeric: tabular-nums;
@@ -1579,14 +1632,14 @@ a.gs-hist-export { text-decoration: none; }
 .gs-pnl-quality-meter {
   width: 100%;
   height: 6px;
-  border-radius: 3px;
-  background: var(--g-surface-muted);
+  border-radius: 999px;
+  background: var(--pnl-meter-track);
   overflow: hidden;
 }
 .gs-pnl-quality-meter-fill {
   display: block;
   height: 6px;
-  border-radius: 3px;
+  border-radius: 999px;
   background: var(--g-primary);
   transition: width 0.3s ease;
 }
@@ -1595,13 +1648,13 @@ a.gs-hist-export { text-decoration: none; }
   align-items: center;
   gap: 5px;
   align-self: flex-start;
-  padding: 6px 11px;
+  padding: 7px 12px;
   border-radius: 999px;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
 }
-.gs-pnl-badge.is-ok { background: #E9EBDD; color: #5C6637; }
-.gs-pnl-badge.is-warn { background: #F3E1D8; color: #B06A47; }
+.gs-pnl-badge.is-ok { background: var(--pnl-pill-ok-bg); color: var(--g-primary); }
+.gs-pnl-badge.is-warn { background: #F3E1D8; color: var(--pnl-loss); }
 .gs-pnl-quality-note { font-size: 11px; color: var(--g-ink-tertiary); line-height: 1.4; }
 
 /* ---------------------------------------------------------------------------
@@ -1638,19 +1691,42 @@ a.gs-hist-export { text-decoration: none; }
 }
 .gs-pnl-tile-val.is-good { color: var(--g-primary); }
 .gs-pnl-tile-val.is-under { color: var(--g-accent); }
-.gs-pnl-tile-sub { font-size: 11px; color: var(--g-ink-tertiary); }
+.gs-pnl-tile-val.is-loss { color: var(--pnl-loss); }
+.gs-pnl-tile-sub { font-size: 11px; color: var(--g-ink-faint); }
 
 /* ---------------------------------------------------------------------------
- * IVA teórico — línea informativa discreta
+ * OPEX por tipo — barras terracota uniformes (cada fila lleva su etiqueta) +
+ * IVA informativo al pie de la card.
  * ------------------------------------------------------------------------- */
-.gs-pnl-iva {
+.gs-pnl-opex-list { display: flex; flex-direction: column; gap: 14px; }
+.gs-pnl-opex-row { display: flex; flex-direction: column; gap: 8px; }
+.gs-pnl-opex-top {
   display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 12px;
-  color: var(--g-ink-tertiary);
-  line-height: 1.45;
-  padding: 2px 4px;
-  margin: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
 }
-.gs-pnl-iva svg { flex: none; color: var(--g-ink-faint); }
+.gs-pnl-opex-name { font-size: 14px; font-weight: 500; color: var(--g-ink); min-width: 0; }
+.gs-pnl-opex-val {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--g-ink);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+.gs-pnl-opex-track {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--g-surface-muted);
+  overflow: hidden;
+}
+.gs-pnl-opex-fill {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--g-accent);
+  min-width: 0;
+  transition: width 0.3s ease;
+}
+.gs-pnl-opex-iva { font-size: 11px; color: var(--g-ink-faint); line-height: 1.45; margin: 0; }
