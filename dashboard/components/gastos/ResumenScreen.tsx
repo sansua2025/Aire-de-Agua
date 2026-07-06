@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { TabBar } from './TabBar'
 import { Chip } from './Chip'
+import { ReportNav } from './ReportNav'
 import { DesgloseTree } from './DesgloseTree'
 import { groupThousands, bogotaTodayISO } from '@/lib/gastos/format'
 import {
@@ -171,6 +172,8 @@ export function ResumenScreen() {
 
   return (
     <div className="gs-res">
+      <ReportNav active="resumen" />
+
       {/* Header + navegación de período */}
       <header className="gs-res-head">
         <h1 className="gs-res-title">Resumen</h1>
