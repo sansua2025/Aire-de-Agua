@@ -1737,6 +1737,7 @@ a.gs-hist-export { text-decoration: none; }
 .gs-res-hero { display: none; }
 .gs-desg-bar { display: none; }
 .gs-desg-pct { display: none; }
+.gs-hist-tablewrap { display: none; }
 
 /* Chrome de escritorio: oculto en mobile. El shell es transparente (contents)
    para no alterar el flujo de las pantallas en mobile. */
@@ -1913,4 +1914,94 @@ a.gs-hist-export { text-decoration: none; }
     margin: -2px 0 12px 33px;
   }
   .gs-desg-bar-fill { display: block; height: 6px; border-radius: 4px; transition: width 0.3s ease; }
+
+  /* ---- Historial como tabla (nodo 52) ---- */
+  .gs-hist {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 36px 44px 56px; /* sin reserva para la tab bar (oculta en desktop) */
+    gap: 20px;
+  }
+  .gs-hist-title { font-size: 34px; letter-spacing: -0.5px; }
+
+  /* Las tarjetas mobile se ocultan; manda la tabla. */
+  .gs-hist-list { display: none; }
+  .gs-hist-tablewrap {
+    display: block;
+    background: var(--g-surface);
+    border-radius: 20px;
+    box-shadow: var(--g-shadow-key);
+    overflow: hidden;
+  }
+
+  .gs-table { width: 100%; border-collapse: collapse; }
+  .gs-table thead th {
+    text-align: left;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: var(--g-ink-faint);
+    padding: 18px 20px 12px;
+    border-bottom: 1px solid var(--g-border);
+    white-space: nowrap;
+  }
+  .gs-table th.gs-table-num,
+  .gs-table td.gs-table-num { text-align: right; }
+  .gs-table th.gs-table-actions-h { width: 1%; }
+
+  .gs-table-row td {
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--g-surface-muted);
+    font-size: 14px;
+    color: var(--g-ink);
+    vertical-align: middle;
+  }
+  .gs-table tbody tr:last-child td { border-bottom: none; }
+  .gs-table-row:hover td { background: var(--g-surface-soft); }
+
+  .gs-td-concepto { display: flex; align-items: center; gap: 7px; font-weight: 500; min-width: 0; }
+  .gs-td-concepto-name {
+    color: var(--g-ink);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .gs-td-muted { color: var(--g-ink-secondary); white-space: nowrap; }
+  .gs-td-monto { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  .gs-td-actions { width: 1%; white-space: nowrap; }
+  .gs-td-actions-inner {
+    display: flex;
+    gap: 4px;
+    justify-content: flex-end;
+    opacity: 0;
+    transition: opacity 0.12s ease;
+  }
+  .gs-table-row:hover .gs-td-actions-inner,
+  .gs-table-row:focus-within .gs-td-actions-inner { opacity: 1; }
+  .gastos-shell .gs-td-act {
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+    display: grid;
+    place-items: center;
+    color: var(--g-ink-secondary);
+    background: var(--g-surface-inset);
+    transition: color 0.12s ease, background 0.12s ease;
+  }
+  .gs-td-act:hover { color: var(--g-primary); background: var(--g-surface-muted); }
+  .gastos-shell .gs-td-act--del:hover { color: var(--g-danger); }
+
+  .gs-table-foot {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 16px;
+    font-size: 13px;
+    color: var(--g-ink-tertiary);
+  }
+  .gastos-shell .gs-table-more { color: var(--g-accent); font-weight: 600; font-size: 13px; padding: 2px; }
+  .gs-table-more:disabled { opacity: 0.5; }
 }
