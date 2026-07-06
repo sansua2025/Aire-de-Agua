@@ -1502,15 +1502,6 @@ a.gs-hist-export { text-decoration: none; }
  * Waterfall (cascada) — lista vertical, eje monetario compartido
  * ------------------------------------------------------------------------- */
 .gs-wf { position: relative; display: flex; flex-direction: column; gap: 6px; }
-/* Línea de base (cero) — guía tenue detrás de las barras (eje compartido). */
-.gs-wf-zero {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  background: var(--g-border);
-  z-index: 0;
-}
 .gs-wf-item { position: relative; z-index: 1; }
 
 .gastos-shell .gs-wf-row {
