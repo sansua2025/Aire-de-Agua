@@ -131,75 +131,82 @@ export function PnLScreen() {
     <div className="gs-pnl">
       <ReportNav active="pnl" />
 
-      <header className="gs-res-head">
-        <h1 className="gs-res-title">Tu resultado</h1>
-        <div className="gs-monthsel">
-          <button
-            type="button"
-            className="gs-monthsel-nav"
-            aria-label="Período anterior"
-            onClick={() => navBy(-1)}
-            disabled={!canNav}
-          >
-            <ChevronLeft size={15} strokeWidth={2.4} />
-          </button>
-          <span className="gs-monthsel-label">{periodLabel}</span>
-          <button
-            type="button"
-            className="gs-monthsel-nav"
-            aria-label="Período siguiente"
-            onClick={() => navBy(1)}
-            disabled={!canNext}
-          >
-            <ChevronRight size={15} strokeWidth={2.4} />
-          </button>
-        </div>
-      </header>
+      {/* Topbar (mismo patrón que Resumen): título+subtítulo izq / controles der
+          en desktop; en mobile fluye como hoy (display:contents). */}
+      <div className="gs-res-topbar">
+        <header className="gs-res-head">
+          <div className="gs-res-titleblock">
+            <h1 className="gs-res-title">Tu resultado</h1>
+            <p className="gs-res-subtitle">Aire de Agua · {periodLabel}</p>
+          </div>
+          <div className="gs-monthsel">
+            <button
+              type="button"
+              className="gs-monthsel-nav"
+              aria-label="Período anterior"
+              onClick={() => navBy(-1)}
+              disabled={!canNav}
+            >
+              <ChevronLeft size={15} strokeWidth={2.4} />
+            </button>
+            <span className="gs-monthsel-label">{periodLabel}</span>
+            <button
+              type="button"
+              className="gs-monthsel-nav"
+              aria-label="Período siguiente"
+              onClick={() => navBy(1)}
+              disabled={!canNext}
+            >
+              <ChevronRight size={15} strokeWidth={2.4} />
+            </button>
+          </div>
+        </header>
 
-      <div className="gs-chips" role="group" aria-label="Rango de fechas">
-        {CHIPS.map((c) => (
-          <Chip
-            key={c.key}
-            label={c.label}
-            selected={mode === c.key}
-            onClick={() => selectChip(c.key)}
-          />
-        ))}
+        <div className="gs-chips gs-res-chips" role="group" aria-label="Rango de fechas">
+          {CHIPS.map((c) => (
+            <Chip
+              key={c.key}
+              label={c.label}
+              selected={mode === c.key}
+              onClick={() => selectChip(c.key)}
+            />
+          ))}
+        </div>
+
+        {mode === 'custom' && customOpen && (
+          <div className="gs-daterange" role="group" aria-label="Rango personalizado">
+            <label className="gs-daterange-field">
+              <span className="gs-daterange-lbl">Desde</span>
+              <input
+                type="date"
+                className="gs-daterange-input"
+                value={customDraft.desde}
+                max={customDraft.hasta || today}
+                onChange={(e) => setCustomDraft((d) => ({ ...d, desde: e.target.value }))}
+              />
+            </label>
+            <label className="gs-daterange-field">
+              <span className="gs-daterange-lbl">Hasta</span>
+              <input
+                type="date"
+                className="gs-daterange-input"
+                value={customDraft.hasta}
+                min={customDraft.desde}
+                max={today}
+                onChange={(e) => setCustomDraft((d) => ({ ...d, hasta: e.target.value }))}
+              />
+            </label>
+            <button
+              type="button"
+              className="gs-daterange-apply"
+              onClick={applyCustom}
+              disabled={!customDraft.desde || !customDraft.hasta || customDraft.desde > customDraft.hasta}
+            >
+              Aplicar
+            </button>
+          </div>
+        )}
       </div>
-
-      {mode === 'custom' && customOpen && (
-        <div className="gs-daterange" role="group" aria-label="Rango personalizado">
-          <label className="gs-daterange-field">
-            <span className="gs-daterange-lbl">Desde</span>
-            <input
-              type="date"
-              className="gs-daterange-input"
-              value={customDraft.desde}
-              max={customDraft.hasta || today}
-              onChange={(e) => setCustomDraft((d) => ({ ...d, desde: e.target.value }))}
-            />
-          </label>
-          <label className="gs-daterange-field">
-            <span className="gs-daterange-lbl">Hasta</span>
-            <input
-              type="date"
-              className="gs-daterange-input"
-              value={customDraft.hasta}
-              min={customDraft.desde}
-              max={today}
-              onChange={(e) => setCustomDraft((d) => ({ ...d, hasta: e.target.value }))}
-            />
-          </label>
-          <button
-            type="button"
-            className="gs-daterange-apply"
-            onClick={applyCustom}
-            disabled={!customDraft.desde || !customDraft.hasta || customDraft.desde > customDraft.hasta}
-          >
-            Aplicar
-          </button>
-        </div>
-      )}
 
       {error ? (
         <div className="gs-res-state">{error}</div>
@@ -210,27 +217,33 @@ export function PnLScreen() {
           {/* Hero · "Lo que te quedó" (la tesis del P&L) + estructura "de cada $100" */}
           <HeroUtilidad pnl={pnl} metrics={metrics} />
 
-          {/* Cascada (pieza central) · de la venta a lo que quedó, paso a paso */}
-          <section className="gs-res-card">
-            <div className="gs-pnl-cardhead">
-              <h2 className="gs-res-card-title">De la venta a lo que quedó</h2>
-              <p className="gs-pnl-cardhead-sub">el P&amp;L, paso a paso</p>
+          {/* En desktop: cascada (columna ancha) + riel derecho. En mobile es
+              display:contents → todo se apila en el mismo orden de hoy. */}
+          <div className="gs-pnl-grid">
+            {/* Cascada (pieza central) · de la venta a lo que quedó, paso a paso */}
+            <section className="gs-res-card gs-pnl-waterfall-card">
+              <div className="gs-pnl-cardhead">
+                <h2 className="gs-res-card-title">De la venta a lo que quedó</h2>
+                <p className="gs-pnl-cardhead-sub">el P&amp;L, paso a paso</p>
+              </div>
+              <PnLWaterfall pnl={pnl} />
+              <p className="gs-pnl-hint">Toca una línea para ver el acumulado y su detalle.</p>
+            </section>
+
+            <div className="gs-pnl-rail">
+              {/* Tiles de métricas del módulo finanzas (retorno · producto · resultado) */}
+              {metrics && <MetricTiles pnl={pnl} metrics={metrics} />}
+
+              {/* Aclaración del retorno (MER solo cuenta pauta de Meta) */}
+              {metrics && <RetornoNota pnl={pnl} />}
+
+              {/* Desglose de OPEX por tipo (+ IVA informativo dentro de la card) */}
+              <OpexPorTipo pnl={pnl} />
+
+              {/* Indicadores de calidad — SIEMPRE visibles (no esconder los gaps) */}
+              <CalidadCard pnl={pnl} />
             </div>
-            <PnLWaterfall pnl={pnl} />
-            <p className="gs-pnl-hint">Toca una línea para ver el acumulado y su detalle.</p>
-          </section>
-
-          {/* Tiles de métricas del módulo finanzas (retorno · producto · resultado) */}
-          {metrics && <MetricTiles pnl={pnl} metrics={metrics} />}
-
-          {/* Aclaración del retorno (MER solo cuenta pauta de Meta) */}
-          {metrics && <RetornoNota pnl={pnl} />}
-
-          {/* Desglose de OPEX por tipo (+ IVA informativo dentro de la card) */}
-          <OpexPorTipo pnl={pnl} />
-
-          {/* Indicadores de calidad — SIEMPRE visibles (no esconder los gaps) */}
-          <CalidadCard pnl={pnl} />
+          </div>
         </>
       ) : null}
 
@@ -264,7 +277,9 @@ function HeroUtilidad({ pnl, metrics }: { pnl: PnLSummary; metrics: DerivedMetri
   return (
     <section className={`gs-pnl-hero${loss ? ' is-loss' : ''}`}>
       <div className="gs-pnl-hero-top">
-        <span className="gs-pnl-hero-lbl">LO QUE TE QUEDÓ</span>
+        <span className="gs-pnl-hero-lbl">
+          LO QUE TE QUEDÓ<span className="gs-only-d"> EN EL PERÍODO</span>
+        </span>
         {per100 && (
           <span className="gs-pnl-hero-badge">
             {g >= 0 ? '+' : '−'}${Math.abs(Math.round(g))} de cada $100

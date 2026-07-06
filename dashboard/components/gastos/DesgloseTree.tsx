@@ -21,18 +21,23 @@ export function DesgloseTree({ desglose }: { desglose: GastoDesglose }) {
   if (!desglose.tipos.length) {
     return <p className="gs-res-empty">Sin gastos en este período.</p>
   }
+  const total = Number(desglose.total) || 0
   return (
     <div className="gs-desg">
       {desglose.tipos.map((t) => (
-        <TipoRow key={t.tipo} tipo={t} />
+        <TipoRow key={t.tipo} tipo={t} total={total} />
       ))}
     </div>
   )
 }
 
-function TipoRow({ tipo }: { tipo: DesgloseTipo }) {
+function TipoRow({ tipo, total }: { tipo: DesgloseTipo; total: number }) {
   const [open, setOpen] = useState(false)
   const color = categoriaColor(null, tipo.tipo)
+  // Participación del tipo sobre el total del período. Solo se PINTA en desktop
+  // (barra + %, nodo Figma 50); en mobile el DOM extra es display:none → intacto.
+  const share = total > 0 ? Number(tipo.total) / total : 0
+  const pct = Math.round(share * 100)
   return (
     <div className="gs-desg-node">
       <button
@@ -52,10 +57,19 @@ function TipoRow({ tipo }: { tipo: DesgloseTipo }) {
           <span className="gs-desg-name">{tipo.tipo}</span>
         </span>
         <span className="gs-desg-trail">
+          <span className="gs-desg-pct">{pct}%</span>
           <span className="gs-desg-count">{tipo.n}</span>
           <span className="gs-desg-total">$ {groupThousands(Number(tipo.total))}</span>
         </span>
       </button>
+
+      {/* Barra de participación (solo desktop). */}
+      <div className="gs-desg-bar" aria-hidden>
+        <span
+          className="gs-desg-bar-fill"
+          style={{ width: `${Math.max(share * 100, 1.5)}%`, background: color }}
+        />
+      </div>
 
       {open && (
         <div className="gs-desg-children">

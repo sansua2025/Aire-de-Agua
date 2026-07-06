@@ -1721,3 +1721,364 @@ a.gs-hist-export { text-decoration: none; }
   transition: width 0.3s ease;
 }
 .gs-pnl-opex-iva { font-size: 11px; color: var(--g-ink-faint); line-height: 1.45; margin: 0; }
+
+/* ===========================================================================
+ * DESKTOP (≥ 900px) · capa ADITIVA (AIR desktop)
+ * Todo lo de arriba es mobile-first e INTACTO. Aquí se agrega el chrome de
+ * escritorio (sidebar en vez de TabBar, captura como modal) y el re-layout de
+ * cada pantalla según el Figma de desktop (nodos 48/49/50/52/53). Los elementos
+ * "solo-desktop" nacen ocultos; los "solo-mobile" se ocultan en el breakpoint.
+ * Mono-tema (la app de gastos no usa dark).
+ * ========================================================================= */
+
+/* Utilidades de visibilidad por breakpoint (base = mobile). */
+.gs-only-d { display: none; }
+.gs-res-subtitle { display: none; }
+.gs-res-hero { display: none; }
+.gs-desg-bar { display: none; }
+.gs-desg-pct { display: none; }
+.gs-hist-tablewrap { display: none; }
+
+/* Chrome de escritorio: oculto en mobile. El shell es transparente (contents)
+   para no alterar el flujo de las pantallas en mobile. */
+.gs-side { display: none; }
+.gs-main { display: contents; }
+
+/* Agrupadores que en mobile NO deben generar caja (para no romper el gap del
+   contenedor de pantalla). En desktop sí maquetan. */
+.gs-res-topbar { display: contents; }
+.gs-res-grid { display: contents; }
+.gs-pnl-grid { display: contents; }
+.gs-pnl-rail { display: contents; }
+
+@media (min-width: 900px) {
+  /* ---- Shell: sidebar fijo + columna de contenido ---- */
+  .gastos-shell { display: flex; flex-direction: row; align-items: stretch; }
+  .gs-main { display: block; flex: 1 1 auto; min-width: 0; }
+
+  .gs-side {
+    display: flex;
+    flex-direction: column;
+    width: 236px;
+    flex: none;
+    align-self: flex-start;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    padding: 28px 20px;
+    background: var(--g-bg);
+    border-right: 1px solid var(--g-border);
+  }
+  .gs-side-brand { display: flex; flex-direction: column; gap: 2px; padding: 0 12px 26px; }
+  .gs-side-brand-name { font-size: 17px; font-weight: 700; color: var(--g-ink); }
+  .gs-side-brand-sub { font-size: 12px; color: var(--g-ink-faint); }
+
+  .gs-side-nav { display: flex; flex-direction: column; gap: 2px; }
+  .gastos-shell a.gs-side-link {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 11px 12px;
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--g-ink-secondary);
+    text-decoration: none;
+    transition: background 0.12s ease, color 0.12s ease;
+  }
+  .gs-side-link:hover { background: var(--g-surface-soft); }
+  .gs-side-link.is-active { background: var(--g-surface-inset); color: var(--g-ink); font-weight: 600; }
+  .gs-side-dot { width: 7px; height: 7px; border-radius: 999px; background: var(--g-ink-faint); flex: none; }
+  .gs-side-link.is-active .gs-side-dot { background: var(--g-primary); }
+
+  .gastos-shell a.gs-side-cta,
+  .gastos-shell button.gs-side-cta {
+    margin-top: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    padding: 14px;
+    border-radius: 16px;
+    background: var(--g-accent);
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+    text-decoration: none;
+    box-shadow: var(--g-shadow-cta);
+    transition: opacity 0.12s ease;
+  }
+  .gs-side-cta:hover { opacity: 0.94; }
+
+  /* El chrome mobile desaparece: la nav vive en el sidebar. */
+  .gs-tabbar { display: none; }
+  .gs-report-nav { display: none; }
+
+  /* Utilidades de visibilidad invertidas en desktop. */
+  .gs-only-d { display: revert; }
+  .gs-only-m { display: none; }
+
+  /* ---- Resumen (nodo 50) ---- */
+  .gs-res {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 36px 44px 56px;
+    gap: 24px;
+  }
+
+  /* Topbar: título+subtítulo a la izquierda, chips y navegación a la derecha. */
+  .gs-res-topbar {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "title chips"
+      "title monthsel";
+    align-items: start;
+    column-gap: 24px;
+    row-gap: 12px;
+  }
+  .gs-res-topbar .gs-res-head { display: contents; }
+  .gs-res-titleblock { grid-area: title; display: flex; flex-direction: column; gap: 4px; }
+  .gs-res-title { font-size: 34px; letter-spacing: -0.5px; }
+  .gs-res-subtitle { display: block; font-size: 14px; color: var(--g-ink-tertiary); margin: 0; }
+  .gs-res-topbar .gs-res-chips { grid-area: chips; justify-self: end; }
+  .gs-res-topbar .gs-monthsel { grid-area: monthsel; justify-self: end; }
+  .gs-res-topbar .gs-daterange { grid-column: 1 / -1; justify-self: end; max-width: 420px; }
+
+  /* Hero desktop: total (izq) + insight (der). Oculta la card oliva mobile. */
+  .gs-res-total { display: none; }
+  .gs-res-hero {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 32px;
+    background: var(--g-surface-soft);
+    border-radius: 22px;
+    padding: 26px 32px;
+    box-shadow: var(--g-shadow-key);
+  }
+  .gs-res-hero-main { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+  .gs-res-hero-lbl {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--g-ink-faint);
+  }
+  .gs-res-hero-val {
+    font-size: 44px;
+    font-weight: 700;
+    color: var(--g-ink);
+    letter-spacing: -1px;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  .gs-res-hero-sub { font-size: 13px; color: var(--g-ink-tertiary); }
+  .gs-res-hero-insight {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-width: 380px;
+    flex: none;
+  }
+  .gs-res-hero-insight-title { font-size: 17px; font-weight: 700; color: var(--g-ink); margin: 0; }
+  .gs-res-hero-insight-body { font-size: 13px; color: var(--g-ink-secondary); line-height: 1.5; margin: 0; }
+
+  /* Grid de tarjetas: Desglose ancho (izq), Tendencia + Pagadores riel (der). */
+  .gs-res-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+    grid-template-areas:
+      "desg trend"
+      "desg payers";
+    gap: 24px;
+    align-items: start;
+  }
+  .gs-res-desglose { grid-area: desg; }
+  .gs-res-trend-card { grid-area: trend; }
+  .gs-res-payers-card { grid-area: payers; }
+
+  /* Barras de participación por tipo + % (nodo 50). */
+  .gs-desg-pct {
+    display: inline;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--g-ink-tertiary);
+    font-variant-numeric: tabular-nums;
+  }
+  .gs-desg-bar {
+    display: block;
+    height: 6px;
+    border-radius: 4px;
+    background: var(--g-surface-muted);
+    overflow: hidden;
+    margin: -2px 0 12px 33px;
+  }
+  .gs-desg-bar-fill { display: block; height: 6px; border-radius: 4px; transition: width 0.3s ease; }
+
+  /* ---- Historial como tabla (nodo 52) ---- */
+  .gs-hist {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 36px 44px 56px; /* sin reserva para la tab bar (oculta en desktop) */
+    gap: 20px;
+  }
+  .gs-hist-title { font-size: 34px; letter-spacing: -0.5px; }
+
+  /* Las tarjetas mobile se ocultan; manda la tabla. */
+  .gs-hist-list { display: none; }
+  .gs-hist-tablewrap {
+    display: block;
+    background: var(--g-surface);
+    border-radius: 20px;
+    box-shadow: var(--g-shadow-key);
+    overflow: hidden;
+  }
+
+  .gs-table { width: 100%; border-collapse: collapse; }
+  .gs-table thead th {
+    text-align: left;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: var(--g-ink-faint);
+    padding: 18px 20px 12px;
+    border-bottom: 1px solid var(--g-border);
+    white-space: nowrap;
+  }
+  .gs-table th.gs-table-num,
+  .gs-table td.gs-table-num { text-align: right; }
+  .gs-table th.gs-table-actions-h { width: 1%; }
+
+  .gs-table-row td {
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--g-surface-muted);
+    font-size: 14px;
+    color: var(--g-ink);
+    vertical-align: middle;
+  }
+  .gs-table tbody tr:last-child td { border-bottom: none; }
+  .gs-table-row:hover td { background: var(--g-surface-soft); }
+
+  .gs-td-concepto { display: flex; align-items: center; gap: 7px; font-weight: 500; min-width: 0; }
+  .gs-td-concepto-name {
+    color: var(--g-ink);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .gs-td-muted { color: var(--g-ink-secondary); white-space: nowrap; }
+  .gs-td-monto { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  .gs-td-actions { width: 1%; white-space: nowrap; }
+  .gs-td-actions-inner {
+    display: flex;
+    gap: 4px;
+    justify-content: flex-end;
+    opacity: 0;
+    transition: opacity 0.12s ease;
+  }
+  .gs-table-row:hover .gs-td-actions-inner,
+  .gs-table-row:focus-within .gs-td-actions-inner { opacity: 1; }
+  .gastos-shell .gs-td-act {
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+    display: grid;
+    place-items: center;
+    color: var(--g-ink-secondary);
+    background: var(--g-surface-inset);
+    transition: color 0.12s ease, background 0.12s ease;
+  }
+  .gs-td-act:hover { color: var(--g-primary); background: var(--g-surface-muted); }
+  .gastos-shell .gs-td-act--del:hover { color: var(--g-danger); }
+
+  .gs-table-foot {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 16px;
+    font-size: 13px;
+    color: var(--g-ink-tertiary);
+  }
+  .gastos-shell .gs-table-more { color: var(--g-accent); font-weight: 600; font-size: 13px; padding: 2px; }
+  .gs-table-more:disabled { opacity: 0.5; }
+
+  /* ---- P&L (nodos 48 pérdida / 49 ganancia) ---- */
+  .gs-pnl {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 36px 44px 56px; /* sin reserva para la tab bar */
+    gap: 24px;
+  }
+
+  /* Hero en dos columnas: el resultado (izq) + la estructura "de cada $100"
+     (der). Mismos elementos y estados (ganancia oliva / pérdida terracota) que
+     mobile, solo reacomodados. */
+  .gs-pnl-hero {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+      "head p100"
+      "val  p100";
+    align-items: start;
+    column-gap: 40px;
+    row-gap: 10px;
+    padding: 26px 32px;
+  }
+  .gs-pnl-hero-top { grid-area: head; }
+  .gs-pnl-hero-val { grid-area: val; font-size: 46px; }
+  .gs-pnl-per100 { grid-area: p100; align-self: center; }
+
+  /* Contenido: cascada ancha (izq) + riel de tiles/opex/calidad (der). */
+  .gs-pnl-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
+    gap: 24px;
+    align-items: start;
+  }
+  .gs-pnl-rail { display: flex; flex-direction: column; gap: 20px; }
+}
+
+/* ---------------------------------------------------------------------------
+ * Captura como MODAL de desktop (nodo 53). Solo lo monta el DesktopSidebar
+ * (oculto en mobile) → estas reglas nunca aplican en la app mobile. Reusa el
+ * flujo `.gs-screen`, pero re-encajado a un diálogo (altura natural, sin ancho
+ * de teléfono, header título+✕).
+ * ------------------------------------------------------------------------- */
+.gs-cap-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(36, 31, 20, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 40;
+}
+.gs-cap-modal {
+  background: var(--g-surface);
+  border-radius: 22px;
+  width: 100%;
+  max-width: 480px;
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 26px 28px 28px;
+  box-shadow: 0 20px 60px rgba(36, 31, 20, 0.3);
+}
+.gs-cap-modal .gs-screen {
+  max-width: none;
+  min-height: 0;
+  padding: 0;
+  gap: 16px;
+}
+/* El spacer flexible no debe empujar: el modal crece con su contenido. */
+.gs-cap-modal .gs-flex1 { display: none; }
+.gs-cap-modal .gs-amount { padding-top: 8px; }
+
+/* Header en modo modal: título a la izquierda, ✕ a la derecha. */
+.gs-header--modal { justify-content: space-between; }
+.gs-header--modal .gs-title { font-size: 18px; }

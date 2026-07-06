@@ -9,6 +9,7 @@ import { groupThousands, isoToLabel } from '@/lib/gastos/format'
 import { rangoFromPeriodo, PERIODO_OPCIONES, type PeriodoKey } from '@/lib/gastos/periodo'
 import { tiposFromCategorias } from '@/lib/gastos/tipos'
 import { tipoTagColor } from '@/lib/gastos/tipo-colors'
+import { categoriaColumn } from '@/lib/gastos/historial-table'
 import type {
   GastosConfig,
   GastoDetalle,
@@ -320,27 +321,28 @@ export function Historial() {
         </div>
       )}
 
-      {/* Lista */}
-      <div className="gs-hist-list">
-        {loading ? (
-          <div className="gs-hist-empty">Cargando…</div>
-        ) : error ? (
-          <div className="gs-hist-empty">{error}</div>
-        ) : gastos.length === 0 ? (
-          <div className="gs-hist-empty">
-            {hayFiltros ? (
-              <>
-                No hay gastos con estos filtros.
-                <button type="button" className="gs-linkbtn" onClick={resetFiltros}>
-                  Limpiar filtros
-                </button>
-              </>
-            ) : (
-              'No hay gastos en este período.'
-            )}
-          </div>
-        ) : (
-          <>
+      {/* Datos: tarjetas (mobile) + tabla (desktop, nodo 52). Mismos gastos, se
+          ocultan por breakpoint. Los estados carga/error/vacío son compartidos. */}
+      {loading ? (
+        <div className="gs-hist-empty">Cargando…</div>
+      ) : error ? (
+        <div className="gs-hist-empty">{error}</div>
+      ) : gastos.length === 0 ? (
+        <div className="gs-hist-empty">
+          {hayFiltros ? (
+            <>
+              No hay gastos con estos filtros.
+              <button type="button" className="gs-linkbtn" onClick={resetFiltros}>
+                Limpiar filtros
+              </button>
+            </>
+          ) : (
+            'No hay gastos en este período.'
+          )}
+        </div>
+      ) : (
+        <>
+          <div className="gs-hist-list">
             {gastos.map((g) => (
               <ExpenseCard key={g.id} g={g} onEdit={onEdit} onDelete={setDeleteTarget} />
             ))}
@@ -357,9 +359,19 @@ export function Historial() {
                 {loadingMore ? 'Cargando…' : 'Cargar más'}
               </button>
             )}
-          </>
-        )}
-      </div>
+          </div>
+
+          <ExpenseTable
+            gastos={gastos}
+            count={count}
+            hasMore={hasMore}
+            loadingMore={loadingMore}
+            onLoadMore={loadMore}
+            onEdit={onEdit}
+            onDelete={setDeleteTarget}
+          />
+        </>
+      )}
 
       <TabBar active="historial" />
 
@@ -478,6 +490,114 @@ function ExpenseCard({
             </span>
           )}
         </div>
+      </div>
+    </div>
+  )
+}
+
+/* ==========================================================================
+ * Tabla del Historial (desktop · nodo 52)
+ *   Mismos datos que las tarjetas mobile; las acciones editar/eliminar se
+ *   revelan al pasar el mouse sobre la fila (patrón hover, como el swipe mobile).
+ *   El clip de recibo se conserva junto al concepto.
+ * ======================================================================== */
+function ExpenseTable({
+  gastos,
+  count,
+  hasMore,
+  loadingMore,
+  onLoadMore,
+  onEdit,
+  onDelete,
+}: {
+  gastos: GastoDetalle[]
+  count: number
+  hasMore: boolean
+  loadingMore: boolean
+  onLoadMore: () => void
+  onEdit: (g: GastoDetalle) => void
+  onDelete: (g: GastoDetalle) => void
+}) {
+  return (
+    <div className="gs-hist-tablewrap">
+      <table className="gs-table">
+        <thead>
+          <tr>
+            <th scope="col">Concepto</th>
+            <th scope="col">Fecha</th>
+            <th scope="col">Pagó</th>
+            <th scope="col">Tipo</th>
+            <th scope="col">Categoría</th>
+            <th scope="col" className="gs-table-num">Monto</th>
+            <th scope="col" className="gs-table-actions-h">
+              <span className="gs-visually-hidden">Acciones</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {gastos.map((g) => {
+            const color = tipoTagColor(g.tipo)
+            return (
+              <tr className="gs-table-row" key={g.id}>
+                <td className="gs-td-concepto">
+                  <span className="gs-td-concepto-name">{g.concepto}</span>
+                  {g.recibo_path && (
+                    <Paperclip
+                      className="gs-exp-clip"
+                      size={13}
+                      strokeWidth={2.2}
+                      aria-label="Con recibo"
+                    />
+                  )}
+                </td>
+                <td className="gs-td-muted">{isoToLabel(g.fecha)}</td>
+                <td className="gs-td-muted">{g.pagador_nombre}</td>
+                <td>
+                  <span className="gs-tag" style={{ background: color.bg, color: color.text }}>
+                    {g.tipo}
+                  </span>
+                </td>
+                <td className="gs-td-muted">{categoriaColumn(g)}</td>
+                <td className="gs-table-num gs-td-monto">$ {groupThousands(Number(g.monto))}</td>
+                <td className="gs-td-actions">
+                  <div className="gs-td-actions-inner">
+                    <button
+                      type="button"
+                      className="gs-td-act"
+                      onClick={() => onEdit(g)}
+                      aria-label={`Editar ${g.concepto}`}
+                    >
+                      <Pencil size={15} strokeWidth={2.2} />
+                    </button>
+                    <button
+                      type="button"
+                      className="gs-td-act gs-td-act--del"
+                      onClick={() => onDelete(g)}
+                      aria-label={`Eliminar ${g.concepto}`}
+                    >
+                      <Trash2 size={15} strokeWidth={2.2} />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+      <div className="gs-table-foot">
+        <span>
+          Mostrando {gastos.length} de {count}
+        </span>
+        {hasMore && (
+          <button
+            type="button"
+            className="gs-table-more"
+            onClick={onLoadMore}
+            disabled={loadingMore}
+          >
+            {loadingMore ? 'Cargando…' : 'ver todos'}
+          </button>
+        )}
       </div>
     </div>
   )

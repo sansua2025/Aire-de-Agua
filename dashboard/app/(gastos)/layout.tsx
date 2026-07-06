@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
 import { redirect } from 'next/navigation'
 import { auth } from '@/auth'
+import { DesktopSidebar } from '@/components/gastos/DesktopSidebar'
 import './gastos.css'
 
 /**
@@ -51,7 +52,12 @@ export default async function GastosLayout({
 
   return (
     <div className={`gastos-shell ${inter.variable}`} data-gastos-app="true">
-      {children}
+      {/* Sidebar de navegación desktop (≥900px). En mobile es display:none y el
+          chrome sigue siendo el TabBar inferior que renderiza cada pantalla. */}
+      <DesktopSidebar />
+      {/* Envoltura transparente en mobile (display:contents) → las pantallas
+          fluyen como hoy; en desktop es la columna de contenido junto al sidebar. */}
+      <div className="gs-main">{children}</div>
     </div>
   )
 }
