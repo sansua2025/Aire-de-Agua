@@ -21,9 +21,13 @@
 --   view_dashboard_*) y ampliaría la superficie de anon.
 --
 -- SEGURIDAD / DATOS
---   NO cambia filas: no hay RLS en las tablas base, así que la resolución por owner devuelve el
---   mismo conjunto de datos. Sólo cambia CÓMO se resuelven los permisos, no QUÉ se lee.
---   NO amplía la superficie de anon (no se agregan grants).
+--   Varias tablas base (meta_ads_performance, ventas, venta_items, shopify_customer_journeys,
+--   shopify_customer_moments) TIENEN RLS habilitada sin políticas. Con security_invoker=true la
+--   resolución corre como el invocador y RLS negaría todas las filas; con security_invoker=false
+--   corre como el OWNER (postgres, dueño de las tablas) que hace bypass de RLS → conjunto de filas
+--   completo, idéntico al que ya ve service_role. La seguridad NO se apoya en "no hay RLS": se
+--   sostiene porque anon NO tiene grant sobre las sub-vistas ni las tablas base — sólo lee el
+--   agregado view_dashboard_paid. NO se agregan grants; no se amplía la superficie de anon.
 --
 -- Idempotente: ALTER VIEW ... SET es declarativo; re-ejecutar deja el mismo estado.
 -- Rollback (reversa): restaurar el estado previo con
