@@ -1,0 +1,36 @@
+-- 117_air196_atribucion_web_security_invoker_off.sql
+-- AIR-196 — Fix crítico: /paid muestra $0 y "sin campañas" aunque la vista tiene datos.
+--
+-- CAUSA RAÍZ
+--   analytics.view_dashboard_paid (security_invoker=false, owner=postgres) depende de dos
+--   vistas en public que quedaron con security_invoker=true y SIN grant a anon:
+--     - public.vista_atribucion_web
+--     - public.vista_atribucion_web_con_margen
+--   El dashboard consulta view_dashboard_paid con el rol `anon` (SUPABASE_PUBLISHABLE_KEY).
+--   anon SÍ tiene SELECT sobre view_dashboard_paid, pero con security_invoker=true los permisos
+--   de las sub-vistas se evalúan contra el INVOCADOR (anon) en tiempo de planificación → 401
+--   `42501: permission denied for view vista_atribucion_web`. Son las ÚNICAS security_invoker=true
+--   en la cadena de las 13 view_dashboard_*, por eso sólo /paid falla.
+--
+-- FIX
+--   Poner security_invoker=false en ambas sub-vistas restaura la resolución por OWNER (postgres),
+--   consistente con las ~20 vistas restantes del dashboard. anon accede a los datos a través de
+--   view_dashboard_paid (a la que ya tiene grant), sin necesidad de leer las sub-vistas
+--   directamente. Se RECHAZA la alternativa de otorgar a anon SELECT sobre las vistas de
+--   atribución / tablas base: violaría el principio de mig 037 (anon sólo lee las 13
+--   view_dashboard_*) y ampliaría la superficie de anon.
+--
+-- SEGURIDAD / DATOS
+--   NO cambia filas: no hay RLS en las tablas base, así que la resolución por owner devuelve el
+--   mismo conjunto de datos. Sólo cambia CÓMO se resuelven los permisos, no QUÉ se lee.
+--   NO amplía la superficie de anon (no se agregan grants).
+--
+-- Idempotente: ALTER VIEW ... SET es declarativo; re-ejecutar deja el mismo estado.
+-- Rollback (reversa): restaurar el estado previo con
+--   ALTER VIEW public.vista_atribucion_web            SET (security_invoker = true);
+--   ALTER VIEW public.vista_atribucion_web_con_margen SET (security_invoker = true);
+--
+-- Cierra AIR-196.
+
+ALTER VIEW public.vista_atribucion_web            SET (security_invoker = false);
+ALTER VIEW public.vista_atribucion_web_con_margen SET (security_invoker = false);
