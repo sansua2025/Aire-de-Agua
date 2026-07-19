@@ -807,3 +807,30 @@ button:focus-visible, a.side-item:focus-visible, .side-item:focus-visible, .kpi:
 
 /* Cambio de tema instantáneo: transicionar background con var() se congela en Chromium.
    Por eso ni body ni .side-item transicionan background. */
+
+/* ── Skeletons / loading states (AIR-194) ───────────────────────────────────
+   Bloques de carga por widget: pulso sutil mientras el server component resuelve
+   los filtros. `.is-pending` atenúa el contenido durante una transición de
+   filtro (sin full-page flash: el contenido viejo permanece visible). */
+@keyframes skel-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.45; }
+}
+.skel {
+  background: var(--bg-elev-2, rgba(128, 128, 128, 0.12));
+  border-radius: 8px;
+  animation: skel-pulse 1.2s ease-in-out infinite;
+}
+.skel-line { height: 12px; margin: 8px 0; }
+.skel-hero { height: 84px; margin-bottom: 18px; }
+.skel-kpi  { height: 96px; }
+.skel-card { height: 260px; }
+@media (prefers-reduced-motion: reduce) {
+  .skel { animation: none; }
+}
+.content.is-pending .page,
+.page.is-pending {
+  opacity: 0.6;
+  transition: opacity 0.15s ease-in;
+  pointer-events: none;
+}

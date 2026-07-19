@@ -372,8 +372,133 @@ type ViewCogsFaltante = ReadOnlyView<{
   accion: string | null
 }>
 
+// =============================================================================
+// RPCs parametrizadas AIR-193 (migración 119). Firma uniforme (p_desde, p_hasta,
+// p_canal) — SECURITY DEFINER + grant a anon. Corte de día America/Bogota.
+// Estas 6 reemplazan las views view_dashboard_* de ventana fija en el dashboard.
+// =============================================================================
+
+/** Row de analytics.get_kpis — KPIs del período + prev_* del período de comparación. */
+export type RpcKpisRow = {
+  ventas: number | null
+  ordenes: number | null
+  aov: number | null
+  sesiones: number | null
+  cvr: number | null
+  roas_margen: number | null
+  roas_revenue: number | null
+  prev_ventas: number | null
+  prev_ordenes: number | null
+  prev_aov: number | null
+  prev_sesiones: number | null
+  prev_cvr: number | null
+  prev_roas_margen: number | null
+  prev_roas_revenue: number | null
+  canal_aplicado: boolean | null
+}
+
+/** Row de analytics.get_funnel — embudo agregado (no segmenta por canal). */
+export type RpcFunnelRow = {
+  sesiones: number | null
+  vistas_producto: number | null
+  agrega_carrito: number | null
+  inicia_checkout: number | null
+  compras: number | null
+  cvr_vista_carrito: number | null
+  cvr_carrito_checkout: number | null
+  cvr_checkout_compra: number | null
+  cvr_total: number | null
+  canal_aplicado: boolean | null
+}
+
+/** Row de analytics.get_paid — performance de campañas paid (ROAS de atribución). */
+export type RpcPaidRow = {
+  campaign_id: string | null
+  campaign_name: string | null
+  objetivo: string | null
+  num_ads: number | null
+  primer_dia: string | null
+  ultimo_dia: string | null
+  impresiones: number | null
+  alcance: number | null
+  clics: number | null
+  gasto: number | null
+  compras: number | null
+  ctr_pct: number | null
+  cpc: number | null
+  cpa: number | null
+  ventas_atribuidas: number | null
+  revenue_atribuido: number | null
+  margen_atribuido: number | null
+  roas_margen: number | null
+  roas_revenue: number | null
+  recomendacion: string | null
+  cobertura_cogs_pct: number | null
+  canal_aplicado: boolean | null
+}
+
+/** Row de analytics.get_top_skus — top productos por revenue en el período. */
+export type RpcTopSkusRow = {
+  producto_id: string
+  producto_titulo: string | null
+  coleccion: string | null
+  tipo: string | null
+  temporada: string | null
+  genero: string | null
+  estado_producto: string | null
+  unidades: number | null
+  ordenes: number | null
+  revenue: number | null
+  margen_total: number | null
+  margen_pct: number | null
+  ticket_promedio: number | null
+  discount_rate_pct: number | null
+  share_pct: number | null
+  rank_revenue: number | null
+  rank_margen: number | null
+  canal_aplicado: boolean | null
+}
+
+/** Row de analytics.get_ventas_serie — serie temporal de revenue (day|week). */
+export type RpcVentasSerieRow = {
+  bucket: string | null
+  revenue: number | null
+  ordenes: number | null
+  canal_aplicado: boolean | null
+}
+
+/** Row de analytics.get_channels_mix — mix de canal por revenue en el período. */
+export type RpcChannelsMixRow = {
+  canal: string | null
+  revenue: number | null
+  ventas: number | null
+  ticket_promedio: number | null
+  dias_conversion_avg: number | null
+  touchpoints_avg: number | null
+  share_pct: number | null
+  canal_aplicado: boolean | null
+}
+
+type RangeArgs = { p_desde: string; p_hasta: string; p_canal?: string | null }
+
+type AnalyticsFunctions = {
+  get_kpis: { Args: RangeArgs; Returns: RpcKpisRow[] }
+  get_funnel: { Args: RangeArgs; Returns: RpcFunnelRow[] }
+  get_paid: { Args: RangeArgs; Returns: RpcPaidRow[] }
+  get_top_skus: {
+    Args: { p_desde: string; p_hasta: string; p_limit?: number; p_canal?: string | null }
+    Returns: RpcTopSkusRow[]
+  }
+  get_ventas_serie: {
+    Args: { p_desde: string; p_hasta: string; p_granularidad?: string; p_canal?: string | null }
+    Returns: RpcVentasSerieRow[]
+  }
+  get_channels_mix: { Args: RangeArgs; Returns: RpcChannelsMixRow[] }
+}
+
 /**
- * Tipo Database scopeado al schema `analytics` con las 16 views dashboard.
+ * Tipo Database scopeado al schema `analytics` con las 16 views dashboard + las
+ * 6 RPCs parametrizadas de AIR-193.
  */
 export type AnalyticsDatabase = {
   analytics: {
@@ -396,7 +521,7 @@ export type AnalyticsDatabase = {
       view_dashboard_cogs_faltante: ViewCogsFaltante
     }
     Views: Record<string, never>
-    Functions: Record<string, never>
+    Functions: AnalyticsFunctions
     Enums: Record<string, never>
     CompositeTypes: Record<string, never>
   }

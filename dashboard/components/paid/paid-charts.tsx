@@ -11,11 +11,12 @@ export interface CampaignDatum {
   num_ads: number
   gasto: number
   compras: number
-  valor_compras: number
+  // AIR-194: revenue de ATRIBUCIÓN (utm_term), no el valor de conversión del
+  // pixel de Meta. get_paid ya no expone la métrica de pixel (regla de datos R1).
+  revenue_atribuido: number
   margen_atribuido: number
   ctr_pct: number | null
   cpc: number | null
-  roas: number | null
   roas_margen: number | null
   roas_revenue: number | null
   cpa: number | null

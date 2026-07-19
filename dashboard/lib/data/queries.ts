@@ -19,6 +19,148 @@ import { supabase } from '@/lib/supabase/server'
 const CACHE_FALLBACK_SECONDS = 3600
 
 // =============================================================================
+// RPCs parametrizadas AIR-193 (migración 119) — data layer del dashboard v2.
+//
+// Firma uniforme (p_desde, p_hasta, p_canal). Cada wrapper es una función que
+// recibe los args YA resueltos por la page (desde searchParams vía lib/filters)
+// y devuelve el resultado cacheado. El cache se KEYEA por args (p_desde/p_hasta/
+// p_canal en keyParts) para que 7d y 30d, o canales distintos, no compartan
+// entrada. Nunca se leen searchParams dentro del scope cacheado. Tags por
+// dominio en paridad con POST /api/revalidate. Sin catch silencioso: si la RPC
+// falla, el error se propaga y la page lo muestra.
+// =============================================================================
+
+export interface RangeArgs {
+  desde: string
+  hasta: string
+  canal: string | null
+}
+
+const canalKey = (canal: string | null) => canal ?? 'all'
+
+export function getKpis(args: RangeArgs) {
+  return unstable_cache(
+    async () => {
+      const { data, error } = await supabase.rpc('get_kpis', {
+        p_desde: args.desde,
+        p_hasta: args.hasta,
+        p_canal: args.canal,
+      })
+      if (error) throw error
+      return data?.[0] ?? null
+    },
+    ['rpc_kpis', args.desde, args.hasta, canalKey(args.canal)],
+    { tags: ['weekly', 'daily', 'funnel', 'paid'], revalidate: CACHE_FALLBACK_SECONDS },
+  )()
+}
+
+export function getVentasSerie(args: RangeArgs, granularidad: 'day' | 'week' = 'day') {
+  return unstable_cache(
+    async () => {
+      const { data, error } = await supabase.rpc('get_ventas_serie', {
+        p_desde: args.desde,
+        p_hasta: args.hasta,
+        p_granularidad: granularidad,
+        p_canal: args.canal,
+      })
+      if (error) throw error
+      return data ?? []
+    },
+    ['rpc_ventas_serie', args.desde, args.hasta, granularidad, canalKey(args.canal)],
+    { tags: ['weekly', 'daily'], revalidate: CACHE_FALLBACK_SECONDS },
+  )()
+}
+
+export function getChannelsMixRange(args: RangeArgs) {
+  return unstable_cache(
+    async () => {
+      const { data, error } = await supabase.rpc('get_channels_mix', {
+        p_desde: args.desde,
+        p_hasta: args.hasta,
+        p_canal: args.canal,
+      })
+      if (error) throw error
+      return data ?? []
+    },
+    ['rpc_channels_mix', args.desde, args.hasta, canalKey(args.canal)],
+    { tags: ['weekly'], revalidate: CACHE_FALLBACK_SECONDS },
+  )()
+}
+
+export function getFunnelRange(args: RangeArgs) {
+  return unstable_cache(
+    async () => {
+      const { data, error } = await supabase.rpc('get_funnel', {
+        p_desde: args.desde,
+        p_hasta: args.hasta,
+        p_canal: args.canal,
+      })
+      if (error) throw error
+      return data?.[0] ?? null
+    },
+    ['rpc_funnel', args.desde, args.hasta, canalKey(args.canal)],
+    { tags: ['funnel'], revalidate: CACHE_FALLBACK_SECONDS },
+  )()
+}
+
+/**
+ * Serie diaria del funnel para el trend de la página /funnel. get_funnel solo
+ * devuelve el agregado del período; el detalle por día no tiene RPC, así que se
+ * lee view_dashboard_funnel FILTRADA por rango (gte/lte sobre `fecha`) — NO es
+ * ventana fija: responde a los filtros igual que las RPCs. amplitude no segmenta
+ * canal, por eso este trend no toma `canal` (paridad con get_funnel).
+ */
+export function getFunnelSerie(args: Pick<RangeArgs, 'desde' | 'hasta'>) {
+  return unstable_cache(
+    async () => {
+      const { data, error } = await supabase
+        .from('view_dashboard_funnel')
+        .select('*')
+        .gte('fecha', args.desde)
+        .lte('fecha', args.hasta)
+        .order('fecha', { ascending: true })
+      if (error) throw error
+      return data ?? []
+    },
+    ['funnel_serie', args.desde, args.hasta],
+    { tags: ['funnel'], revalidate: CACHE_FALLBACK_SECONDS },
+  )()
+}
+
+export function getPaidRange(args: RangeArgs) {
+  return unstable_cache(
+    async () => {
+      const { data, error } = await supabase.rpc('get_paid', {
+        p_desde: args.desde,
+        p_hasta: args.hasta,
+        p_canal: args.canal,
+      })
+      if (error) throw error
+      return data ?? []
+    },
+    ['rpc_paid', args.desde, args.hasta, canalKey(args.canal)],
+    { tags: ['paid'], revalidate: CACHE_FALLBACK_SECONDS },
+  )()
+}
+
+export function getTopSkusRange(args: RangeArgs, limit = 10) {
+  return unstable_cache(
+    async () => {
+      const { data, error } = await supabase.rpc('get_top_skus', {
+        p_desde: args.desde,
+        p_hasta: args.hasta,
+        p_limit: limit,
+        p_canal: args.canal,
+      })
+      if (error) throw error
+      return data ?? []
+    },
+    ['rpc_top_skus', args.desde, args.hasta, String(limit), canalKey(args.canal)],
+    { tags: ['producto'], revalidate: CACHE_FALLBACK_SECONDS },
+  )()
+}
+
+// =============================================================================
 // Overview
 // =============================================================================
 

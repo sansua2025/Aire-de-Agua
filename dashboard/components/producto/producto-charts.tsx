@@ -31,9 +31,11 @@ export interface DiscountTrendDatum {
 interface ProductoChartsProps {
   topSkus: TopSkuDatum[]
   discountTrend: DiscountTrendDatum[]
+  /** Período efectivo del filtro (AIR-194) — subtítulo derivado, no hardcoded. */
+  periodoLabel?: string
 }
 
-export function ProductoCharts({ topSkus, discountTrend }: ProductoChartsProps) {
+export function ProductoCharts({ topSkus, discountTrend, periodoLabel = 'período seleccionado' }: ProductoChartsProps) {
   const topByRevenue = [...topSkus]
     .sort((a, b) => b.revenue - a.revenue)
     .slice(0, 8)
@@ -47,8 +49,8 @@ export function ProductoCharts({ topSkus, discountTrend }: ProductoChartsProps) 
             ? `Top productos por revenue · ${topByRevenue[0].name} concentra ${formatPct((topByRevenue[0].revenue / topByRevenue.reduce((s, x) => s + x.revenue, 0)) * 100)}`
             : 'Top productos por revenue'
         }
-        subtitle="Últimos 7 días · ordenado por revenue · rank_margen revela 'vende ≠ rinde'"
-        source="analytics.view_dashboard_top_skus"
+        subtitle={`${periodoLabel} · ordenado por revenue · rank_margen revela 'vende ≠ rinde'`}
+        source="analytics.get_top_skus"
       >
         {topByRevenue.length > 0 ? (
           <BarHorizontal
@@ -76,7 +78,7 @@ export function ProductoCharts({ topSkus, discountTrend }: ProductoChartsProps) 
             )}
           />
         ) : (
-          <Empty text="Sin ventas en los últimos 7 días con productos identificables." />
+          <Empty text="Sin ventas en el período seleccionado con productos identificables." />
         )}
       </Card>
 
