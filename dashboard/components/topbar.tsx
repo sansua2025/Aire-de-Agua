@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useTransition, ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter, usePathname, useSearchParams } from 'next/navigation'
 import { Icon } from './icon'
-import { parseFilters, toSearchParams, presetLabel, type Filters } from '@/lib/filters'
+import { parseFilters, toSearchParams, presetLabel, presetShort, RANGE_PRESETS, type Filters } from '@/lib/filters'
 
 // week: subtítulo estático SOLO para páginas NO cableadas al filtro global. Las
 // páginas de FILTERED_PAGES muestran el período efectivo (presetLabel), así que
@@ -20,12 +20,10 @@ const PAGE_META: Record<string, { title: string; week: string }> = {
   '/fuentes':    { title: 'Fuentes de datos',      week: 'Estado de integraciones' },
 }
 
-// Labels del picker de período: fuente única en lib/filters (presetLabel), para
-// no repetir el texto "Últimos N días" en dos sitios (AIR-197).
-const dateOptions = [
-  { value: '7d',  label: presetLabel('7d') },
-  { value: '30d', label: presetLabel('30d') },
-] as const
+// Labels del picker de período: fuente única en lib/filters (presetLabel /
+// presetShort), para no repetir textos de período en dos sitios (AIR-197).
+// Incluye "Sem. en curso" (AIR-206), extensión del mecanismo de filtros AIR-194.
+const dateOptions = RANGE_PRESETS.map((r) => ({ value: r, label: presetShort(r) }))
 
 const channelOptions = [
   { value: 'all',         label: 'Todos los canales' },

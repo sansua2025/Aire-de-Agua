@@ -16,7 +16,7 @@
  * borde es el que perdía ventas en las vistas con ventana fija evaluada en UTC.
  */
 
-export type RangePreset = '7d' | '30d'
+export type RangePreset = 'hoy' | '7d' | '14d' | '30d' | '90d' | 'week_current'
 export type ChannelKey = 'all' | 'paid_social' | 'organic' | 'direct' | 'email'
 export type CompareKey = 'prev_week' | 'prev_year' | 'goal' | 'none'
 
@@ -39,12 +39,17 @@ export const DEFAULT_FILTERS: Filters = {
   compare: 'prev_week',
 }
 
-const RANGE_DAYS: Record<RangePreset, number> = {
+// Días de cada preset de conteo. `week_current` (Sem. en curso) NO es un conteo
+// fijo de días: resuelve a [lunes ISO, hoy] y se maneja aparte en resolveRange.
+const RANGE_DAYS: Record<Exclude<RangePreset, 'week_current'>, number> = {
+  'hoy': 1,
   '7d': 7,
+  '14d': 14,
   '30d': 30,
+  '90d': 90,
 }
 
-const RANGE_VALUES = new Set<string>(Object.keys(RANGE_DAYS))
+const RANGE_VALUES = new Set<string>([...Object.keys(RANGE_DAYS), 'week_current'])
 const CHANNEL_VALUES = new Set<ChannelKey>(['all', 'paid_social', 'organic', 'direct', 'email'])
 const COMPARE_VALUES = new Set<CompareKey>(['prev_week', 'prev_year', 'goal', 'none'])
 
@@ -142,10 +147,22 @@ export function todayBogota(now: Date = new Date()): string {
  * sobre la fecha a medianoche UTC es exacto).
  */
 export function resolveRange(range: RangePreset, now: Date = new Date()): ResolvedRange {
-  const dias = RANGE_DAYS[range] ?? RANGE_DAYS[DEFAULT_FILTERS.range]
   const hasta = todayBogota(now)
   const [y, m, d] = hasta.split('-').map(Number)
   const baseMs = Date.UTC(y, m - 1, d)
+
+  // "Semana en curso": desde = lunes ISO de la semana de hoy (Bogotá). Coincide
+  // con date_trunc('week', hoy) de Postgres que usa get_wtd_pacing → el hero WTD
+  // y el rango del filtro cuadran cuando el founder elige este preset.
+  if (range === 'week_current') {
+    const dow = new Date(baseMs).getUTCDay() // 0=domingo … 6=sábado
+    const offsetLunes = (dow + 6) % 7        // días transcurridos desde el lunes
+    const desdeMs = baseMs - offsetLunes * 86_400_000
+    const desde = new Date(desdeMs).toISOString().slice(0, 10)
+    return { desde, hasta, dias: offsetLunes + 1 }
+  }
+
+  const dias = RANGE_DAYS[range] ?? RANGE_DAYS['7d']
   const desdeMs = baseMs - (dias - 1) * 86_400_000
   const desde = new Date(desdeMs).toISOString().slice(0, 10)
   return { desde, hasta, dias }
@@ -176,9 +193,30 @@ export function channelToToken(channel: ChannelKey): string | null {
 // -----------------------------------------------------------------------------
 
 const RANGE_LABEL: Record<RangePreset, string> = {
+  'hoy': 'Hoy',
   '7d': 'Últimos 7 días',
+  '14d': 'Últimos 14 días',
   '30d': 'Últimos 30 días',
+  '90d': 'Últimos 90 días',
+  'week_current': 'Semana en curso',
 }
+
+/** Etiqueta corta para el segmented del topbar (Hoy / 7d / … / Sem. en curso). */
+const RANGE_SHORT: Record<RangePreset, string> = {
+  'hoy': 'Hoy',
+  '7d': '7d',
+  '14d': '14d',
+  '30d': '30d',
+  '90d': '90d',
+  'week_current': 'Sem. en curso',
+}
+
+export function presetShort(range: RangePreset): string {
+  return RANGE_SHORT[range] ?? range
+}
+
+/** Orden canónico de los presets para el segmented del topbar. */
+export const RANGE_PRESETS: RangePreset[] = ['hoy', '7d', '14d', '30d', '90d', 'week_current']
 
 const CHANNEL_LABEL: Record<ChannelKey, string> = {
   all: 'Todos los canales',

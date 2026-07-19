@@ -29,6 +29,8 @@ interface ColumnChartProps<T extends object> {
   tooltip?: (d: T, index: number) => ReactNode
   accentColor?: string
   mutedColor?: string
+  /** Línea de referencia horizontal (misma unidad que valueKey) — p.ej. meta diaria. */
+  refValue?: number
 }
 
 export function ColumnChart<T extends object>({
@@ -41,6 +43,7 @@ export function ColumnChart<T extends object>({
   tooltip,
   accentColor = 'var(--accent)',
   mutedColor = 'var(--bg-elev-3)',
+  refValue,
 }: ColumnChartProps<T>) {
   const [hover, setHover] = useState<{ x: number; y: number; idx: number } | null>(null)
 
@@ -48,7 +51,8 @@ export function ColumnChart<T extends object>({
   const currentField = currentKey ?? ('current' as keyof T)
 
   const values = data.map((d) => Number(d[valueKey]) || 0)
-  const max = Math.max(...values, 0.01)
+  // La línea de meta entra en el max para que quede siempre visible dentro del plot.
+  const max = Math.max(...values, refValue ?? 0, 0.01)
 
   const padTop = 18
   const padBottom = 22
@@ -77,6 +81,14 @@ export function ColumnChart<T extends object>({
             className="grid-line"
           />
         ))}
+        {refValue != null && refValue > 0 && (
+          <line
+            x1={0} x2={100}
+            y1={padTop + innerH * (1 - refValue / max)}
+            y2={padTop + innerH * (1 - refValue / max)}
+            className="refline"
+          />
+        )}
         {data.map((d, i) => {
           const value = Number(d[valueKey]) || 0
           const h = (value / max) * innerH
