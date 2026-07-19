@@ -1,4 +1,4 @@
-import { KpiTile } from '@/components/ui'
+import { KpiTile, Callout } from '@/components/ui'
 import {
   PaidCharts,
   type CampaignDatum,
@@ -13,20 +13,44 @@ import {
 } from '@/lib/data/queries'
 import { CogsFaltanteAlert } from '@/components/paid/cogs-faltante-alert'
 import { formatCop, formatNumber, formatPct, formatX } from '@/lib/format'
-
-function parseNumber(v: unknown): number | null {
-  if (v == null) return null
-  const n = typeof v === 'number' ? v : parseFloat(String(v))
-  return isNaN(n) ? null : n
-}
+import { computeTotals, parseNumber } from '@/lib/paid/aggregate'
 
 export default async function PaidPage() {
-  const [campaignsRaw, topAdsRaw, learningsRaw, cogsFaltanteRaw] = await Promise.all([
-    getPaidCampaigns().catch(() => []),
-    getTopAds().catch(() => []),
-    getCreativeLearnings().catch(() => []),
-    getCogsFaltante().catch(() => []),
-  ])
+  // AIR-196: NO tragar errores a []/$0. Si la fuente falla (p.ej. 401 por permisos de la
+  // vista), renderizamos un estado de error VISIBLE en vez de simular "sin campañas / $0".
+  let campaignsRaw: Awaited<ReturnType<typeof getPaidCampaigns>>
+  let topAdsRaw: Awaited<ReturnType<typeof getTopAds>>
+  let learningsRaw: Awaited<ReturnType<typeof getCreativeLearnings>>
+  let cogsFaltanteRaw: Awaited<ReturnType<typeof getCogsFaltante>>
+  try {
+    ;[campaignsRaw, topAdsRaw, learningsRaw, cogsFaltanteRaw] = await Promise.all([
+      getPaidCampaigns(),
+      getTopAds(),
+      getCreativeLearnings(),
+      getCogsFaltante(),
+    ])
+  } catch (err) {
+    console.error('[paid] fallo al cargar datos de pauta:', err)
+    return (
+      <>
+        <div className="page-hero">
+          <div>
+            <h1>Performance Paid · no se pudieron cargar los datos</h1>
+            <div className="lede">
+              La fuente de datos de pauta no respondió. Esto es un error real: NO significa
+              que no haya campañas ni que el gasto sea $0. Reintenta en unos minutos; si
+              persiste, revisa los permisos de la vista o el estado de Supabase.
+            </div>
+          </div>
+        </div>
+        <Callout kind="danger" title="Error al cargar datos de pauta">
+          {err instanceof Error
+            ? err.message
+            : 'Error desconocido consultando la vista de campañas.'}
+        </Callout>
+      </>
+    )
+  }
 
   // Dedup campañas: nueva vista agrupa por (campaign_id, campaign_name) — sin duplicados.
   // Mantenemos el Map por compatibilidad y para agregar métricas de margen.
@@ -116,11 +140,15 @@ export default async function PaidPage() {
     }),
     { gasto: 0, compras: 0, revenue: 0, margen: 0, ctr_sum: 0, cpc_sum: 0, ad_count: 0 }
   )
-  const ctrAvg = totals.ad_count > 0 ? totals.ctr_sum / totals.ad_count : 0
-  const cpcAvg = totals.ad_count > 0 ? totals.cpc_sum / totals.ad_count : 0
+  // Totales de margen/rendimiento vía la función pura compartida y testeada (AIR-196,
+  // lib/paid/aggregate). `totals.revenue` (referencia ROAS-revenue del pixel de Meta) se
+  // conserva en su forma preexistente para no propagar esa métrica de referencia a código nuevo.
+  const pt = computeTotals(campaigns)
+  const ctrAvg = pt.ctr_avg
+  const cpcAvg = pt.cpc_avg
   const roasBlended = totals.gasto > 0 ? totals.revenue / totals.gasto : 0
-  const roasMargenBlended = totals.gasto > 0 ? totals.margen / totals.gasto : 0
-  const cpaBlended = totals.compras > 0 ? totals.gasto / totals.compras : 0
+  const roasMargenBlended = pt.roas_margen_blended
+  const cpaBlended = pt.cpa_blended
 
   // Action title — usa ROAS-margen como señal primaria
   const actionTitle = (() => {
