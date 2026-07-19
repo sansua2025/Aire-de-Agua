@@ -1,4 +1,4 @@
-import { KpiTile, Callout } from '@/components/ui'
+import { KpiTile, Callout, WidgetState } from '@/components/ui'
 import {
   ProductoCharts,
   type TopSkuDatum,
@@ -55,34 +55,29 @@ export default async function ProductoPage({ searchParams }: ProductoPageProps) 
   const periodoCompact = formatRangeCompact(range)
   const canalActivo = filters.channel !== 'all'
 
-  let topSkusRaw: Awaited<ReturnType<typeof getTopSkusRange>>
-  let inventoryRaw: Awaited<ReturnType<typeof getInventoryHealth>>
-  let discountRaw: Awaited<ReturnType<typeof getDiscountMix>>
-  try {
-    ;[topSkusRaw, inventoryRaw, discountRaw] = await Promise.all([
-      getTopSkusRange({ desde: range.desde, hasta: range.hasta, canal }, 10),
-      getInventoryHealth(),
-      getDiscountMix(),
-    ])
-  } catch (err) {
-    console.error('[producto] fallo al cargar datos:', err)
-    return (
-      <>
-        <div className="page-hero">
-          <div>
-            <h1>Producto · no se pudieron cargar los datos</h1>
-            <div className="lede">
-              Una fuente no respondió. Reintenta en unos minutos; si persiste, revisa los permisos de
-              analytics.get_top_skus / las vistas de inventario o el estado de Supabase.
-            </div>
-          </div>
-        </div>
-        <Callout kind="danger" title="Error al cargar Producto y Comercial">
-          {err instanceof Error ? err.message : 'Error desconocido consultando el catálogo.'}
-        </Callout>
-      </>
-    )
+  // Aislamiento por widget (AIR-197): allSettled. Top-SKUs, inventario y
+  // discount son fuentes independientes — si una falla, las otras siguen vivas.
+  const settled = await Promise.allSettled([
+    getTopSkusRange({ desde: range.desde, hasta: range.hasta, canal }, 10),
+    getInventoryHealth(),
+    getDiscountMix(),
+  ])
+  const pick = <T,>(i: number, name: string): { value: T | null; errored: boolean } => {
+    const r = settled[i]
+    if (r.status === 'fulfilled') return { value: r.value as T, errored: false }
+    console.error(`[producto] fuente "${name}" falló:`, r.reason)
+    return { value: null, errored: true }
   }
+  const topSkusR = pick<Awaited<ReturnType<typeof getTopSkusRange>>>(0, 'get_top_skus')
+  const inventoryR = pick<Awaited<ReturnType<typeof getInventoryHealth>>>(1, 'inventory_health')
+  const discountR = pick<Awaited<ReturnType<typeof getDiscountMix>>>(2, 'discount_mix')
+
+  const topSkusErrored = topSkusR.errored
+  const inventoryErrored = inventoryR.errored
+  const discountErrored = discountR.errored
+  const topSkusRaw = topSkusR.value
+  const inventoryRaw = inventoryR.value
+  const discountRaw = discountR.value
 
   // Top SKUs del período (get_top_skus).
   const topSkus: TopSkuDatum[] = (topSkusRaw || []).map((s) => ({
@@ -175,8 +170,15 @@ export default async function ProductoPage({ searchParams }: ProductoPageProps) 
         </Callout>
       )}
 
+      {inventoryErrored && (
+        <WidgetState state="error" title="No se pudo cargar el inventario">
+          Las vistas de inventario no respondieron. Los KPIs de stockout/deadstock de abajo NO son
+          ceros reales: es un error de la fuente. Reintenta o revisa el estado de Supabase.
+        </WidgetState>
+      )}
+
       {/* KPI tiles comerciales */}
-      <div className="grid grid-kpis">
+      <div className="grid grid-kpis" style={inventoryErrored ? { opacity: 0.4 } : undefined}>
         <KpiTile
           label="Stockout crítico"
           value={String(stockoutsCriticos)}
@@ -224,7 +226,13 @@ export default async function ProductoPage({ searchParams }: ProductoPageProps) 
       </div>
 
       {/* Charts: top SKUs + discount trend */}
-      <ProductoCharts topSkus={topSkus} discountTrend={discountTrend} periodoLabel={periodoCompact} />
+      <ProductoCharts
+        topSkus={topSkus}
+        discountTrend={discountTrend}
+        range={{ desde: range.desde, hasta: range.hasta }}
+        topSkusErrored={topSkusErrored}
+        discountErrored={discountErrored}
+      />
 
       {/* Inventory table con filtros */}
       <div style={{ marginTop: 14 }}>

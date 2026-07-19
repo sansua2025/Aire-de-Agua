@@ -6,20 +6,25 @@ import { useRouter, usePathname, useSearchParams } from 'next/navigation'
 import { Icon } from './icon'
 import { parseFilters, toSearchParams, presetLabel, type Filters } from '@/lib/filters'
 
+// week: subtítulo estático SOLO para páginas NO cableadas al filtro global. Las
+// páginas de FILTERED_PAGES muestran el período efectivo (presetLabel), así que
+// su `week` no se usa — no se hardcodea ningún período aquí (AIR-197).
 const PAGE_META: Record<string, { title: string; week: string }> = {
-  '/':           { title: 'Overview semanal',      week: 'KPIs de la semana en curso' },
+  '/':           { title: 'Overview semanal',      week: 'Resumen ejecutivo' },
   '/producto':   { title: 'Producto y Comercial',  week: 'Top SKUs · inventario · descuentos' },
-  '/funnel':     { title: 'Funnel de conversión',  week: 'Amplitude · últimos 30 días' },
+  '/funnel':     { title: 'Funnel de conversión',  week: 'Amplitude' },
   '/paid':       { title: 'Paid · Meta Ads',       week: 'Campañas · creativos · ROAS real' },
   '/email':      { title: 'Email · Klaviyo',       week: 'Integración en progreso' },
   '/ai':         { title: 'el Cerebro',            week: 'Insights · anomalías · cohortes' },
-  '/anomalias':  { title: 'Anomalías',             week: 'Salud de datos · 30 días' },
+  '/anomalias':  { title: 'Anomalías',             week: 'Salud de datos' },
   '/fuentes':    { title: 'Fuentes de datos',      week: 'Estado de integraciones' },
 }
 
+// Labels del picker de período: fuente única en lib/filters (presetLabel), para
+// no repetir el texto "Últimos N días" en dos sitios (AIR-197).
 const dateOptions = [
-  { value: '7d',  label: 'Últimos 7 días' },
-  { value: '30d', label: 'Últimos 30 días' },
+  { value: '7d',  label: presetLabel('7d') },
+  { value: '30d', label: presetLabel('30d') },
 ] as const
 
 const channelOptions = [
@@ -54,7 +59,7 @@ export function Topbar({ signOutSlot }: TopbarProps) {
   const { range, channel, compare } = filters
 
   // Las páginas cableadas al filtro muestran el período efectivo en el topbar, no
-  // un texto fijo ("últimos 30 días" era engañoso al elegir 7d).
+  // un texto de período fijo (que era engañoso al cambiar de rango).
   const FILTERED_PAGES = new Set(['/', '/funnel', '/paid', '/producto'])
   const weekLabel = FILTERED_PAGES.has(pathname) ? presetLabel(range) : meta.week
 

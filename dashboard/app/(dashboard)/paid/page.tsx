@@ -1,4 +1,4 @@
-import { KpiTile, Callout } from '@/components/ui'
+import { KpiTile, WidgetState } from '@/components/ui'
 import {
   PaidCharts,
   type CampaignDatum,
@@ -42,39 +42,30 @@ export default async function PaidPage({ searchParams }: PaidPageProps) {
   const periodoDesc = describeFilters(filters, range)
   const periodoCompact = formatRangeCompact(range)
 
-  let campaignsRaw: Awaited<ReturnType<typeof getPaidRange>>
-  let topAdsRaw: Awaited<ReturnType<typeof getTopAds>>
-  let learningsRaw: Awaited<ReturnType<typeof getCreativeLearnings>>
-  let cogsFaltanteRaw: Awaited<ReturnType<typeof getCogsFaltante>>
-  try {
-    ;[campaignsRaw, topAdsRaw, learningsRaw, cogsFaltanteRaw] = await Promise.all([
-      getPaidRange({ desde: range.desde, hasta: range.hasta, canal: null }),
-      getTopAds(),
-      getCreativeLearnings(),
-      getCogsFaltante(),
-    ])
-  } catch (err) {
-    console.error('[paid] fallo al cargar datos de pauta:', err)
-    return (
-      <>
-        <div className="page-hero">
-          <div>
-            <h1>Performance Paid · no se pudieron cargar los datos</h1>
-            <div className="lede">
-              La fuente de datos de pauta no respondió. Esto es un error real: NO significa
-              que no haya campañas ni que el gasto sea $0. Reintenta en unos minutos; si
-              persiste, revisa los permisos de analytics.get_paid o el estado de Supabase.
-            </div>
-          </div>
-        </div>
-        <Callout kind="danger" title="Error al cargar datos de pauta">
-          {err instanceof Error
-            ? err.message
-            : 'Error desconocido consultando las campañas.'}
-        </Callout>
-      </>
-    )
+  // Aislamiento por widget (AIR-197): allSettled. Si top-ads o learnings fallan,
+  // las campañas y KPIs siguen vivos, y viceversa. Sin blanqueo de página entera.
+  const settled = await Promise.allSettled([
+    getPaidRange({ desde: range.desde, hasta: range.hasta, canal: null }),
+    getTopAds(),
+    getCreativeLearnings(),
+    getCogsFaltante(),
+  ])
+  const pick = <T,>(i: number, name: string): { value: T | null; errored: boolean } => {
+    const r = settled[i]
+    if (r.status === 'fulfilled') return { value: r.value as T, errored: false }
+    console.error(`[paid] fuente "${name}" falló:`, r.reason)
+    return { value: null, errored: true }
   }
+  const campaignsR = pick<Awaited<ReturnType<typeof getPaidRange>>>(0, 'get_paid')
+  const topAdsR = pick<Awaited<ReturnType<typeof getTopAds>>>(1, 'top_ads')
+  const learningsR = pick<Awaited<ReturnType<typeof getCreativeLearnings>>>(2, 'creative_learnings')
+  const cogsFaltanteR = pick<Awaited<ReturnType<typeof getCogsFaltante>>>(3, 'cogs_faltante')
+
+  const campaignsErrored = campaignsR.errored
+  const campaignsRaw = campaignsR.value
+  const topAdsRaw = topAdsR.value
+  const learningsRaw = learningsR.value
+  const cogsFaltanteRaw = cogsFaltanteR.value ?? []
 
   // get_paid ya agrega por campaña y ordena por gasto — sin dedup ni recómputo en TS.
   const campaigns: CampaignDatum[] = (campaignsRaw || []).map((c) => ({
@@ -95,7 +86,7 @@ export default async function PaidPage({ searchParams }: PaidPageProps) {
     cobertura_cogs_pct: parseNumber(c.cobertura_cogs_pct),
   }))
 
-  // Top ads (view top_ads, ventana propia de 7 días — sin RPC parametrizada).
+  // Top ads (view top_ads, ventana fija propia 7d — sin RPC parametrizada).
   const topAds: TopAdDatum[] = (topAdsRaw || []).map((a) => ({
     ad_id: a.ad_id ?? '',
     ad_name: a.ad_name ?? '—',
@@ -161,8 +152,15 @@ export default async function PaidPage({ searchParams }: PaidPageProps) {
         </div>
       </div>
 
+      {campaignsErrored && (
+        <WidgetState state="error" title="No se pudieron cargar las campañas">
+          analytics.get_paid no respondió. Los KPIs de abajo NO son $0 reales: es un error de la
+          fuente. Reintenta; si persiste, revisa permisos de la RPC o el estado de Supabase.
+        </WidgetState>
+      )}
+
       {/* KPI tiles paid */}
-      <div className="grid grid-kpis">
+      <div className="grid grid-kpis" style={campaignsErrored ? { opacity: 0.4 } : undefined}>
         <KpiTile
           label="Gasto"
           value={(pt.gasto / 1_000_000).toFixed(2)}
@@ -222,6 +220,8 @@ export default async function PaidPage({ searchParams }: PaidPageProps) {
         campaigns={campaigns}
         topAds={topAds}
         learnings={learnings}
+        range={{ desde: range.desde, hasta: range.hasta }}
+        campaignsErrored={campaignsErrored}
         totals={{
           gasto: pt.gasto,
           compras: pt.compras,

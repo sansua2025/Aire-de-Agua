@@ -1,8 +1,9 @@
 'use client'
 
-import { Card, TT } from '@/components/ui'
+import { Card, TT, PeriodBadge, WidgetState } from '@/components/ui'
 import { LineChart, BarHorizontal } from '@/components/charts'
 import { formatCop, formatPct } from '@/lib/format'
+import { VENTANA_FIJA } from '@/lib/filters'
 
 export interface TopSkuDatum {
   producto_titulo: string
@@ -31,11 +32,13 @@ export interface DiscountTrendDatum {
 interface ProductoChartsProps {
   topSkus: TopSkuDatum[]
   discountTrend: DiscountTrendDatum[]
-  /** Período efectivo del filtro (AIR-194) — subtítulo derivado, no hardcoded. */
-  periodoLabel?: string
+  /** Rango efectivo del filtro (AIR-197) — el widget de top-skus responde a él. */
+  range: { desde: string; hasta: string }
+  topSkusErrored?: boolean
+  discountErrored?: boolean
 }
 
-export function ProductoCharts({ topSkus, discountTrend, periodoLabel = 'período seleccionado' }: ProductoChartsProps) {
+export function ProductoCharts({ topSkus, discountTrend, range, topSkusErrored, discountErrored }: ProductoChartsProps) {
   const topByRevenue = [...topSkus]
     .sort((a, b) => b.revenue - a.revenue)
     .slice(0, 8)
@@ -49,10 +52,15 @@ export function ProductoCharts({ topSkus, discountTrend, periodoLabel = 'períod
             ? `Top productos por revenue · ${topByRevenue[0].name} concentra ${formatPct((topByRevenue[0].revenue / topByRevenue.reduce((s, x) => s + x.revenue, 0)) * 100)}`
             : 'Top productos por revenue'
         }
-        subtitle={`${periodoLabel} · ordenado por revenue · rank_margen revela 'vende ≠ rinde'`}
+        subtitle="Ordenado por revenue · rank_margen revela 'vende ≠ rinde'"
         source="analytics.get_top_skus"
+        actions={<PeriodBadge range={range} />}
       >
-        {topByRevenue.length > 0 ? (
+        {topSkusErrored ? (
+          <WidgetState state="error" title="Error al cargar los top SKUs">
+            analytics.get_top_skus no respondió.
+          </WidgetState>
+        ) : topByRevenue.length > 0 ? (
           <BarHorizontal
             data={topByRevenue}
             labelKey="name"
@@ -78,7 +86,9 @@ export function ProductoCharts({ topSkus, discountTrend, periodoLabel = 'períod
             )}
           />
         ) : (
-          <Empty text="Sin ventas en el período seleccionado con productos identificables." />
+          <WidgetState state="empty" align="center" title="Sin ventas en la ventana">
+            La consulta corrió correctamente y no hay ventas con SKUs identificables en esta ventana.
+          </WidgetState>
         )}
       </Card>
 
@@ -88,10 +98,15 @@ export function ProductoCharts({ topSkus, discountTrend, periodoLabel = 'períod
             ? `Discount rate · ${discountTrend[discountTrend.length - 1]?.rate.toFixed(1)}% esta semana`
             : 'Discount rate · sin descuentos registrados'
         }
-        subtitle="Últimas 8 semanas · venta_items.descuento ÷ precio_unitario × cantidad"
+        subtitle="Descuento de línea ÷ precio unitario × cantidad"
         source="analytics.view_dashboard_discount_mix"
+        actions={<PeriodBadge label={VENTANA_FIJA.discount8w} fuente="ventana fija" />}
       >
-        {discountTrend.length > 0 ? (
+        {discountErrored ? (
+          <WidgetState state="error" title="Error al cargar el discount mix">
+            La vista de descuentos no respondió.
+          </WidgetState>
+        ) : discountTrend.length > 0 ? (
           <LineChart
             data={discountTrend}
             valueKey="rate"

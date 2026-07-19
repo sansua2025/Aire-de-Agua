@@ -2,8 +2,8 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useEffect, useState } from 'react'
 import { Icon } from './icon'
+import type { FreshnessRow } from '@/lib/data/queries'
 
 interface NavItem {
   href: string
@@ -29,7 +29,7 @@ const navInteligencia: NavItem[] = [
   { href: '/fuentes',   icon: 'grid',     label: 'Fuentes' },
 ]
 
-export function Sidebar() {
+export function Sidebar({ freshness }: { freshness: FreshnessRow[] | null }) {
   const pathname = usePathname()
 
   return (
@@ -56,7 +56,7 @@ export function Sidebar() {
         ))}
       </div>
 
-      <SidebarFooter />
+      <SidebarFooter freshness={freshness} />
     </nav>
   )
 }
@@ -83,27 +83,75 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
   )
 }
 
-function SidebarFooter() {
-  // Fecha solo en cliente post-mount → evita hydration mismatch
-  const [now, setNow] = useState<string | null>(null)
+/** "hoy" / "ayer" / "hace Nd" a partir de dias_desde_ultimo. */
+function recencia(dias: number | null): string {
+  if (dias == null) return 'sin datos'
+  if (dias <= 0) return 'hoy'
+  if (dias === 1) return 'ayer'
+  return `hace ${dias}d`
+}
 
-  useEffect(() => {
-    const fmt = () =>
-      new Date().toLocaleString('es-CO', {
-        day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
-      })
-    setNow(fmt())
-    const id = setInterval(() => setNow(fmt()), 60_000)
-    return () => clearInterval(id)
-  }, [])
+/**
+ * Footer de frescura (AIR-197). Reemplaza el reloj del NAVEGADOR (que no decía
+ * nada sobre la frescura de los datos) por la recencia REAL por fuente, desde
+ * analytics.view_dashboard_freshness. El indicador de cabecera se pone en ámbar
+ * si alguna fuente está stale (dias_desde_ultimo > umbral, ≈ >48h en las diarias).
+ */
+function SidebarFooter({ freshness }: { freshness: FreshnessRow[] | null }) {
+  // Fallo real de la fuente de frescura: estado honesto, no "al día" falso.
+  if (freshness == null) {
+    return (
+      <div className="side-footer">
+        <span className="side-status-dot" style={{ background: 'var(--fg-3)' }} aria-hidden />
+        <span>Frescura no disponible</span>
+      </div>
+    )
+  }
+
+  const stale = freshness.filter((f) => f.stale)
+  const hayStale = stale.length > 0
 
   return (
-    <div className="side-footer">
-      <span className="side-status-dot" aria-hidden />
-      <span>
-        Datos al día<br />
-        <span suppressHydrationWarning>{now ?? '—'}</span>
-      </span>
+    <div className="side-footer" style={{ display: 'block' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        <span
+          className="side-status-dot"
+          style={{ background: hayStale ? 'var(--warning)' : 'var(--success)' }}
+          aria-hidden
+        />
+        <span style={{ fontWeight: 600 }}>
+          {hayStale
+            ? `${stale.length} fuente${stale.length > 1 ? 's' : ''} atrasada${stale.length > 1 ? 's' : ''}`
+            : 'Datos al día'}
+        </span>
+      </div>
+      <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {freshness.map((f) => (
+          <li
+            key={f.fuente}
+            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+            title={`${f.etiqueta} · ${f.cadencia}${f.ultima_fecha ? ` · último dato ${f.ultima_fecha}` : ''}`}
+          >
+            <span
+              aria-hidden
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: 999,
+                flexShrink: 0,
+                background: f.stale ? 'var(--warning)' : 'var(--success)',
+              }}
+            />
+            <span style={{ flex: 1, color: 'var(--fg-2)', fontSize: 11 }}>{f.etiqueta}</span>
+            <span
+              className="tnum"
+              style={{ color: f.stale ? 'var(--warning)' : 'var(--fg-3)', fontSize: 10.5 }}
+            >
+              {recencia(f.dias_desde_ultimo)}
+            </span>
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }
