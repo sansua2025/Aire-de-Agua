@@ -161,6 +161,39 @@ export function getTopSkusRange(args: RangeArgs, limit = 10) {
 }
 
 // =============================================================================
+// Frescura de datos (sidebar · AIR-197)
+// =============================================================================
+
+export interface FreshnessRow {
+  fuente: string
+  etiqueta: string
+  cadencia: string
+  umbral_dias: number
+  ultima_fecha: string | null
+  ultimo_evento: string | null
+  dias_desde_ultimo: number | null
+  stale: boolean
+}
+
+/**
+ * Frescura por fuente para el footer del sidebar (AIR-197). Lee
+ * analytics.view_dashboard_freshness (mig 121). Tags de TODOS los dominios de
+ * ingestión: cualquier sync (daily/weekly/paid/funnel/producto) la invalida, así
+ * el indicador de stale refleja la última carga sin esperar al fallback.
+ */
+export const getFreshness = unstable_cache(
+  async (): Promise<FreshnessRow[]> => {
+    const { data, error } = await supabase
+      .from('view_dashboard_freshness')
+      .select('*')
+    if (error) throw error
+    return (data ?? []) as FreshnessRow[]
+  },
+  ['dashboard_freshness'],
+  { tags: ['daily', 'weekly', 'paid', 'funnel', 'producto'], revalidate: CACHE_FALLBACK_SECONDS },
+)
+
+// =============================================================================
 // Overview
 // =============================================================================
 

@@ -1,9 +1,10 @@
 'use client'
 
-import { Card, Pill, TT } from '@/components/ui'
+import { Card, Pill, TT, PeriodBadge, WidgetState } from '@/components/ui'
 import { Icon } from '@/components/icon'
 import { BarHorizontal } from '@/components/charts'
 import { formatCop, formatNumber, formatPct, formatX } from '@/lib/format'
+import { VENTANA_FIJA } from '@/lib/filters'
 
 export interface CampaignDatum {
   campaign_id: string
@@ -61,6 +62,10 @@ interface PaidChartsProps {
     ctr_avg: number
     cpc_avg: number
   }
+  /** Rango efectivo del filtro (AIR-197) — el widget de campañas responde a él. */
+  range: { desde: string; hasta: string }
+  /** true si la fuente de campañas falló (error real, no vacío). */
+  campaignsErrored?: boolean
 }
 
 function statusForCampaign(c: CampaignDatum): 'good' | 'ok' | 'warn' | 'bad' {
@@ -97,7 +102,7 @@ const STATUS_PILL: Record<'good' | 'ok' | 'warn' | 'bad', 'success' | 'accent' |
   bad:  'danger',
 }
 
-export function PaidCharts({ campaigns, topAds, learnings, totals }: PaidChartsProps) {
+export function PaidCharts({ campaigns, topAds, learnings, totals, range, campaignsErrored }: PaidChartsProps) {
   // Banner si todas las campañas están bajo break-even (roas_margen < 1)
   const allBelowBreakeven = campaigns.length > 0 && campaigns.every((c) => (c.roas_margen ?? 0) < 1.0)
 
@@ -143,9 +148,19 @@ export function PaidCharts({ campaigns, topAds, learnings, totals }: PaidChartsP
       <div className="grid grid-2-1" style={{ marginTop: 14 }}>
         <Card
           title={`${campaigns.length} campañas activas · ${formatCop(totals.gasto)} gastado`}
-          subtitle="Meta Ads · últimos 30 días · ordenadas por gasto"
-          source="analytics.view_dashboard_paid"
+          subtitle="Meta Ads · ordenadas por gasto"
+          source="analytics.get_paid"
+          actions={<PeriodBadge range={range} />}
         >
+          {campaignsErrored ? (
+            <WidgetState state="error" title="Error al cargar las campañas">
+              analytics.get_paid no respondió. No significa que el gasto sea $0.
+            </WidgetState>
+          ) : campaigns.length === 0 ? (
+            <WidgetState state="empty" align="center" title="Sin campañas activas en el período">
+              La consulta corrió correctamente y no devolvió campañas con actividad en esta ventana.
+            </WidgetState>
+          ) : (
           <div style={{ overflowX: 'auto' }}>
             <table className="tbl" style={{ marginTop: 4 }}>
               <thead>
@@ -161,13 +176,7 @@ export function PaidCharts({ campaigns, topAds, learnings, totals }: PaidChartsP
                 </tr>
               </thead>
               <tbody>
-                {campaigns.length === 0 ? (
-                  <tr>
-                    <td colSpan={8} style={{ textAlign: 'center', padding: '24px 0', color: 'var(--fg-faint)' }}>
-                      Sin campañas activas en los últimos 30 días.
-                    </td>
-                  </tr>
-                ) : (
+                {
                   campaigns.map((c) => {
                     const status = statusForCampaign(c)
                     const rm = c.roas_margen
@@ -217,10 +226,11 @@ export function PaidCharts({ campaigns, topAds, learnings, totals }: PaidChartsP
                       </tr>
                     )
                   })
-                )}
+                }
               </tbody>
             </table>
           </div>
+          )}
         </Card>
 
         <Card
@@ -273,11 +283,12 @@ export function PaidCharts({ campaigns, topAds, learnings, totals }: PaidChartsP
         <Card
           title={
             topAdsForChart.length > 0
-              ? `Top ${topAdsForChart.length} ad${topAdsForChart.length > 1 ? 's' : ''} con compras atribuidas · últimos 7 días`
-              : 'Top ads · sin compras atribuidas en 7 días'
+              ? `Top ${topAdsForChart.length} ad${topAdsForChart.length > 1 ? 's' : ''} con compras atribuidas`
+              : 'Top ads · sin compras atribuidas'
           }
-          subtitle="Bar horizontal por valor_compras · ROAS al lado · solo ads con valor > 0"
+          subtitle="Bar horizontal por valor de conversión · ROAS al lado · solo ads con valor > 0"
           source="analytics.view_dashboard_top_ads"
+          actions={<PeriodBadge label={VENTANA_FIJA.topAds7d} fuente="ventana fija" />}
         >
           {topAdsForChart.length > 0 ? (
             <BarHorizontal
@@ -300,19 +311,10 @@ export function PaidCharts({ campaigns, topAds, learnings, totals }: PaidChartsP
               )}
             />
           ) : (
-            <div
-              style={{
-                padding: '32px 0',
-                textAlign: 'center',
-                color: 'var(--fg-faint)',
-                fontSize: 12,
-                fontFamily: 'var(--font-mono-stack)',
-                lineHeight: 1.6,
-              }}
-            >
-              Ningún ad con valor_compras &gt; 0 en los últimos 7 días.<br />
-              Esto refleja AIR-44 (pixel Meta no captura value).
-            </div>
+            <WidgetState state="empty" align="center" title="Sin ads con compras atribuidas">
+              La consulta corrió correctamente y ningún ad tiene compras atribuidas en la ventana.
+              Refleja AIR-44 (el pixel Meta no captura el valor de conversión).
+            </WidgetState>
           )}
         </Card>
       </div>

@@ -1,4 +1,4 @@
-import { KpiTile, Callout } from '@/components/ui'
+import { KpiTile, Callout, WidgetState } from '@/components/ui'
 import {
   FunnelCharts,
   type FunnelStage,
@@ -34,29 +34,39 @@ export default async function FunnelPage({ searchParams }: FunnelPageProps) {
   const periodoCompact = formatRangeCompact(range)
   const canalActivo = filters.channel !== 'all'
 
-  let agg: Awaited<ReturnType<typeof getFunnelRange>>
-  let serieRaw: Awaited<ReturnType<typeof getFunnelSerie>>
-  try {
-    ;[agg, serieRaw] = await Promise.all([
-      getFunnelRange({ desde: range.desde, hasta: range.hasta, canal: null }),
-      getFunnelSerie({ desde: range.desde, hasta: range.hasta }),
-    ])
-  } catch (err) {
-    console.error('[funnel] fallo al cargar datos:', err)
+  // Aislamiento por widget (AIR-197): el agregado (get_funnel) alimenta KPIs +
+  // etapas; la serie diaria (getFunnelSerie) alimenta los trends. Si SOLO falla
+  // la serie, KPIs y etapas siguen vivos; el trend muestra su propio error.
+  const settled = await Promise.allSettled([
+    getFunnelRange({ desde: range.desde, hasta: range.hasta, canal: null }),
+    getFunnelSerie({ desde: range.desde, hasta: range.hasta }),
+  ])
+  const aggSettled = settled[0]
+  const serieSettled = settled[1]
+  const aggErrored = aggSettled.status === 'rejected'
+  const serieErrored = serieSettled.status === 'rejected'
+  if (aggErrored) console.error('[funnel] fuente "get_funnel" falló:', aggSettled.reason)
+  if (serieErrored) console.error('[funnel] fuente "getFunnelSerie" falló:', serieSettled.reason)
+  const agg = aggSettled.status === 'fulfilled' ? aggSettled.value : null
+  const serieRaw = serieSettled.status === 'fulfilled' ? serieSettled.value : null
+
+  // Si el AGREGADO falla, no hay KPIs ni etapas: error honesto de página (pero
+  // no un try/catch monolítico — es una rama explícita, no arrastra a la serie).
+  if (aggErrored) {
     return (
       <>
         <div className="page-hero">
           <div>
-            <h1>Funnel · no se pudieron cargar los datos</h1>
+            <h1>Funnel · no se pudieron cargar las etapas</h1>
             <div className="lede">
-              La fuente de Amplitude no respondió. Reintenta en unos minutos; si persiste, revisa los
-              permisos de analytics.get_funnel o el estado de Supabase.
+              analytics.get_funnel no respondió. Es un error real: NO significa que el embudo esté en
+              cero. Reintenta; si persiste, revisa permisos de la RPC o el estado de Supabase.
             </div>
           </div>
         </div>
-        <Callout kind="danger" title="Error al cargar el funnel">
-          {err instanceof Error ? err.message : 'Error desconocido consultando el embudo.'}
-        </Callout>
+        <WidgetState state="error" title="Error al cargar el embudo">
+          {aggSettled.reason instanceof Error ? aggSettled.reason.message : 'Error desconocido consultando el embudo.'}
+        </WidgetState>
       </>
     )
   }
@@ -153,7 +163,12 @@ export default async function FunnelPage({ searchParams }: FunnelPageProps) {
       </div>
 
       <div style={{ marginTop: 14 }}>
-        <FunnelCharts stages={stages} daily={daily} />
+        <FunnelCharts
+          stages={stages}
+          daily={daily}
+          range={{ desde: range.desde, hasta: range.hasta }}
+          serieErrored={serieErrored}
+        />
       </div>
     </>
   )

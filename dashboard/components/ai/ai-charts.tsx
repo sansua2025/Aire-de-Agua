@@ -141,7 +141,7 @@ export function AiCharts({ insights, anomalias, cohorts, learnings = [] }: AiCha
         <InsightsCard insights={insights} learnings={learnings} />
 
         <Card
-          title="Anomalías · últimos 30 días"
+          title="Anomalías abiertas"
           subtitle="Insights tipo='anomalia' · ordenados por |delta|"
           source="analytics.view_dashboard_anomalias"
         >
@@ -161,7 +161,7 @@ export function AiCharts({ insights, anomalias, cohorts, learnings = [] }: AiCha
                 }}
               >
                 <Icon name="check" size={20} />
-                Sin anomalías abiertas en 30 días
+                Sin anomalías abiertas
               </div>
             ) : (
               anomalias.map((a) => <AnomaliaCard key={a.id} anomalia={a} />)

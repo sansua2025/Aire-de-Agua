@@ -1,4 +1,4 @@
-import { Card, Callout, Hero, Pill } from '@/components/ui'
+import { Card, Callout, Hero, Pill, WidgetState, PeriodBadge } from '@/components/ui'
 import { OverviewKpis, type OverviewKpi } from '@/components/overview/overview-kpis'
 import {
   OverviewVentasChart,
@@ -99,46 +99,45 @@ export default async function OverviewPage({ searchParams }: OverviewPageProps) 
   const canalActivo = filters.channel !== 'all'
   const showDeltas = filters.compare !== 'none'
 
-  // Sin catch silencioso: cualquier fallo de fuente ⇒ estado de error visible.
-  let kpi: Awaited<ReturnType<typeof getKpis>>
-  let serie: Awaited<ReturnType<typeof getVentasSerie>>
-  let channelsRaw: Awaited<ReturnType<typeof getChannelsMixRange>>
-  let funnelAgg: Awaited<ReturnType<typeof getFunnelRange>>
-  let weekly: Awaited<ReturnType<typeof getWeeklyKpi>>
-  let history: Awaited<ReturnType<typeof getKpiHistory>>
-  let cola: Awaited<ReturnType<typeof getColaAgrupada>>
-  let anomaliasRaw: Awaited<ReturnType<typeof getAnomalias>>
-  try {
-    ;[kpi, serie, channelsRaw, funnelAgg, weekly, history, cola, anomaliasRaw] = await Promise.all([
-      getKpis(args),
-      getVentasSerie(args, 'day'),
-      getChannelsMixRange(args),
-      getFunnelRange(args),
-      getWeeklyKpi(),
-      getKpiHistory(),
-      getColaAgrupada(),
-      getAnomalias(),
-    ])
-  } catch (err) {
-    console.error('[overview] fallo al cargar datos:', err)
-    return (
-      <>
-        <div className="page-hero">
-          <div>
-            <h1>Overview · no se pudieron cargar los datos</h1>
-            <div className="lede">
-              Una de las fuentes no respondió. Esto es un error real: NO significa que las ventas
-              sean $0. Reintenta en unos minutos; si persiste, revisa los permisos de las RPCs
-              analytics.get_* o el estado de Supabase.
-            </div>
-          </div>
-        </div>
-        <Callout kind="danger" title="Error al cargar el Overview">
-          {err instanceof Error ? err.message : 'Error desconocido consultando las RPCs analytics.'}
-        </Callout>
-      </>
-    )
+  // Aislamiento por widget (AIR-197): allSettled en vez de un Promise.all
+  // monolítico dentro de un solo try. Antes, si UNA de las 8 fuentes fallaba, la
+  // página entera se blanqueaba con un error; ahora cada widget decide su propio
+  // estado (ok / vacío-legítimo / error) sin arrastrar a los demás.
+  const settled = await Promise.allSettled([
+    getKpis(args),
+    getVentasSerie(args, 'day'),
+    getChannelsMixRange(args),
+    getFunnelRange(args),
+    getWeeklyKpi(),
+    getKpiHistory(),
+    getColaAgrupada(),
+    getAnomalias(),
+  ])
+  // pick: fulfilled → value; rejected → null + marca errored (para distinguir
+  // "error real" de "vacío legítimo"). "—"/error NUNCA se confunde con $0.
+  const pick = <T,>(i: number, name: string): { value: T | null; errored: boolean } => {
+    const r = settled[i]
+    if (r.status === 'fulfilled') return { value: r.value as T, errored: false }
+    console.error(`[overview] fuente "${name}" falló:`, r.reason)
+    return { value: null, errored: true }
   }
+  const kpiR = pick<Awaited<ReturnType<typeof getKpis>>>(0, 'get_kpis')
+  const serieR = pick<Awaited<ReturnType<typeof getVentasSerie>>>(1, 'get_ventas_serie')
+  const channelsR = pick<Awaited<ReturnType<typeof getChannelsMixRange>>>(2, 'get_channels_mix')
+  const funnelR = pick<Awaited<ReturnType<typeof getFunnelRange>>>(3, 'get_funnel')
+  const weeklyR = pick<Awaited<ReturnType<typeof getWeeklyKpi>>>(4, 'weekly_kpi')
+  const historyR = pick<Awaited<ReturnType<typeof getKpiHistory>>>(5, 'kpi_history')
+  const colaR = pick<Awaited<ReturnType<typeof getColaAgrupada>>>(6, 'cola_agrupada')
+  const anomaliasR = pick<Awaited<ReturnType<typeof getAnomalias>>>(7, 'anomalias')
+
+  const kpi = kpiR.value
+  const serie = serieR.value
+  const channelsRaw = channelsR.value
+  const funnelAgg = funnelR.value
+  const weekly = weeklyR.value
+  const history = historyR.value
+  const cola = colaR.value ?? []
+  const anomaliasRaw = anomaliasR.value ?? []
 
   // ---- KPIs del período (get_kpis) + deltas desde prev_* (calculados en SQL) ----
   const ventasTotal = parseNumber(kpi?.ventas) ?? 0
@@ -211,6 +210,7 @@ export default async function OverviewPage({ searchParams }: OverviewPageProps) 
 
   // ---- Action title dinámico ----
   const actionTitle = (() => {
+    if (kpiR.errored) return 'No se pudieron cargar los KPIs del período'
     const ventasFmt = formatCop(ventasTotal)
     if (deltaVentas != null && deltaVentas > 10) {
       return `Las ventas crecieron a ${ventasFmt} (${formatPct(deltaVentas, true)} vs período anterior)`
@@ -450,7 +450,14 @@ export default async function OverviewPage({ searchParams }: OverviewPageProps) 
         </Callout>
       )}
 
-      <OverviewKpis kpis={kpis} />
+      {kpiR.errored ? (
+        <WidgetState state="error" title="No se pudieron cargar los KPIs del período">
+          La RPC analytics.get_kpis no respondió. Esto es un error real: NO significa que las ventas
+          sean $0. Reintenta; si persiste, revisa permisos de las RPCs o el estado de Supabase.
+        </WidgetState>
+      ) : (
+        <OverviewKpis kpis={kpis} />
+      )}
 
       {/* ---- Rendimiento ---- */}
       <div className="sec">
@@ -460,21 +467,38 @@ export default async function OverviewPage({ searchParams }: OverviewPageProps) 
       <div className="grid grid-32">
         <Card
           title="Ventas del período"
-          subtitle={`Millones COP por día · ${periodoDesc}`}
+          subtitle="Millones COP por día"
           source="analytics.get_ventas_serie"
+          actions={<PeriodBadge range={range} />}
         >
-          <OverviewVentasChart ventasChartData={ventasChartData} />
+          {serieR.errored ? (
+            <WidgetState state="error" title="Error al cargar la serie de ventas">
+              analytics.get_ventas_serie no respondió.
+            </WidgetState>
+          ) : ventasChartData.length > 0 ? (
+            <OverviewVentasChart ventasChartData={ventasChartData} />
+          ) : (
+            <WidgetState state="empty" align="center" title="Sin ventas en el período">
+              La consulta corrió correctamente y no hay ventas en {periodoCompact}
+              {canalActivo ? ` para ${channelLabel(filters.channel)}` : ''}.
+            </WidgetState>
+          )}
         </Card>
         <Card
           title="Ingresos por canal"
           subtitle={
             channels.length > 0
-              ? `${channels[0].canal} concentra ${channels[0].pct}% del revenue · ${periodoCompact}`
-              : `Participación · ${periodoCompact}`
+              ? `${channels[0].canal} concentra ${channels[0].pct}% del revenue`
+              : 'Participación por canal'
           }
           source="analytics.get_channels_mix"
+          actions={<PeriodBadge range={range} />}
         >
-          {channels.length > 0 ? (
+          {channelsR.errored ? (
+            <WidgetState state="error" title="Error al cargar el mix de canal">
+              analytics.get_channels_mix no respondió.
+            </WidgetState>
+          ) : channels.length > 0 ? (
             <div>
               {channels.map((c, i) => (
                 <div className="hbar" key={c.canal}>
@@ -506,16 +530,28 @@ export default async function OverviewPage({ searchParams }: OverviewPageProps) 
               ? `ROAS ${formatX(roasRevenue)} · vs meta 2.5×`
               : 'ROAS · sin datos de pauta en el período'
           }
-          subtitle="Tendencia semanal (histórico Loop Weekly) · atribución utm_term"
+          subtitle="Tendencia semanal · atribución utm_term"
           source="weekly_snapshot.roas_meta_atribuido"
+          actions={<PeriodBadge label="Tendencia semanal" fuente="histórico" />}
         >
-          <OverviewRoasChart roasChartData={roasChartData} />
+          {historyR.errored ? (
+            <WidgetState state="error" title="Error al cargar la tendencia de ROAS">
+              La vista weekly del Loop no respondió.
+            </WidgetState>
+          ) : (
+            <OverviewRoasChart roasChartData={roasChartData} />
+          )}
         </Card>
         <Card
           title="Análisis · el Cerebro"
           subtitle="Resumen ejecutivo generado por el Loop Weekly cada lunes"
           source="weekly_snapshot.resumen_ai"
         >
+          {weeklyR.errored ? (
+            <WidgetState state="error" title="Error al cargar el resumen del Cerebro">
+              weekly_snapshot no respondió.
+            </WidgetState>
+          ) : (
           <div className="ai-block" style={{ background: 'transparent', padding: 0, border: 0 }}>
             <div className="ai-head">
               <span className="ai-label">Resumen ejecutivo</span>
@@ -536,6 +572,7 @@ export default async function OverviewPage({ searchParams }: OverviewPageProps) 
               )}
             </div>
           </div>
+          )}
         </Card>
       </div>
 
@@ -547,10 +584,15 @@ export default async function OverviewPage({ searchParams }: OverviewPageProps) 
       <div className="grid grid-32">
         <Card
           title="Embudo de conversión"
-          subtitle={`Sesiones → compra · ${periodoCompact}${canalActivo ? ' · no segmenta por canal' : ''}`}
+          subtitle={`Sesiones → compra${canalActivo ? ' · no segmenta por canal' : ''}`}
           source="analytics.get_funnel"
+          actions={<PeriodBadge range={range} />}
         >
-          {hasFunnel ? (
+          {funnelR.errored ? (
+            <WidgetState state="error" title="Error al cargar el embudo">
+              analytics.get_funnel no respondió.
+            </WidgetState>
+          ) : hasFunnel ? (
             <>
               <div>
                 {rawSteps.map((s) => {
@@ -595,7 +637,11 @@ export default async function OverviewPage({ searchParams }: OverviewPageProps) 
 
         <div className="stack">
           <Card title="Hallazgos del Cerebro" subtitle="Top 3 por confianza">
-            {insightsTop.length > 0 ? (
+            {colaR.errored ? (
+              <WidgetState state="error" title="Error al cargar los hallazgos">
+                La cola de insights no respondió.
+              </WidgetState>
+            ) : insightsTop.length > 0 ? (
               insightsTop.map((ins, i) => (
                 <div className="irow" key={i}>
                   <span className="irow-tag">
@@ -609,7 +655,11 @@ export default async function OverviewPage({ searchParams }: OverviewPageProps) 
             )}
           </Card>
           <Card title="Salud de datos" subtitle="Anomalías de la semana">
-            {anomaliasTop.length > 0 ? (
+            {anomaliasR.errored ? (
+              <WidgetState state="error" title="Error al cargar las anomalías">
+                La vista de anomalías no respondió.
+              </WidgetState>
+            ) : anomaliasTop.length > 0 ? (
               anomaliasTop.map((a, i) => (
                 <div className="irow" key={i}>
                   <span className="irow-tag">

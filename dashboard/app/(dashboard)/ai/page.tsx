@@ -1,4 +1,4 @@
-import { KpiTile } from '@/components/ui'
+import { KpiTile, WidgetState } from '@/components/ui'
 import {
   AiCharts,
   type InsightDatum,
@@ -38,12 +38,28 @@ function sanitizeText(s: unknown): string {
 }
 
 export default async function AiPage() {
-  const [insightsRaw, anomaliasRaw, cohortsRaw, learningsRaw] = await Promise.all([
-    getColaAgrupada().catch(() => []),
-    getAnomalias().catch(() => []),
-    getCustomerPanel().catch(() => []),
-    getStrategicLearningsCandidatos().catch(() => []),
+  // Aislamiento por widget (AIR-197): allSettled reemplaza los catch silenciosos
+  // que devolvían un arreglo vacío. Antes, si una fuente fallaba, se mostraba
+  // "0 insights" como si fuera un vacío legítimo — mentira. Ahora cada fallo se
+  // propaga a un estado de error VISIBLE y las fuentes sanas siguen renderizando.
+  const settled = await Promise.allSettled([
+    getColaAgrupada(),
+    getAnomalias(),
+    getCustomerPanel(),
+    getStrategicLearningsCandidatos(),
   ])
+  const erroredSources: string[] = []
+  const pick = <T,>(i: number, name: string, fallback: T): T => {
+    const r = settled[i]
+    if (r.status === 'fulfilled') return r.value as T
+    console.error(`[ai] fuente "${name}" falló:`, r.reason)
+    erroredSources.push(name)
+    return fallback
+  }
+  const insightsRaw = pick<Awaited<ReturnType<typeof getColaAgrupada>>>(0, 'cola de insights', [])
+  const anomaliasRaw = pick<Awaited<ReturnType<typeof getAnomalias>>>(1, 'anomalías', [])
+  const cohortsRaw = pick<Awaited<ReturnType<typeof getCustomerPanel>>>(2, 'cohortes de cliente', [])
+  const learningsRaw = pick<Awaited<ReturnType<typeof getStrategicLearningsCandidatos>>>(3, 'strategic learnings', [])
 
   const insights: InsightDatum[] = (insightsRaw || []).map((i) => ({
     id: i.id,
@@ -148,6 +164,13 @@ export default async function AiPage() {
           <span>Cohortes · <span className="v">{fechaCorte}</span></span>
         </div>
       </div>
+
+      {erroredSources.length > 0 && (
+        <WidgetState state="error" title="Algunas fuentes del Cerebro no cargaron">
+          Falló: {erroredSources.join(', ')}. Los conteos de abajo pueden estar incompletos — NO son
+          ceros reales. Reintenta; si persiste, revisa permisos de las vistas o el estado de Supabase.
+        </WidgetState>
+      )}
 
       {/* KPI tiles AI */}
       <div className="grid grid-kpis">

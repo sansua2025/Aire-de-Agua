@@ -1,6 +1,6 @@
 'use client'
 
-import { Card, TT } from '@/components/ui'
+import { Card, TT, PeriodBadge, WidgetState } from '@/components/ui'
 import { Icon } from '@/components/icon'
 import { LineChart } from '@/components/charts'
 import { formatNumber } from '@/lib/format'
@@ -25,11 +25,15 @@ export interface DailyFunnel {
 interface FunnelChartsProps {
   stages: FunnelStage[]
   daily: DailyFunnel[]
+  /** Rango efectivo del filtro (AIR-197) — declarado en los widgets vía PeriodBadge. */
+  range: { desde: string; hasta: string }
+  /** true si la serie diaria (getFunnelSerie) falló — error real, no vacío. */
+  serieErrored?: boolean
 }
 
-export function FunnelCharts({ stages, daily }: FunnelChartsProps) {
-  // Etiqueta corta para axis: "DD/MM" — solo mostrar cada Nth label para evitar overflow
-  // Con 30 días, mostramos cada 5 días para 6-7 labels visibles
+export function FunnelCharts({ stages, daily, range, serieErrored }: FunnelChartsProps) {
+  // Etiqueta corta para axis: "DD/MM" — solo mostrar cada Nth label para evitar
+  // overflow: mostramos ~6-7 labels visibles según el nº de días de la ventana.
   const stride = Math.max(1, Math.floor(daily.length / 6))
   const formatDate = (iso: string, i: number) => {
     if (i % stride !== 0 && i !== daily.length - 1) return ''
@@ -64,10 +68,11 @@ export function FunnelCharts({ stages, daily }: FunnelChartsProps) {
           title={
             stages.find((s) => s.warn)
               ? `Drop-off crítico en ${stages.find((s) => s.warn)?.name.toLowerCase()} — ${stages.find((s) => s.warn)?.drop}pp`
-              : 'Funnel de conversión web — últimos 30 días'
+              : 'Funnel de conversión web'
           }
           subtitle="Cada etapa como % de sesiones · drop pp respecto a etapa anterior"
-          source="analytics.view_dashboard_funnel · Amplitude"
+          source="analytics.get_funnel · Amplitude"
+          actions={<PeriodBadge range={range} />}
         >
           <div style={{ marginTop: 4 }}>
             {stages.map((step, i) => (
@@ -101,8 +106,9 @@ export function FunnelCharts({ stages, daily }: FunnelChartsProps) {
 
         <Card
           title="Estado de la sesión"
-          subtitle="Métricas web complementarias · 30d promedio"
+          subtitle="Métricas web complementarias · promedio del período"
           source="amplitude_daily_metrics"
+          actions={<PeriodBadge range={range} />}
         >
           <SessionMetrics daily={daily} />
         </Card>
@@ -114,8 +120,13 @@ export function FunnelCharts({ stages, daily }: FunnelChartsProps) {
           title="Tráfico diario · sesiones"
           subtitle={`Volumen de visitas · ${daily.length} días · Amplitude`}
           source="amplitude_daily_metrics"
+          actions={<PeriodBadge range={range} />}
         >
-          {sessionData.length > 0 ? (
+          {serieErrored ? (
+            <WidgetState state="error" title="Error al cargar el tráfico diario">
+              La serie de Amplitude (getFunnelSerie) no respondió.
+            </WidgetState>
+          ) : sessionData.length > 0 ? (
             <LineChart
               data={sessionData}
               valueKey="value"
@@ -129,7 +140,7 @@ export function FunnelCharts({ stages, daily }: FunnelChartsProps) {
               )}
             />
           ) : (
-            <Empty text="Sin datos." />
+            <WidgetState state="empty" align="center" title="Sin tráfico en el período" />
           )}
         </Card>
 
@@ -139,16 +150,21 @@ export function FunnelCharts({ stages, daily }: FunnelChartsProps) {
               ? `Tasa de conversión diaria · promedio ${cvrAvg.toFixed(2)}%`
               : 'Tasa de conversión diaria'
           }
-          subtitle="compras / sesiones × 100 · línea punteada = avg 30d"
+          subtitle="compras / sesiones × 100 · línea punteada = promedio del período"
           source="amplitude_daily_metrics"
+          actions={<PeriodBadge range={range} />}
         >
-          {cvrData.length > 0 ? (
+          {serieErrored ? (
+            <WidgetState state="error" title="Error al cargar la conversión diaria">
+              La serie de Amplitude (getFunnelSerie) no respondió.
+            </WidgetState>
+          ) : cvrData.length > 0 ? (
             <LineChart
               data={cvrData}
               valueKey="value"
               labelKey="label"
               refValue={cvrAvg > 0 ? cvrAvg : undefined}
-              refLabel={`avg ${cvrAvg.toFixed(2)}%`}
+              refLabel={`promedio ${cvrAvg.toFixed(2)}%`}
               valueFmt={(v) => `${v.toFixed(2)}%`}
               tooltip={(d) => (
                 <TT
@@ -162,28 +178,11 @@ export function FunnelCharts({ stages, daily }: FunnelChartsProps) {
               )}
             />
           ) : (
-            <Empty text="Sin datos." />
+            <WidgetState state="empty" align="center" title="Sin conversión en el período" />
           )}
         </Card>
       </div>
     </>
-  )
-}
-
-function Empty({ text }: { text: string }) {
-  return (
-    <div
-      style={{
-        height: 180,
-        display: 'grid',
-        placeItems: 'center',
-        color: 'var(--fg-faint)',
-        fontSize: 12,
-        fontFamily: 'var(--font-mono-stack)',
-      }}
-    >
-      {text}
-    </div>
   )
 }
 

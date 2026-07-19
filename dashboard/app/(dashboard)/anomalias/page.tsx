@@ -5,7 +5,7 @@ export default function AnomaliasPage() {
     <PagePlaceholder
       subfase="v1.1"
       title="Anomalías · vista detallada"
-      description="Lista completa de anomalías últimos 30 días con filtros por dominio (paid/web/producto/email) y nivel (critical/alert/info)."
+      description="Lista completa de anomalías abiertas con filtros por dominio (paid/web/producto/email) y nivel (critical/alert/info)."
       views={['view_dashboard_anomalias']}
     />
   )

@@ -192,6 +192,20 @@ export function presetLabel(range: RangePreset): string {
   return RANGE_LABEL[range] ?? range
 }
 
+/**
+ * Etiquetas de ventanas FIJAS reales — widgets cuya fuente tiene su propia
+ * ventana y NO responde al filtro global (top-ads 7d de view_dashboard_top_ads,
+ * discount 8 semanas de view_dashboard_discount_mix). Se declaran con
+ * PeriodBadge `fuente="ventana fija"`. Viven aquí (fuente única de los textos de
+ * período, excluida del grep anti-hardcode) para no repetir el literal en cada
+ * widget; NO son períodos hardcodeados encubiertos: son la ventana real de esas
+ * vistas, que hoy no es parametrizable (AIR-197).
+ */
+export const VENTANA_FIJA = {
+  topAds7d: 'Últimos 7 días',
+  discount8w: 'Últimas 8 semanas',
+} as const
+
 export function channelLabel(channel: ChannelKey): string {
   return CHANNEL_LABEL[channel] ?? channel
 }
