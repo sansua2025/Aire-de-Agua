@@ -179,6 +179,9 @@ export default async function OverviewPage({ searchParams }: OverviewPageProps) 
   const sesiones = parseNumber(kpi?.sesiones)
   const cvr = parseNumber(kpi?.cvr)
   const roasRevenue = parseNumber(kpi?.roas_revenue)
+  // ROAS-margen: el margen y su cobertura_cogs se calculan en analytics.get_kpis /
+  // get_paid (atribución vía vista_atribucion_web_con_margen). Aquí SOLO se muestra
+  // el valor ya calculado en SQL — no se recomputa margen en TS.
   const roasMargen = parseNumber(kpi?.roas_margen)
 
   const deltaVentas = showDeltas ? pctDelta(ventasTotal, parseNumber(kpi?.prev_ventas)) : null
