@@ -33,13 +33,13 @@
         "p_end": "2026-05-31",
         "p_adset_id": null
       },
-      "descripcion": "ROAS real del paid de Meta en mayo 2026. CORREGIDO (AIR-65): revenue_real = SUM(revenue_venta) AGREGADO POR ADSET (gasto-adset de meta_ads_performance FULL OUTER JOIN revenue-adset de vista_atribucion_web_con_margen, paid); roas_real = revenue_real/gasto. NO suma la serie diaria anclada por fecha (eso subcuenta ~2x por conversion diferida). Nunca el valor reportado por el pixel.",
+      "descripcion": "ROAS real del paid de Meta en mayo 2026. CORREGIDO (AIR-65): revenue_real = SUM(revenue_venta) AGREGADO POR ADSET (gasto-adset de meta_ads_performance FULL OUTER JOIN revenue-adset de vista_atribucion_web_con_margen, paid); roas_real = revenue_real/gasto. NO suma la serie diaria anclada por fecha (eso subcuenta ~2x por conversion diferida). Nunca el valor reportado por el pixel. RE-GOLDEN 2026-07-18: backfill de gasto Meta mayo (2026-07-12) subio gasto 2513321->2739848; rpc==oracle verificado (mig 118).",
       "grano_fecha": "fijo",
       "esperado_seed": {
-        "gasto": 2513321,
+        "gasto": 2739848,
         "revenue_real": 3716968,
         "ventas": 22,
-        "roas_real": 1.4789
+        "roas_real": 1.3566
       },
       "recompute_sql_correcto": "WITH gasto_adset AS (SELECT m.adset_id, SUM(m.gasto) AS gasto FROM public.meta_ads_performance m WHERE m.fecha BETWEEN '2026-05-01' AND '2026-05-31' AND m.adset_id IS NOT NULL GROUP BY m.adset_id), rev_adset AS (SELECT w.adset_id, COUNT(*) AS ventas, SUM(w.revenue_venta) AS revenue FROM public.vista_atribucion_web_con_margen w WHERE (w.ordered_at AT TIME ZONE 'America/Bogota')::date BETWEEN '2026-05-01' AND '2026-05-31' AND w.canal_tipo = 'paid' AND w.adset_id IS NOT NULL GROUP BY w.adset_id) SELECT COALESCE(SUM(g.gasto),0)::numeric AS gasto, COALESCE(SUM(r.revenue),0)::numeric AS revenue_real, COALESCE(SUM(r.ventas),0)::bigint AS ventas, ROUND((SUM(r.revenue) / NULLIF(SUM(g.gasto),0))::numeric, 4) AS roas_real FROM gasto_adset g FULL OUTER JOIN rev_adset r ON r.adset_id = g.adset_id"
     },
