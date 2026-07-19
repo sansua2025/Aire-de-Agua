@@ -998,3 +998,72 @@ button:focus-visible, a.side-item:focus-visible, .side-item:focus-visible, .kpi:
   transition: opacity 0.15s ease-in;
   pointer-events: none;
 }
+
+/* =============================================================================
+ * Funnel v2 (AIR-208 · Figma 13:2). Widgets propios sobre tokens v2 (light+dark).
+ * ========================================================================== */
+
+/* Banner "DROP CRÍTICO" — la mayor fuga real del período */
+.fn-banner { padding: 16px 20px; gap: 8px; }
+.fn-banner-h { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.fn-banner-badge {
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.02em;
+  padding: 3px 8px; border-radius: 5px;
+  color: var(--warning); background: var(--warning-tint);
+  white-space: nowrap; flex-shrink: 0;
+}
+.fn-banner-badge.severe { color: var(--danger); background: var(--danger-tint); }
+.fn-banner-title { font-size: 18px; font-weight: 700; letter-spacing: -0.015em; color: var(--fg); text-wrap: balance; }
+.fn-banner-sub { font-size: 12.5px; color: var(--fg-2); line-height: 1.5; max-width: 76ch; }
+
+/* Caption / footer notes */
+.fn-caption { margin-top: 12px; font-size: 11px; color: var(--fg-3); line-height: 1.5; text-wrap: pretty; }
+.fn-foot { margin-top: var(--gap); font-size: 12px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
+
+/* Estado de la sesión — filas métrica · banda · valor */
+.fn-srow { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 10px; padding: 9px 0; }
+.fn-srow-label { font-size: 12.5px; color: var(--fg-2); }
+.fn-srow-band { font-size: 10px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.fn-srow-val { font-size: 13px; font-weight: 650; color: var(--fg); font-variant-numeric: tabular-nums; }
+.fn-srow-val.danger { color: var(--danger); }
+
+/* Plan de acción */
+.fn-plan { display: flex; flex-direction: column; gap: 12px; align-items: flex-start; }
+.fn-plan-text { font-size: 12.5px; color: var(--fg-2); line-height: 1.5; text-wrap: pretty; }
+.fn-cta {
+  display: inline-flex; align-items: center;
+  font-size: 12px; font-weight: 650;
+  padding: 8px 14px; border-radius: 8px;
+  background: var(--fg); color: var(--bg);
+  text-decoration: none; white-space: nowrap;
+  transition: opacity 0.15s;
+}
+.fn-cta:hover { opacity: 0.86; }
+
+/* Add-to-cart y CVR · 8 semanas — barras duales, escala compartida */
+.fn-weeks {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: 10px; padding-top: 8px; overflow-x: auto;
+}
+.fn-week { display: flex; flex-direction: column; align-items: center; gap: 5px; min-width: 30px; }
+.fn-week-top { font-size: 9px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.fn-week-bars { display: flex; align-items: flex-end; gap: 3px; }
+.fn-week-bar { width: 15px; border-radius: 3px 3px 2px 2px; }
+.fn-week-bar.atc { background: var(--accent-tint-2); }
+.fn-week-bar.cvr { background: var(--accent); }
+.fn-week-lbl { font-size: 10px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
+
+/* Conversión por dispositivo — PROPUESTA (sin números fingidos, G9) */
+.fn-propuesta {
+  display: flex; flex-direction: column; gap: 10px;
+  border: 1px dashed var(--border-2); border-radius: 12px;
+  background: var(--surface-2);
+  padding: 16px 18px;
+}
+.fn-propuesta-lead { font-size: 12.5px; color: var(--fg); line-height: 1.5; }
+.fn-propuesta-why { font-size: 11.5px; color: var(--fg-3); line-height: 1.55; text-wrap: pretty; }
+.fn-propuesta code {
+  font-size: 11px; padding: 1px 5px; border-radius: 5px;
+  background: var(--surface-3); color: var(--fg-2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
