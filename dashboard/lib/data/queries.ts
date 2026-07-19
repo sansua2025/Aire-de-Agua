@@ -105,25 +105,23 @@ export function getFunnelRange(args: RangeArgs) {
 }
 
 /**
- * Serie diaria del funnel para el trend de la página /funnel. get_funnel solo
- * devuelve el agregado del período; el detalle por día no tiene RPC, así que se
- * lee view_dashboard_funnel FILTRADA por rango (gte/lte sobre `fecha`) — NO es
- * ventana fija: responde a los filtros igual que las RPCs. amplitude no segmenta
- * canal, por eso este trend no toma `canal` (paridad con get_funnel).
+ * Serie semanal de add-to-cart rate + CVR web (AIR-208, G11 · mig 124) para el
+ * widget "Add-to-cart y CVR · 8 semanas". atc_rate/cvr_web se recomputan desde
+ * las SUMAS semanales EN SQL (no en TS, no promediando las GENERATED). Ventana
+ * FIJA de N semanas (independiente del filtro de período): la lectura del widget
+ * es "¿la fuga es nueva o estructural?", que necesita el histórico completo, no
+ * el rango seleccionado. Amplitude no segmenta por canal ⇒ la serie tampoco.
  */
-export function getFunnelSerie(args: Pick<RangeArgs, 'desde' | 'hasta'>) {
+export function getFunnelHistory(semanas = 8) {
   return unstable_cache(
     async () => {
-      const { data, error } = await supabase
-        .from('view_dashboard_funnel')
-        .select('*')
-        .gte('fecha', args.desde)
-        .lte('fecha', args.hasta)
-        .order('fecha', { ascending: true })
+      const { data, error } = await supabase.rpc('get_funnel_history', {
+        p_semanas: semanas,
+      })
       if (error) throw error
       return data ?? []
     },
-    ['funnel_serie', args.desde, args.hasta],
+    ['rpc_funnel_history', String(semanas)],
     { tags: ['funnel'], revalidate: CACHE_FALLBACK_SECONDS },
   )()
 }

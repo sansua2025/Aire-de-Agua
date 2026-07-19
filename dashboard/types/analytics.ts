@@ -506,6 +506,21 @@ export type RpcWtdPacingRow = {
   canal_aplicado: boolean
 }
 
+/**
+ * Row de analytics.get_funnel_history (AIR-208, mig 124). Serie semanal de
+ * add-to-cart rate + CVR web, ambos recomputados desde las SUMAS semanales en
+ * SQL (no promediando las GENERATED). Los numeric llegan como string por
+ * PostgREST; el front normaliza con parseNumber. No segmenta por canal.
+ */
+export type RpcFunnelHistoryRow = {
+  semana_inicio: string
+  semana_fin: string
+  semana_iso: number
+  sesiones: number | string
+  atc_rate: number | string | null
+  cvr_web: number | string | null
+}
+
 /** Una meta configurada (analytics.dashboard_targets). */
 export type RpcTarget = {
   valor: number | null
@@ -576,6 +591,8 @@ type AnalyticsFunctions = {
   get_targets: { Args: Record<PropertyKey, never>; Returns: RpcTargetsReturn }
   // AIR-207 (mig 123) — jsonb escalar: PostgREST devuelve el objeto directamente.
   get_inventory_summary: { Args: { p_desde: string; p_hasta: string }; Returns: RpcInventorySummary }
+  // AIR-208 (mig 124)
+  get_funnel_history: { Args: { p_semanas?: number }; Returns: RpcFunnelHistoryRow[] }
 }
 
 /**
