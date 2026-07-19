@@ -506,6 +506,53 @@ export type RpcWtdPacingRow = {
   canal_aplicado: boolean
 }
 
+/**
+ * Row de analytics.get_paid_daily (AIR-209, mig 125). Serie diaria gasto vs
+ * revenue ATRIBUIDO real (nunca pixel). numeric llega como string por PostgREST.
+ */
+export type RpcPaidDailyRow = {
+  fecha: string
+  gasto: number | string
+  revenue_atribuido: number | string
+  margen_atribuido: number | string
+  roas_revenue: number | string | null
+  roas_margen: number | string | null
+}
+
+/**
+ * Row de analytics.get_paid_ads (AIR-209, mig 125). Anuncios con gasto>0 en el
+ * rango. `compras` es Meta-reportado (engagement, no revenue). `senal` es una
+ * etiqueta determinista de decisión. NO incluye ROAS-margen por anuncio (la
+ * atribución real es a grano adset; prorratearla estaría prohibido).
+ */
+export type RpcPaidAdsRow = {
+  ad_id: string | null
+  ad_name: string | null
+  campaign_name: string | null
+  gasto: number | string
+  impresiones: number | string
+  clics: number | string
+  ctr_pct: number | string | null
+  atc: number | string
+  compras: number | string
+  compras_total: number | string
+  senal: 'sin_conversion' | 'lider' | 'activo' | string
+}
+
+/**
+ * Row de analytics.get_paid_signal_health (AIR-209, mig 125). Fila única con los
+ * checks deterministas de salud de la señal + cobertura de COGS del catálogo.
+ */
+export type RpcPaidSignalHealthRow = {
+  cobertura_cogs_pct: number | string | null
+  variantes_activas: number
+  variantes_con_cogs: number
+  pixel_bug_dias: number
+  pixel_bug_adsets: number
+  adsets_atribuidos: number
+  adsets_con_gasto: number
+}
+
 /** Una meta configurada (analytics.dashboard_targets). */
 export type RpcTarget = {
   valor: number | null
@@ -533,6 +580,10 @@ type AnalyticsFunctions = {
   // AIR-206 (mig 122)
   get_wtd_pacing: { Args: { p_hoy?: string | null; p_canal?: string | null }; Returns: RpcWtdPacingRow[] }
   get_targets: { Args: Record<PropertyKey, never>; Returns: RpcTargetsReturn }
+  // AIR-209 (mig 125) — Paid v2
+  get_paid_daily: { Args: { p_desde: string; p_hasta: string }; Returns: RpcPaidDailyRow[] }
+  get_paid_ads: { Args: { p_desde: string; p_hasta: string }; Returns: RpcPaidAdsRow[] }
+  get_paid_signal_health: { Args: { p_desde: string; p_hasta: string }; Returns: RpcPaidSignalHealthRow[] }
 }
 
 /**
