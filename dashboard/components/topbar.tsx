@@ -1,9 +1,10 @@
 'use client'
 
-import { useState, useRef, useEffect, ReactNode } from 'react'
+import { useState, useRef, useEffect, useTransition, ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter, usePathname, useSearchParams } from 'next/navigation'
 import { Icon } from './icon'
+import { parseFilters, toSearchParams, presetLabel, type Filters } from '@/lib/filters'
 
 const PAGE_META: Record<string, { title: string; week: string }> = {
   '/':           { title: 'Overview semanal',      week: 'KPIs de la semana en curso' },
@@ -30,7 +31,7 @@ const channelOptions = [
 ] as const
 
 const compareOptions = [
-  { value: 'prev_week', label: 'vs semana anterior',          disabled: false },
+  { value: 'prev_week', label: 'vs período anterior',         disabled: false },
   { value: 'prev_year', label: 'vs mismo período año ant.',   disabled: true,  note: 'sep 2026' },
   { value: 'goal',      label: 'vs meta',                     disabled: false },
   { value: 'none',      label: 'Sin comparativa',             disabled: false },
@@ -45,23 +46,42 @@ export function Topbar({ signOutSlot }: TopbarProps) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
 
-  const meta = PAGE_META[pathname] || { title: '—', week: '' }
-  const range = searchParams.get('range') || '7d'
-  const channel = searchParams.get('channel') || 'all'
-  const compare = searchParams.get('compare') || 'prev_week'
+  const [isPending, startTransition] = useTransition()
 
-  const updateParam = (key: string, value: string) => {
-    const params = new URLSearchParams(searchParams.toString())
-    params.set(key, value)
-    router.push(`${pathname}?${params.toString()}`, { scroll: false })
+  const meta = PAGE_META[pathname] || { title: '—', week: '' }
+  // Fuente de verdad = searchParams, parseada con el contrato compartido (AIR-194).
+  const filters = parseFilters(searchParams)
+  const { range, channel, compare } = filters
+
+  // Las páginas cableadas al filtro muestran el período efectivo en el topbar, no
+  // un texto fijo ("últimos 30 días" era engañoso al elegir 7d).
+  const FILTERED_PAGES = new Set(['/', '/funnel', '/paid', '/producto'])
+  const weekLabel = FILTERED_PAGES.has(pathname) ? presetLabel(range) : meta.week
+
+  // Refleja el estado pending en el contenedor .page mientras el server component
+  // re-renderiza (atenúa el contenido viejo en vez de un flash).
+  useEffect(() => {
+    const content = document.querySelector('.content')
+    if (!content) return
+    content.classList.toggle('is-pending', isPending)
+  }, [isPending])
+
+  const updateParam = (key: keyof Filters, value: string) => {
+    // Serializer compartido con las pages: URL limpia (omite defaults) y
+    // re-render server-side vía replace (sin apilar historia ni saltar scroll).
+    const next = { ...filters, [key]: value } as Filters
+    const qs = toSearchParams(next).toString()
+    startTransition(() => {
+      router.replace(`${pathname}${qs ? `?${qs}` : ''}`, { scroll: false })
+    })
   }
 
   const channelDisabled = pathname.startsWith('/paid') || pathname.startsWith('/email')
 
   return (
-    <header className="topbar">
+    <header className="topbar" aria-busy={isPending}>
       <span className="topbar-title">{meta.title}</span>
-      {meta.week && <span className="topbar-week tnum">{meta.week}</span>}
+      {weekLabel && <span className="topbar-week tnum">{weekLabel}</span>}
 
       <span className="topbar-spacer" />
 

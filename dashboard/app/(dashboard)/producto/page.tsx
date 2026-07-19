@@ -1,4 +1,4 @@
-import { KpiTile } from '@/components/ui'
+import { KpiTile, Callout } from '@/components/ui'
 import {
   ProductoCharts,
   type TopSkuDatum,
@@ -9,11 +9,30 @@ import {
   type InventoryItem,
 } from '@/components/producto/inventory-table'
 import {
-  getTopSkus,
+  getTopSkusRange,
   getInventoryHealth,
   getDiscountMix,
 } from '@/lib/data/queries'
+import {
+  parseFilters,
+  resolveRange,
+  channelToToken,
+  describeFilters,
+  formatRangeCompact,
+  channelLabel,
+} from '@/lib/filters'
 import { formatCop, formatNumber } from '@/lib/format'
+
+/**
+ * Producto y Comercial · Dashboard v2 (AIR-194) — Server Component.
+ *
+ * Top SKUs desde analytics.get_top_skus(desde,hasta,limit,canal) — responde a
+ * período y canal. Inventario (estado actual) y mix de descuento (tendencia
+ * semanal) no tienen RPC parametrizada y conservan su fuente: son vistas de
+ * estado/serie, no dependen del rango de ventas.
+ *
+ * Errores (AIR-196): sin catch silencioso.
+ */
 
 function parseNumber(v: unknown): number | null {
   if (v == null) return null
@@ -24,14 +43,48 @@ function parseNumber(v: unknown): number | null {
 const shortLabel = (label: string | null) =>
   (label || '—').replace(/^\d{4}-/, '')
 
-export default async function ProductoPage() {
-  const [topSkusRaw, inventoryRaw, discountRaw] = await Promise.all([
-    getTopSkus().catch(() => []),
-    getInventoryHealth().catch(() => []),
-    getDiscountMix().catch(() => []),
-  ])
+interface ProductoPageProps {
+  searchParams: Promise<Record<string, string | string[] | undefined>>
+}
 
-  // Top SKUs
+export default async function ProductoPage({ searchParams }: ProductoPageProps) {
+  const filters = parseFilters(await searchParams)
+  const range = resolveRange(filters.range)
+  const canal = channelToToken(filters.channel)
+  const periodoDesc = describeFilters(filters, range)
+  const periodoCompact = formatRangeCompact(range)
+  const canalActivo = filters.channel !== 'all'
+
+  let topSkusRaw: Awaited<ReturnType<typeof getTopSkusRange>>
+  let inventoryRaw: Awaited<ReturnType<typeof getInventoryHealth>>
+  let discountRaw: Awaited<ReturnType<typeof getDiscountMix>>
+  try {
+    ;[topSkusRaw, inventoryRaw, discountRaw] = await Promise.all([
+      getTopSkusRange({ desde: range.desde, hasta: range.hasta, canal }, 10),
+      getInventoryHealth(),
+      getDiscountMix(),
+    ])
+  } catch (err) {
+    console.error('[producto] fallo al cargar datos:', err)
+    return (
+      <>
+        <div className="page-hero">
+          <div>
+            <h1>Producto · no se pudieron cargar los datos</h1>
+            <div className="lede">
+              Una fuente no respondió. Reintenta en unos minutos; si persiste, revisa los permisos de
+              analytics.get_top_skus / las vistas de inventario o el estado de Supabase.
+            </div>
+          </div>
+        </div>
+        <Callout kind="danger" title="Error al cargar Producto y Comercial">
+          {err instanceof Error ? err.message : 'Error desconocido consultando el catálogo.'}
+        </Callout>
+      </>
+    )
+  }
+
+  // Top SKUs del período (get_top_skus).
   const topSkus: TopSkuDatum[] = (topSkusRaw || []).map((s) => ({
     producto_titulo: s.producto_titulo || '—',
     revenue: parseNumber(s.revenue) ?? 0,
@@ -46,7 +99,7 @@ export default async function ProductoPage() {
     tipo: s.tipo,
   }))
 
-  // Inventory health
+  // Inventory health (estado actual del catálogo — sin dimensión de rango).
   const inventory: InventoryItem[] = (inventoryRaw || []).map((i) => ({
     producto_id: i.producto_id,
     producto_titulo: i.producto_titulo,
@@ -63,7 +116,6 @@ export default async function ProductoPage() {
     capital_inmovilizado: parseNumber(i.capital_inmovilizado),
   }))
 
-  // KPIs comerciales agregados
   const stockoutsCriticos = inventory.filter((i) => i.estado_salud === 'stockout_critico').length
   const stockoutsInminentes = inventory.filter((i) => i.estado_salud === 'stockout_inminente').length
   const deadstockSkus = inventory.filter((i) => i.estado_salud === 'deadstock').length
@@ -71,16 +123,13 @@ export default async function ProductoPage() {
     .filter((i) => i.estado_salud === 'deadstock')
     .reduce((sum, i) => sum + (i.capital_inmovilizado ?? 0), 0)
 
-  const ventasUltSemana = inventory.reduce((s, i) => s + (i.unidades_vendidas_14d ?? 0), 0)
   const totalSkusVendiendo = inventory.filter((i) => (i.unidades_vendidas_14d ?? 0) > 0).length
 
-  // Top SKUs aggregates
   const margenPromedio = topSkus.length > 0
     ? topSkus.reduce((s, t) => s + (t.margen_pct ?? 0), 0) / topSkus.length
     : 0
   const revenueTop = topSkus.reduce((s, t) => s + t.revenue, 0)
 
-  // Discount trend
   const discountTrend: DiscountTrendDatum[] = (discountRaw || []).map((d) => ({
     w: shortLabel(d.semana_label),
     rate: parseNumber(d.discount_rate_pct) ?? 0,
@@ -91,7 +140,6 @@ export default async function ProductoPage() {
     is_current: !!d.is_current,
   }))
 
-  // Action title dinámico
   const actionTitle = (() => {
     if (stockoutsCriticos > 0) {
       return `${stockoutsCriticos} SKUs en stockout crítico — perdiendo ventas`
@@ -108,17 +156,24 @@ export default async function ProductoPage() {
         <div>
           <h1>{actionTitle}</h1>
           <div className="lede">
-            Salud del catálogo en tiempo real desde Shopify webhooks. Stockouts perden venta inmediata,
+            Salud del catálogo en tiempo real desde Shopify webhooks. Stockouts pierden venta inmediata,
             deadstock inmoviliza capital. Top SKUs muestra rank dual revenue/margen — los #1 por revenue
             no siempre son los más rentables.
           </div>
         </div>
         <div className="meta-block">
+          <span>Top SKUs · <span className="v">{periodoDesc}</span></span>
           <span>SKUs alerta · <span className="v">{stockoutsCriticos + stockoutsInminentes + deadstockSkus}</span></span>
-          <span>Total catálogo · <span className="v">{formatNumber(inventory.length + 135 /* saludables no aparecen */)}</span></span>
           <span>Margen avg top · <span className="v">{margenPromedio.toFixed(1)}%</span></span>
         </div>
       </div>
+
+      {canalActivo && (
+        <Callout kind="accent" title={`Top SKUs filtrados · ${channelLabel(filters.channel)}`}>
+          Los Top SKUs se restringen a ventas web atribuidas a este canal. El inventario y la tendencia
+          de descuento son de estado/serie y no se segmentan por canal.
+        </Callout>
+      )}
 
       {/* KPI tiles comerciales */}
       <div className="grid grid-kpis">
@@ -154,7 +209,7 @@ export default async function ProductoPage() {
           goodDirection="down"
         />
         <KpiTile
-          label="Top revenue 7d"
+          label="Top revenue"
           value={(revenueTop / 1_000_000).toFixed(2)}
           unit="M COP"
           icon="dollar"
@@ -169,7 +224,7 @@ export default async function ProductoPage() {
       </div>
 
       {/* Charts: top SKUs + discount trend */}
-      <ProductoCharts topSkus={topSkus} discountTrend={discountTrend} />
+      <ProductoCharts topSkus={topSkus} discountTrend={discountTrend} periodoLabel={periodoCompact} />
 
       {/* Inventory table con filtros */}
       <div style={{ marginTop: 14 }}>
