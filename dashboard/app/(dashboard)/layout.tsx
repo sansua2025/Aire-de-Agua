@@ -1,8 +1,13 @@
 import { auth, signOut } from '@/auth'
 import { redirect } from 'next/navigation'
-import { Sidebar } from '@/components/sidebar'
+import { Sidebar, type SidebarCounts } from '@/components/sidebar'
 import { Topbar } from '@/components/topbar'
-import { getFreshness, type FreshnessRow } from '@/lib/data/queries'
+import {
+  getFreshness,
+  getColaAgrupada,
+  getAnomalias,
+  type FreshnessRow,
+} from '@/lib/data/queries'
 
 export default async function DashboardLayout({
   children,
@@ -22,6 +27,15 @@ export default async function DashboardLayout({
     console.error('[layout] fallo al cargar frescura de datos:', err)
   }
 
+  // Contadores de nav (AIR-206): pendientes de la cola + anomalías. Aislados por
+  // fuente: si una falla, su badge queda en null (se oculta) sin tumbar el shell.
+  const counts: SidebarCounts = { pendientes: null, anomalias: null }
+  const [colaR, anomR] = await Promise.allSettled([getColaAgrupada(), getAnomalias()])
+  if (colaR.status === 'fulfilled') counts.pendientes = colaR.value.length
+  else console.error('[layout] fallo al contar la cola:', colaR.reason)
+  if (anomR.status === 'fulfilled') counts.anomalias = anomR.value.length
+  else console.error('[layout] fallo al contar anomalías:', anomR.reason)
+
   const signOutSlot = (
     <form
       action={async () => {
@@ -37,7 +51,7 @@ export default async function DashboardLayout({
 
   return (
     <div className="app">
-      <Sidebar freshness={freshness} />
+      <Sidebar freshness={freshness} counts={counts} />
       <div className="main">
         <Topbar signOutSlot={signOutSlot} />
         <div className="content">

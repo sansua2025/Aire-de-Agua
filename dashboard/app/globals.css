@@ -615,10 +615,174 @@ body {
 .dstat .v { font-weight: 600; font-variant-numeric: tabular-nums; }
 
 /* ---------- Focus ---------- */
-button:focus-visible, a.side-item:focus-visible, .side-item:focus-visible, .kpi:focus-visible {
+button:focus-visible, a.side-item:focus-visible, .side-item:focus-visible, .kpi:focus-visible,
+.dq-btn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+/* =============================================================================
+ * 5. Overview · Founder Cockpit v2 (AIR-206) — hero pacing, cola de decisión,
+ *    KPI meta, semana cerrada, día-bars. Todo sobre tokens v2 (light + dark).
+ * ========================================================================== */
+
+/* Separación vertical entre bloques del Overview */
+.ov-block { margin-top: var(--gap); }
+
+/* Nav item WIP (P&L) — inerte, atenuado */
+.side-item-wip { cursor: default; opacity: 0.7; }
+.side-item-wip:hover { background: none; color: var(--fg-2); }
+
+/* ---------- Hero pacing ---------- */
+.hero-pacing {
+  display: grid;
+  grid-template-columns: 1fr minmax(220px, 260px);
+  gap: 28px;
+  align-items: stretch;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
+  padding: 22px 24px;
+}
+.hp-left { min-width: 0; display: flex; flex-direction: column; }
+.hp-label { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.hp-live {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 11.5px; font-weight: 700; letter-spacing: 0.03em;
+  color: var(--success);
+  text-transform: uppercase;
+}
+.hp-live-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--success); flex-shrink: 0;
+}
+.hp-range { font-size: 12.5px; color: var(--fg-3); }
+.hp-num { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+.hp-value {
+  font-size: clamp(30px, 3.4vw, 42px); font-weight: 700;
+  letter-spacing: -0.03em; line-height: 1;
+}
+.hp-delta {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 13px; font-weight: 650;
+  padding: 3px 10px; border-radius: 999px;
+  font-variant-numeric: tabular-nums;
+}
+.hp-delta.up { color: var(--success); background: var(--success-tint); }
+.hp-delta.down { color: var(--danger); background: var(--danger-tint); }
+.hp-proj { margin-top: 14px; font-size: 13px; color: var(--fg-2); line-height: 1.45; }
+.hp-progress { margin-top: 16px; }
+.hp-bar-bg { height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.hp-bar-fill {
+  height: 100%; border-radius: 999px; background: var(--accent);
+  transition: width 0.5s cubic-bezier(0.2, 0, 0, 1);
+}
+.hp-bar-legend {
+  margin-top: 8px;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  font-size: 12px; color: var(--fg-3); flex-wrap: wrap;
+}
+.hp-bar-legend > span:first-child { color: var(--fg-2); font-weight: 550; font-variant-numeric: tabular-nums; }
+.hp-band { text-align: right; }
+
+.hp-chart { display: flex; flex-direction: column; border-left: 1px solid var(--border); padding-left: 24px; }
+.hp-chart-title { font-size: 12px; color: var(--fg-3); font-weight: 550; margin-bottom: 12px; }
+.hp-bars { flex: 1; display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; align-items: end; min-height: 96px; }
+.hp-day { display: flex; flex-direction: column; align-items: center; gap: 6px; height: 100%; justify-content: flex-end; }
+.hp-day-track { width: 100%; flex: 1; display: flex; align-items: flex-end; }
+.hp-day-fill {
+  width: 100%; border-radius: 4px 4px 2px 2px;
+  background: var(--accent-tint-2);
+  min-height: 2px;
+}
+.hp-day-fill.current { background: var(--accent); }
+.hp-day-lbl { font-size: 11px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.hp-day-lbl.current { color: var(--accent-deep); font-weight: 650; }
+
+@media (max-width: 900px) {
+  .hero-pacing { grid-template-columns: 1fr; }
+  .hp-chart { border-left: none; padding-left: 0; border-top: 1px solid var(--border); padding-top: 18px; }
+}
+
+/* ---------- Cola de decisión ---------- */
+.dq-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.dq-head h2 { font-size: 16px; font-weight: 650; letter-spacing: -0.012em; }
+.dq-count {
+  font-size: 12px; font-weight: 600; color: var(--fg-2);
+  background: var(--surface-2); padding: 2px 9px; border-radius: 999px;
+}
+.dq-rule { flex: 1; height: 1px; background: var(--border); }
+.dq-link { font-size: 13px; font-weight: 550; color: var(--accent-deep); text-decoration: none; white-space: nowrap; }
+.dq-link:hover { text-decoration: underline; }
+.dq-error {
+  margin-bottom: 12px; padding: 10px 14px; border-radius: 10px;
+  background: var(--danger-tint); color: var(--danger);
+  font-size: 12.5px; font-weight: 550;
+}
+.dq-empty {
+  padding: 22px; border-radius: var(--r-card);
+  background: var(--surface); border: 1px dashed var(--border);
+  color: var(--fg-3); font-size: 13px; text-align: center;
+}
+.dq-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--gap); }
+@media (max-width: 1000px) { .dq-cards { grid-template-columns: 1fr; } }
+.dq-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r-card); box-shadow: var(--shadow-card);
+  padding: 16px; display: flex; flex-direction: column; gap: 8px;
+  border-top: 3px solid var(--border-2);
+}
+.dq-card.sev-critico { border-top-color: var(--danger); }
+.dq-card.sev-alerta { border-top-color: var(--warning); }
+.dq-card.sev-oportunidad { border-top-color: var(--success); }
+.dq-card-h { display: flex; align-items: center; gap: 10px; }
+.dq-sev {
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.02em;
+  padding: 2px 8px; border-radius: 5px;
+}
+.dq-sev.sev-critico { color: var(--danger); background: var(--danger-tint); }
+.dq-sev.sev-alerta { color: var(--warning); background: var(--warning-tint); }
+.dq-sev.sev-oportunidad { color: var(--success); background: var(--success-tint); }
+.dq-dom { font-size: 11px; font-weight: 600; color: var(--fg-3); letter-spacing: 0.02em; }
+.dq-title { font-size: 14px; font-weight: 650; color: var(--fg); line-height: 1.35; text-wrap: pretty; }
+.dq-evidence { font-size: 12.5px; color: var(--fg-3); line-height: 1.4; flex: 1; }
+.dq-btns { display: flex; gap: 8px; margin-top: 4px; }
+.dq-btn {
+  font-family: inherit; font-size: 12.5px; font-weight: 600;
+  padding: 6px 16px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface); color: var(--fg-2);
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.dq-btn:hover:not(:disabled) { border-color: var(--border-2); color: var(--fg); background: var(--surface-2); }
+.dq-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.dq-btn.primary:hover:not(:disabled) { background: var(--accent-deep); border-color: var(--accent-deep); }
+.dq-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ---------- KPI meta line ---------- */
+.kpi-meta {
+  font-size: 11.5px; color: var(--fg-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* ---------- Semana cerrada · S28 ---------- */
+.s28-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+.s28-kpi { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.s28-k { font-size: 11.5px; color: var(--fg-3); }
+.s28-v { font-size: 19px; font-weight: 700; letter-spacing: -0.02em; line-height: 1; }
+.s28-d { font-size: 11.5px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.s28-d.up { color: var(--success); }
+.s28-d.down { color: var(--danger); }
+.s28-ai {
+  background: var(--accent-tint);
+  border: 1px solid color-mix(in oklab, var(--accent) 18%, var(--border));
+  border-radius: 12px; padding: 12px 14px;
+}
+.s28-ai-label { font-size: 11.5px; font-weight: 650; color: var(--accent-deep); }
+.s28-ai-text { margin-top: 6px; font-size: 12.5px; color: var(--fg); line-height: 1.55; text-wrap: pretty; }
+
+@media (max-width: 640px) { .s28-kpis { grid-template-columns: repeat(2, 1fr); } }
 
 /* =============================================================================
  * 4. Clases legacy preservadas (páginas aún no rediseñadas: paid, producto,

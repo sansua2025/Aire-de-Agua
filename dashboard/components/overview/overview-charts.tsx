@@ -24,12 +24,14 @@ export interface RoasDatum {
 
 interface OverviewChartsProps {
   ventasChartData: VentasDatum[]
+  /** Meta diaria en millones COP (AIR-206) — línea de referencia. */
+  metaDiariaM?: number
 }
 
-export function OverviewVentasChart({ ventasChartData }: OverviewChartsProps) {
+export function OverviewVentasChart({ ventasChartData, metaDiariaM }: OverviewChartsProps) {
   if (ventasChartData.length === 0) {
     return (
-      <EmptyMini text="Sin historial de weekly_snapshot. Esperando primera corrida del Loop Weekly." />
+      <EmptyMini text="Sin ventas en el período. La consulta corrió y no devolvió días con ventas." />
     )
   }
   return (
@@ -37,10 +39,11 @@ export function OverviewVentasChart({ ventasChartData }: OverviewChartsProps) {
       data={ventasChartData}
       valueKey="v"
       labelKey="w"
-      valueFmt={(v) => `$${v.toFixed(1)}M`}
+      valueFmt={(v) => `$${v.toFixed(2)}M`}
       accentColor="var(--accent)"
       mutedColor="var(--accent-tint-2)"
-      tooltip={(d) => <TT title={`Semana ${d.w}`} rows={[{ k: 'Ventas', v: d.label }]} />}
+      refValue={metaDiariaM}
+      tooltip={(d) => <TT title={d.w} rows={[{ k: 'Ventas', v: d.label }]} />}
     />
   )
 }

@@ -11,26 +11,44 @@ interface NavItem {
   label: string
   badge?: string
   count?: number
+  /** WIP: se pinta como ítem inerte (sin navegación) con badge — p.ej. P&L. */
+  wip?: boolean
 }
 
-// Sección "Analítica" — las páginas de datos por dominio
-const navAnalitica: NavItem[] = [
+/** Contadores en vivo para los badges de nav (AIR-206). null = no disponible. */
+export interface SidebarCounts {
+  pendientes: number | null
+  anomalias: number | null
+}
+
+// OPERACIÓN — páginas de datos por dominio (Figma Founder Cockpit v2, node 1:3).
+// P&L es WIP hasta que AIR-200 se implemente en el dashboard.
+const navOperacion: NavItem[] = [
   { href: '/',         icon: 'home',     label: 'Overview' },
   { href: '/producto', icon: 'shopping', label: 'Producto' },
   { href: '/funnel',   icon: 'funnel',   label: 'Funnel' },
   { href: '/paid',     icon: 'target',   label: 'Paid' },
   { href: '/email',    icon: 'mail',     label: 'Email', badge: 'WIP' },
+  { href: '/pnl',      icon: 'dollar',   label: 'P&L',   badge: 'WIP', wip: true },
 ]
 
-// Sección "Inteligencia" — el Cerebro y diagnóstico
-const navInteligencia: NavItem[] = [
-  { href: '/ai',        icon: 'sparkles', label: 'el Cerebro' },
-  { href: '/anomalias', icon: 'alert',    label: 'Anomalías' },
-  { href: '/fuentes',   icon: 'grid',     label: 'Fuentes' },
-]
-
-export function Sidebar({ freshness }: { freshness: FreshnessRow[] | null }) {
+export function Sidebar({
+  freshness,
+  counts,
+}: {
+  freshness: FreshnessRow[] | null
+  counts?: SidebarCounts
+}) {
   const pathname = usePathname()
+
+  // INTELIGENCIA — el Cerebro / Anomalías con contador en vivo (si disponible).
+  const navInteligencia: NavItem[] = [
+    { href: '/ai',        icon: 'sparkles', label: 'el Cerebro', count: counts?.pendientes ?? undefined },
+    { href: '/anomalias', icon: 'alert',    label: 'Anomalías',  count: counts?.anomalias ?? undefined },
+  ]
+  const navSistema: NavItem[] = [
+    { href: '/fuentes', icon: 'grid', label: 'Fuentes de datos' },
+  ]
 
   return (
     <nav className="sidebar" aria-label="Navegación principal">
@@ -45,13 +63,18 @@ export function Sidebar({ freshness }: { freshness: FreshnessRow[] | null }) {
       </Link>
 
       <div className="side-nav">
-        <div className="side-section">Analítica</div>
-        {navAnalitica.map((it) => (
+        <div className="side-section">Operación</div>
+        {navOperacion.map((it) => (
           <NavLink key={it.href} item={it} active={isActive(pathname, it.href)} />
         ))}
 
         <div className="side-section">Inteligencia</div>
         {navInteligencia.map((it) => (
+          <NavLink key={it.href} item={it} active={isActive(pathname, it.href)} />
+        ))}
+
+        <div className="side-section">Sistema</div>
+        {navSistema.map((it) => (
           <NavLink key={it.href} item={it} active={isActive(pathname, it.href)} />
         ))}
       </div>
@@ -67,18 +90,33 @@ function isActive(pathname: string, href: string): boolean {
 }
 
 function NavLink({ item, active }: { item: NavItem; active: boolean }) {
-  return (
-    <Link
-      href={item.href}
-      className={`side-item${active ? ' active' : ''}`}
-      title={item.label}
-    >
+  const inner = (
+    <>
       <span className="side-icon">
         <Icon name={item.icon} size={18} />
       </span>
       <span>{item.label}</span>
       {item.badge && <span className="side-badge">{item.badge}</span>}
       {item.count != null && <span className="side-count">{item.count}</span>}
+    </>
+  )
+
+  // WIP: ítem inerte (sin navegación) — la pantalla aún no existe (P&L / AIR-200).
+  if (item.wip) {
+    return (
+      <span className="side-item side-item-wip" title={`${item.label} · en construcción`} aria-disabled="true">
+        {inner}
+      </span>
+    )
+  }
+
+  return (
+    <Link
+      href={item.href}
+      className={`side-item${active ? ' active' : ''}`}
+      title={item.label}
+    >
+      {inner}
     </Link>
   )
 }

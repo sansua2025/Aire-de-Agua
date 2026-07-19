@@ -481,6 +481,42 @@ export type RpcChannelsMixRow = {
 
 type RangeArgs = { p_desde: string; p_hasta: string; p_canal?: string | null }
 
+/**
+ * Row de analytics.get_wtd_pacing (AIR-206, mig 122). Pacing de la semana en
+ * curso. Los campos numeric/bigint llegan como string por PostgREST; los int4
+ * (semana/dias) como number. El front normaliza con parseNumber.
+ */
+export type RpcWtdPacingRow = {
+  semana_iso: number
+  lunes: string
+  hoy: string
+  dias_transcurridos: number
+  dias_restantes: number
+  ventas_wtd: number | string
+  ordenes_wtd: number | string
+  ventas_prev_wtd: number | string
+  ordenes_prev_wtd: number | string
+  delta_pct: number | string | null
+  proyeccion_cierre: number | string | null
+  meta_semanal: number | string | null
+  pct_meta: number | string | null
+  falta_para_meta: number | string | null
+  prom_8sem: number | string | null
+  banda_8sem: 'sobre' | 'dentro' | 'bajo' | null
+  canal_aplicado: boolean
+}
+
+/** Una meta configurada (analytics.dashboard_targets). */
+export type RpcTarget = {
+  valor: number | null
+  banda_min: number | null
+  banda_max: number | null
+  unidad: 'COP' | 'x' | '%' | string
+  etiqueta: string
+}
+/** Return de analytics.get_targets — jsonb {metrica -> RpcTarget}. */
+export type RpcTargetsReturn = Record<string, RpcTarget>
+
 type AnalyticsFunctions = {
   get_kpis: { Args: RangeArgs; Returns: RpcKpisRow[] }
   get_funnel: { Args: RangeArgs; Returns: RpcFunnelRow[] }
@@ -494,6 +530,9 @@ type AnalyticsFunctions = {
     Returns: RpcVentasSerieRow[]
   }
   get_channels_mix: { Args: RangeArgs; Returns: RpcChannelsMixRow[] }
+  // AIR-206 (mig 122)
+  get_wtd_pacing: { Args: { p_hoy?: string | null; p_canal?: string | null }; Returns: RpcWtdPacingRow[] }
+  get_targets: { Args: Record<PropertyKey, never>; Returns: RpcTargetsReturn }
 }
 
 /**

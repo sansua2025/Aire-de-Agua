@@ -15,6 +15,8 @@ export interface OverviewKpi {
   goodDirection?: 'up' | 'down' | 'neutral'
   deltaNote?: string
   sparkline?: number[]
+  /** Línea de meta/banda (AIR-206) — p.ej. "Meta sem: $3.0M". Honesta: ausente si no hay meta. */
+  meta?: string
   /** Datos de drill; si está ausente, el tile sigue abriendo el panel con fallback honesto */
   drill: KpiDrillData
 }
@@ -44,6 +46,7 @@ export function OverviewKpis({ kpis }: OverviewKpisProps) {
             deltaFormat={k.deltaFormat}
             goodDirection={k.goodDirection}
             deltaNote={k.deltaNote}
+            meta={k.meta}
             sparkline={
               k.sparkline && k.sparkline.length > 0 ? (
                 <Sparkline data={k.sparkline} autoColor />

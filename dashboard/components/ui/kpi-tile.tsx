@@ -14,6 +14,8 @@ interface KpiTileProps {
   deltaNote?: string
   /** Slot para sparkline */
   sparkline?: ReactNode
+  /** Línea de meta/banda bajo el foot (AIR-206) — p.ej. "Meta sem: $3.0M". */
+  meta?: ReactNode
   onClick?: () => void
   active?: boolean
   className?: string
@@ -34,6 +36,7 @@ export function KpiTile({
   goodDirection = 'up',
   deltaNote,
   sparkline,
+  meta,
   onClick,
   active = false,
   className = '',
@@ -74,6 +77,8 @@ export function KpiTile({
         )}
         {sparkline && <span className="kpi-spark">{sparkline}</span>}
       </span>
+
+      {meta && <span className="kpi-meta">{meta}</span>}
     </Tag>
   )
 }

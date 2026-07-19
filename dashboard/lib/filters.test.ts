@@ -98,6 +98,23 @@ describe('resolución de fechas en America/Bogota', () => {
     const now = new Date('2026-07-03T12:00:00Z')
     expect(resolveRange('7d', now)).toEqual({ desde: '2026-06-27', hasta: '2026-07-03', dias: 7 })
   })
+
+  it('preset "Sem. en curso" = lunes ISO → hoy (AIR-206)', () => {
+    // 2026-07-19 es domingo → lunes ISO de su semana = 2026-07-13. dias=7.
+    const dom = new Date('2026-07-19T12:00:00Z')
+    expect(resolveRange('week_current', dom)).toEqual({ desde: '2026-07-13', hasta: '2026-07-19', dias: 7 })
+    // 2026-07-15 es miércoles → mismo lunes 2026-07-13, hasta=hoy, dias=3.
+    const mie = new Date('2026-07-15T12:00:00Z')
+    expect(resolveRange('week_current', mie)).toEqual({ desde: '2026-07-13', hasta: '2026-07-15', dias: 3 })
+    // 2026-07-13 es lunes → desde==hasta, dias=1.
+    const lun = new Date('2026-07-13T12:00:00Z')
+    expect(resolveRange('week_current', lun)).toEqual({ desde: '2026-07-13', hasta: '2026-07-13', dias: 1 })
+  })
+
+  it('preset "hoy" = un solo día', () => {
+    const now = new Date('2026-07-18T12:00:00Z')
+    expect(resolveRange('hoy', now)).toEqual({ desde: '2026-07-18', hasta: '2026-07-18', dias: 1 })
+  })
 })
 
 describe('channelToToken (UI → RPC AIR-193)', () => {

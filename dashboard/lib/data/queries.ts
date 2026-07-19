@@ -1,6 +1,7 @@
 import 'server-only'
 import { unstable_cache } from 'next/cache'
 import { supabase } from '@/lib/supabase/server'
+import type { RpcWtdPacingRow, RpcTarget, RpcTargetsReturn } from '@/types/analytics'
 
 /**
  * Capa de queries server-side cacheadas con tags.
@@ -159,6 +160,51 @@ export function getTopSkusRange(args: RangeArgs, limit = 10) {
     { tags: ['producto'], revalidate: CACHE_FALLBACK_SECONDS },
   )()
 }
+
+// =============================================================================
+// Overview v2 · pacing WTD + metas (AIR-206, migración 122)
+// =============================================================================
+
+/** Pacing de la semana en curso — fila única de analytics.get_wtd_pacing. */
+export type WtdPacing = RpcWtdPacingRow
+/** Una meta configurada (analytics.dashboard_targets). */
+export type Target = RpcTarget
+/** Metas del cockpit (analytics.get_targets). */
+export type Targets = RpcTargetsReturn
+
+/**
+ * Pacing de la semana en curso (AIR-206, G2). `hoy` se pasa explícito (resuelto
+ * en America/Bogota por lib/filters) para que el cache se keye por día y la RPC
+ * no dependa del reloj UTC del server. El canal responde al filtro global.
+ */
+export function getWtdPacing(args: { hoy: string; canal: string | null }) {
+  return unstable_cache(
+    async (): Promise<WtdPacing | null> => {
+      const { data, error } = await supabase.rpc('get_wtd_pacing', {
+        p_hoy: args.hoy,
+        p_canal: args.canal,
+      })
+      if (error) throw error
+      return (data?.[0] ?? null) as WtdPacing | null
+    },
+    ['rpc_wtd_pacing', args.hoy, canalKey(args.canal)],
+    { tags: ['weekly', 'daily'], revalidate: CACHE_FALLBACK_SECONDS },
+  )()
+}
+
+/**
+ * Metas/bandas del cockpit (AIR-206, G1). jsonb {metrica -> {...}}. Tag 'weekly':
+ * cambian rara vez; cualquier revalidación semanal las refresca. Sin filtro.
+ */
+export const getTargets = unstable_cache(
+  async (): Promise<Targets> => {
+    const { data, error } = await supabase.rpc('get_targets')
+    if (error) throw error
+    return (data ?? {}) as Targets
+  },
+  ['rpc_targets'],
+  { tags: ['weekly'], revalidate: CACHE_FALLBACK_SECONDS },
+)
 
 // =============================================================================
 // Frescura de datos (sidebar · AIR-197)
