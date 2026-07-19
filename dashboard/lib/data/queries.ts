@@ -1,7 +1,7 @@
 import 'server-only'
 import { unstable_cache } from 'next/cache'
 import { supabase } from '@/lib/supabase/server'
-import type { RpcWtdPacingRow, RpcTarget, RpcTargetsReturn } from '@/types/analytics'
+import type { RpcWtdPacingRow, RpcTarget, RpcTargetsReturn, RpcInventorySummary } from '@/types/analytics'
 
 /**
  * Capa de queries server-side cacheadas con tags.
@@ -157,6 +157,30 @@ export function getTopSkusRange(args: RangeArgs, limit = 10) {
       return data ?? []
     },
     ['rpc_top_skus', args.desde, args.hasta, String(limit), canalKey(args.canal)],
+    { tags: ['producto'], revalidate: CACHE_FALLBACK_SECONDS },
+  )()
+}
+
+/**
+ * Resumen de inventario con $ (AIR-207, G4 · migración 123). jsonb con KPIs de
+ * stockout/deadstock, "stockouts que cuestan plata" (revenue 30d por producto en
+ * riesgo), badge de stock por producto y salud por colección. TODA la lógica de
+ * dinero (deadstock 60d, capital, revenue 30d) vive en la RPC — el cliente solo
+ * formatea. p_desde/p_hasta = ventana del filtro para "SKUs vendiendo"; el resto
+ * es foto actual (hoy America/Bogota). Sin canal (inventario no se segmenta).
+ * Cache keyeado por ventana; tag 'producto' (webhooks E2 Shopify lo invalidan).
+ */
+export function getInventorySummary(args: Pick<RangeArgs, 'desde' | 'hasta'>) {
+  return unstable_cache(
+    async (): Promise<RpcInventorySummary | null> => {
+      const { data, error } = await supabase.rpc('get_inventory_summary', {
+        p_desde: args.desde,
+        p_hasta: args.hasta,
+      })
+      if (error) throw error
+      return (data ?? null) as RpcInventorySummary | null
+    },
+    ['rpc_inventory_summary', args.desde, args.hasta],
     { tags: ['producto'], revalidate: CACHE_FALLBACK_SECONDS },
   )()
 }
