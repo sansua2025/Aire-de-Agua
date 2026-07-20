@@ -902,6 +902,77 @@ button:focus-visible, a.side-item:focus-visible, .side-item:focus-visible, .kpi:
 .menu-item:disabled { opacity: 0.5; cursor: not-allowed; }
 .menu-item:disabled:hover { background: none; color: var(--fg-2); }
 
+/* =============================================================================
+ * DateRangePicker (AIR-195 · Figma 1:2 → 3:6). Popover con presets + calendario
+ * de rango. Tokens v2 (light+dark automáticos).
+ * ========================================================================== */
+.rp-pop {
+  position: fixed;
+  z-index: 100;
+  width: 292px;
+  max-width: calc(100vw - 24px);
+  padding: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-overlay);
+  font-size: 13px;
+}
+.rp-presets { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 4px 4px; }
+.rp-preset {
+  padding: 6px 10px; border-radius: 8px;
+  background: var(--surface); border: 1px solid var(--border);
+  color: var(--fg-2); font-family: inherit; font-size: 12.5px; font-weight: 500;
+  cursor: pointer; white-space: nowrap;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.rp-preset:hover { background: var(--surface-2); color: var(--fg); border-color: var(--border-2); }
+.rp-preset.active { background: var(--accent-tint); border-color: var(--accent); color: var(--accent-deep); font-weight: 650; }
+
+.rp-divider { height: 1px; background: var(--border); margin: 8px 2px; }
+
+.rp-cal { padding: 0 4px 2px; }
+.rp-cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.rp-cal-title { font-size: 13px; font-weight: 600; color: var(--fg); }
+.rp-nav {
+  width: 28px; height: 28px; display: grid; place-items: center;
+  background: none; border: none; border-radius: 6px; color: var(--fg-2); cursor: pointer;
+}
+.rp-nav:hover { background: var(--surface-2); color: var(--fg); }
+.rp-nav:disabled { opacity: 0.35; cursor: not-allowed; }
+.rp-nav:disabled:hover { background: none; color: var(--fg-2); }
+
+.rp-weekdays {
+  display: grid; grid-template-columns: repeat(7, 1fr);
+  text-align: center; font-size: 10.5px; font-weight: 600; color: var(--fg-3);
+  margin-bottom: 3px;
+}
+.rp-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.rp-day {
+  height: 30px; display: grid; place-items: center;
+  background: none; border: none; border-radius: 6px;
+  color: var(--fg-2); font-family: inherit; font-size: 12px; font-weight: 500;
+  font-variant-numeric: tabular-nums; cursor: pointer;
+}
+.rp-day.empty { visibility: hidden; pointer-events: none; }
+.rp-day:hover:not(:disabled):not(.endpoint) { background: var(--surface-2); color: var(--fg); }
+.rp-day:disabled { opacity: 0.3; cursor: not-allowed; }
+.rp-day.within { background: var(--accent-tint); color: var(--accent-deep); border-radius: 0; }
+.rp-day.endpoint { background: var(--accent); color: var(--on-accent); font-weight: 650; }
+.rp-day.today:not(.endpoint) { box-shadow: inset 0 0 0 1px var(--border-2); }
+.rp-day:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+.rp-cal-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; }
+.rp-cal-summary { font-size: 11.5px; color: var(--fg-3); }
+.rp-apply {
+  padding: 6px 14px; border-radius: 8px;
+  background: var(--accent); border: 1px solid var(--accent); color: var(--on-accent);
+  font-family: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.rp-apply:hover:not(:disabled) { background: var(--accent-deep); border-color: var(--accent-deep); }
+.rp-apply:disabled { opacity: 0.45; cursor: not-allowed; }
+
 /* AI block legacy (overview ai-block + cualquier resumen Claude) */
 .ai-block {
   background: var(--accent-tint);
