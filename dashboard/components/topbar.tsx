@@ -7,15 +7,16 @@ import { Icon } from './icon'
 import { DateRangePicker } from './date-range-picker'
 import { ThemeToggle } from './theme-toggle'
 import { MobilePeriodSheet } from './mobile/period-sheet'
-import { parseFilters, toSearchParams, presetLabel, type Filters } from '@/lib/filters'
+import { parseFilters, toSearchParams, presetLabel, isWeeklyOverview, type Filters } from '@/lib/filters'
 
 // week: subtítulo estático SOLO para páginas NO cableadas al filtro global. Las
 // páginas de FILTERED_PAGES muestran el período efectivo (presetLabel), así que
 // su `week` no se usa — no se hardcodea ningún período aquí (AIR-197).
 // `short` = título compacto para el topbar móvil (AIR-218, frames M·*): coincide
 // con la etiqueta de la tab bar ("Hoy", "Paid"…) en vez del título largo desktop.
+// El título de '/' es "Overview" (AIR-219 le añade "semanal" dinámicamente).
 const PAGE_META: Record<string, { title: string; short: string; week: string }> = {
-  '/':           { title: 'Overview semanal',      short: 'Hoy',       week: 'Resumen ejecutivo' },
+  '/':           { title: 'Overview',              short: 'Hoy',       week: 'Resumen ejecutivo' },
   '/producto':   { title: 'Producto y Comercial',  short: 'Producto',  week: 'Top SKUs · inventario · descuentos' },
   '/funnel':     { title: 'Funnel de conversión',  short: 'Funnel',    week: 'Amplitude' },
   '/paid':       { title: 'Paid · Meta Ads',       short: 'Paid',      week: 'Campañas · creativos · ROAS real' },
@@ -66,6 +67,12 @@ export function Topbar({ signOutSlot, staleDot }: TopbarProps) {
   const FILTERED_PAGES = new Set(['/', '/funnel', '/paid', '/producto'])
   const weekLabel = FILTERED_PAGES.has(pathname) ? presetLabel(range) : meta.week
 
+  // El Overview solo se titula "semanal" cuando el hero es el pacing de la semana
+  // en curso (rango week_current o el default). Con cualquier otro rango el título
+  // pierde "semanal" y el período efectivo lo declara `weekLabel` (AIR-197/219).
+  const title =
+    pathname === '/' && isWeeklyOverview(range) ? 'Overview semanal' : meta.title
+
   // Refleja el estado pending en el contenedor .page mientras el server component
   // re-renderiza (atenúa el contenido viejo en vez de un flash).
   useEffect(() => {
@@ -90,7 +97,7 @@ export function Topbar({ signOutSlot, staleDot }: TopbarProps) {
     <header className="topbar" aria-busy={isPending}>
       {/* Monograma editorial — solo móvil (el sidebar tiene la marca en desktop). */}
       <span className="topbar-mono" aria-hidden>A</span>
-      <span className="topbar-title">{meta.title}</span>
+      <span className="topbar-title">{title}</span>
       <span className="topbar-title-m">{meta.short}</span>
       {weekLabel && <span className="topbar-week tnum">{weekLabel}</span>}
 

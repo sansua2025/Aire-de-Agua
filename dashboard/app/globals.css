@@ -740,6 +740,17 @@ button:focus-visible, a.side-item:focus-visible, .side-item:focus-visible, .kpi:
   .hp-chart { border-left: none; padding-left: 0; border-top: 1px solid var(--border); padding-top: 18px; }
 }
 
+/* ---------- Hero de resumen del período (AIR-219) — reusa .hero-pacing/.hp-* ---------- */
+.hp-period-tag {
+  display: inline-flex; align-items: center;
+  font-size: 11.5px; font-weight: 700; letter-spacing: 0.03em;
+  color: var(--fg-3);
+  text-transform: uppercase;
+}
+.hp-wtd-reminder { display: flex; flex-direction: column; gap: 4px; margin-top: 2px; }
+.hp-wtd-val { font-size: 20px; font-weight: 650; letter-spacing: -0.02em; line-height: 1.1; }
+.hp-wtd-meta { font-size: 12px; color: var(--fg-3); }
+
 /* ---------- Cola de decisión ---------- */
 .dq-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
 .dq-head h2 { font-size: 16px; font-weight: 650; letter-spacing: -0.012em; }
