@@ -1,35 +1,47 @@
-import { KpiTile, WidgetState } from '@/components/ui'
+import { WidgetState } from '@/components/ui'
 import {
-  PaidCharts,
-  type CampaignDatum,
-  type TopAdDatum,
-  type LearningDatum,
-} from '@/components/paid/paid-charts'
+  PaidKpi,
+  CampaignsTable,
+  CreativeLearnings,
+  TopAdCard,
+  PaidDailyChart,
+  SignalHealth,
+  AdsTable,
+  type KpiTone,
+} from '@/components/paid/paid-widgets'
+import type {
+  CampaignDatum,
+  LearningDatum,
+  DailyDatum,
+  AdRow,
+  SignalHealthData,
+} from '@/components/paid/types'
 import {
   getPaidRange,
-  getTopAds,
   getCreativeLearnings,
-  getCogsFaltante,
+  getTargets,
+  getPaidDaily,
+  getPaidAds,
+  getPaidSignalHealth,
+  getKpis,
 } from '@/lib/data/queries'
-import { CogsFaltanteAlert } from '@/components/paid/cogs-faltante-alert'
-import { parseFilters, resolveRange, describeFilters, formatRangeCompact } from '@/lib/filters'
-import { formatCop, formatNumber, formatX } from '@/lib/format'
+import { parseFilters, resolveRange, formatRangeCompact } from '@/lib/filters'
+import { formatCop, formatNumber, formatPct, formatX } from '@/lib/format'
 import { computeTotals, parseNumber } from '@/lib/paid/aggregate'
 
 /**
- * Performance Paid · Dashboard v2 (AIR-194) — Server Component.
+ * Paid · Meta Ads v2 (AIR-209 — Fase B del rediseño AIR-204). Server Component.
  *
- * Campañas + KPIs desde analytics.get_paid(desde,hasta) — responde al filtro de
- * período. ROAS/revenue vienen de ATRIBUCIÓN (la RPC ya no expone el diagnóstico
- * de pixel de Meta, regla de datos R1) y el recómputo de dinero en TS se elimina:
- * los totales de dinero salen de la función pura testeada (lib/paid/aggregate).
+ * Métrica de verdad: ROAS-MARGEN de ATRIBUCIÓN real (margen bruto / gasto, fuente
+ * utm_term × COGS), NUNCA el valor de conversión del pixel de Meta (regla R1). Todo el
+ * dinero se calcula en SQL (analytics.get_paid / get_paid_daily / get_paid_ads /
+ * get_paid_signal_health, mig 119+125); la meta ROAS y break-even vienen de
+ * analytics.get_targets (no se hardcodean). El umbral de recomendación vive en SQL
+ * (get_paid.recomendacion). El canal es intrínseco (todo /paid es paid_social); el
+ * topbar deshabilita el filtro de canal aquí. El período afecta todos los widgets.
  *
- * El canal es intrínseco a este widget (todo es paid); el filtro de canal se
- * ignora aquí (el topbar lo deshabilita en /paid). Top ads, creative learnings y
- * COGS faltante no tienen RPC parametrizada y conservan su ventana propia.
- *
- * Errores (AIR-196): sin catch silencioso — si una fuente falla, estado de error
- * VISIBLE en vez de simular "sin campañas / $0".
+ * Errores honestos por widget (AIR-199): un fetch fallido muestra estado de error,
+ * nunca $0 simulado. Aislamiento con allSettled.
  */
 
 interface PaidPageProps {
@@ -39,16 +51,17 @@ interface PaidPageProps {
 export default async function PaidPage({ searchParams }: PaidPageProps) {
   const filters = parseFilters(await searchParams)
   const range = resolveRange(filters.range)
-  const periodoDesc = describeFilters(filters, range)
   const periodoCompact = formatRangeCompact(range)
+  const rangeArgs = { desde: range.desde, hasta: range.hasta }
 
-  // Aislamiento por widget (AIR-197): allSettled. Si top-ads o learnings fallan,
-  // las campañas y KPIs siguen vivos, y viceversa. Sin blanqueo de página entera.
   const settled = await Promise.allSettled([
     getPaidRange({ desde: range.desde, hasta: range.hasta, canal: null }),
-    getTopAds(),
     getCreativeLearnings(),
-    getCogsFaltante(),
+    getTargets(),
+    getPaidDaily(rangeArgs),
+    getPaidAds(rangeArgs),
+    getPaidSignalHealth(rangeArgs),
+    getKpis({ desde: range.desde, hasta: range.hasta, canal: null }),
   ])
   const pick = <T,>(i: number, name: string): { value: T | null; errored: boolean } => {
     const r = settled[i]
@@ -57,23 +70,23 @@ export default async function PaidPage({ searchParams }: PaidPageProps) {
     return { value: null, errored: true }
   }
   const campaignsR = pick<Awaited<ReturnType<typeof getPaidRange>>>(0, 'get_paid')
-  const topAdsR = pick<Awaited<ReturnType<typeof getTopAds>>>(1, 'top_ads')
-  const learningsR = pick<Awaited<ReturnType<typeof getCreativeLearnings>>>(2, 'creative_learnings')
-  const cogsFaltanteR = pick<Awaited<ReturnType<typeof getCogsFaltante>>>(3, 'cogs_faltante')
+  const learningsR = pick<Awaited<ReturnType<typeof getCreativeLearnings>>>(1, 'creative_learnings')
+  const targetsR = pick<Awaited<ReturnType<typeof getTargets>>>(2, 'get_targets')
+  const dailyR = pick<Awaited<ReturnType<typeof getPaidDaily>>>(3, 'get_paid_daily')
+  const adsR = pick<Awaited<ReturnType<typeof getPaidAds>>>(4, 'get_paid_ads')
+  const healthR = pick<Awaited<ReturnType<typeof getPaidSignalHealth>>>(5, 'get_paid_signal_health')
+  const kpiR = pick<Awaited<ReturnType<typeof getKpis>>>(6, 'get_kpis')
 
   const campaignsErrored = campaignsR.errored
-  const campaignsRaw = campaignsR.value
-  const topAdsRaw = topAdsR.value
-  const learningsRaw = learningsR.value
-  const cogsFaltanteRaw = cogsFaltanteR.value ?? []
 
-  // get_paid ya agrega por campaña y ordena por gasto — sin dedup ni recómputo en TS.
-  const campaigns: CampaignDatum[] = (campaignsRaw || []).map((c) => ({
+  // ---- Campañas (get_paid ya agrega por campaña y ordena por gasto) ----
+  const campaigns: CampaignDatum[] = (campaignsR.value || []).map((c) => ({
     campaign_id: c.campaign_id ?? '',
     campaign_name: c.campaign_name ?? '—',
     num_ads: parseNumber(c.num_ads) ?? 0,
     gasto: parseNumber(c.gasto) ?? 0,
     compras: parseNumber(c.compras) ?? 0,
+    ventas_atribuidas: parseNumber(c.ventas_atribuidas) ?? 0,
     revenue_atribuido: parseNumber(c.revenue_atribuido) ?? 0,
     margen_atribuido: parseNumber(c.margen_atribuido) ?? 0,
     ctr_pct: parseNumber(c.ctr_pct),
@@ -86,20 +99,7 @@ export default async function PaidPage({ searchParams }: PaidPageProps) {
     cobertura_cogs_pct: parseNumber(c.cobertura_cogs_pct),
   }))
 
-  // Top ads (view top_ads, ventana fija propia 7d — sin RPC parametrizada).
-  const topAds: TopAdDatum[] = (topAdsRaw || []).map((a) => ({
-    ad_id: a.ad_id ?? '',
-    ad_name: a.ad_name ?? '—',
-    campaign_name: a.campaign_name,
-    formato: a.formato,
-    gasto: parseNumber(a.gasto) ?? 0,
-    compras: parseNumber(a.compras) ?? 0,
-    valor_compras: parseNumber(a.valor_compras) ?? 0,
-    roas: parseNumber(a.roas),
-    share_pct: parseNumber(a.share_pct),
-  }))
-
-  const learnings: LearningDatum[] = (learningsRaw || []).map((l) => ({
+  const learnings: LearningDatum[] = (learningsR.value || []).map((l) => ({
     id: l.id,
     elemento: l.elemento ?? '—',
     valor: l.valor ?? '—',
@@ -112,124 +112,147 @@ export default async function PaidPage({ searchParams }: PaidPageProps) {
     objetivo: l.objetivo,
   }))
 
-  // Totales de dinero/rendimiento vía la función pura compartida y testeada
-  // (AIR-196, lib/paid/aggregate). ROAS-revenue blended = Σrevenue_atribuido / Σgasto
-  // (atribución utm_term, NO pixel de Meta).
-  const pt = computeTotals(campaigns)
-  const revenueTotal = campaigns.reduce((s, c) => s + c.revenue_atribuido, 0)
-  const ctrAvg = pt.ctr_avg
-  const cpcAvg = pt.cpc_avg
-  const roasMargenBlended = pt.roas_margen_blended
-  const roasRevenueBlended = pt.gasto > 0 ? revenueTotal / pt.gasto : 0
-  const cpaBlended = pt.cpa_blended
+  const days: DailyDatum[] = (dailyR.value || []).map((d) => ({
+    fecha: d.fecha,
+    gasto: parseNumber(d.gasto) ?? 0,
+    revenue: parseNumber(d.revenue_atribuido) ?? 0,
+    margen: parseNumber(d.margen_atribuido) ?? 0,
+  }))
 
-  const actionTitle = (() => {
-    if (campaigns.length === 0) return `Performance Paid · sin campañas en ${periodoCompact}`
-    if (roasMargenBlended >= 1.5) {
-      return `ROAS-margen ${formatX(roasMargenBlended)} · zona de escala · ${formatCop(pt.gasto)} gastados`
-    }
-    if (roasMargenBlended >= 1.0) {
-      return `ROAS-margen ${formatX(roasMargenBlended)} · en break-even · ${formatCop(pt.gasto)} gastados`
-    }
-    return `ROAS-margen ${formatX(roasMargenBlended)} · bajo break-even · revisar adsets`
-  })()
+  const ads: AdRow[] = (adsR.value || []).map((a) => ({
+    ad_id: a.ad_id ?? '',
+    ad_name: a.ad_name ?? '—',
+    campaign_name: a.campaign_name ?? null,
+    gasto: parseNumber(a.gasto) ?? 0,
+    impresiones: parseNumber(a.impresiones) ?? 0,
+    clics: parseNumber(a.clics) ?? 0,
+    ctr_pct: parseNumber(a.ctr_pct),
+    atc: parseNumber(a.atc) ?? 0,
+    compras: parseNumber(a.compras) ?? 0,
+    compras_total: parseNumber(a.compras_total) ?? 0,
+    senal: a.senal ?? 'activo',
+  }))
+  const topAd: AdRow | null = ads.find((a) => a.senal === 'lider') ?? ads[0] ?? null
+
+  const healthRaw = healthR.value
+  const health: SignalHealthData | null = healthRaw
+    ? {
+        cobertura_cogs_pct: parseNumber(healthRaw.cobertura_cogs_pct),
+        variantes_activas: parseNumber(healthRaw.variantes_activas) ?? 0,
+        variantes_con_cogs: parseNumber(healthRaw.variantes_con_cogs) ?? 0,
+        pixel_bug_dias: parseNumber(healthRaw.pixel_bug_dias) ?? 0,
+        pixel_bug_adsets: parseNumber(healthRaw.pixel_bug_adsets) ?? 0,
+        adsets_atribuidos: parseNumber(healthRaw.adsets_atribuidos) ?? 0,
+        adsets_con_gasto: parseNumber(healthRaw.adsets_con_gasto) ?? 0,
+      }
+    : null
+
+  // ---- Totales (función pura, sin dinero recomputado en TS) ----
+  const t = computeTotals(campaigns)
+  const aov = parseNumber(kpiR.value?.aov)
+
+  // ---- Metas de get_targets (no hardcodeadas) ----
+  const targets = targetsR.value ?? {}
+  const roasT = targets['roas_margen']
+  const metaRoas = parseNumber(roasT?.valor)         // objetivo (2.5×)
+  const breakeven = parseNumber(roasT?.banda_min)    // break-even (1.0×)
+
+  const be = breakeven ?? 1.0
+  const roasTone: KpiTone =
+    campaignsErrored || t.roas_margen_blended <= 0
+      ? 'default'
+      : t.roas_margen_blended < be
+        ? 'danger'
+        : metaRoas != null && t.roas_margen_blended >= metaRoas
+          ? 'success'
+          : 'default'
+  const cpaTone: KpiTone =
+    !campaignsErrored && aov != null && t.cpa_blended > 0 && t.cpa_blended > aov ? 'danger' : 'default'
+
+  const dash = campaignsErrored ? '—' : undefined
+  const cobertura = health?.cobertura_cogs_pct ?? null
+  const sinCogsPct =
+    health && cobertura != null ? Math.max(0, Math.round((100 - cobertura) * 10) / 10) : null
+
+  const roasCaption =
+    breakeven != null || metaRoas != null
+      ? `break-even ${formatX(be)}${metaRoas != null ? ` · meta ${formatX(metaRoas)}` : ''}`
+      : 'margen bruto atribuido / gasto'
 
   return (
     <>
-      <div className="page-hero">
-        <div>
-          <h1>{actionTitle}</h1>
-          <div className="lede">
-            Performance Meta Ads · {periodoDesc}. Métrica primaria: ROAS-margen (margen bruto / gasto,
-            fuente: atribución utm_term × COGS). Break-even = 1.0×, target ≥ 1.5×. ROAS-revenue como
-            referencia. Recomendación por campaña basada en umbral de margen, no en pixel Meta (AIR-44).
-          </div>
-        </div>
-        <div className="meta-block">
-          <span>Gasto · <span className="v">{formatCop(pt.gasto)}</span></span>
-          <span>ROAS-margen · <span className="v">{formatX(roasMargenBlended)}</span></span>
-          <span>ROAS-revenue · <span className="v">{formatX(roasRevenueBlended)}</span></span>
-        </div>
-      </div>
-
       {campaignsErrored && (
-        <WidgetState state="error" title="No se pudieron cargar las campañas">
-          analytics.get_paid no respondió. Los KPIs de abajo NO son $0 reales: es un error de la
-          fuente. Reintenta; si persiste, revisa permisos de la RPC o el estado de Supabase.
-        </WidgetState>
+        <div className="ov-block">
+          <WidgetState state="error" title="No se pudieron cargar los KPIs de pauta">
+            analytics.get_paid no respondió. Los valores de abajo NO son $0 reales: es un error de la
+            fuente. Reintenta; si persiste, revisa permisos de la RPC o el estado de Supabase.
+          </WidgetState>
+        </div>
       )}
 
-      {/* KPI tiles paid */}
+      {/* ---- KPI row (6) ---- */}
       <div className="grid grid-kpis" style={campaignsErrored ? { opacity: 0.4 } : undefined}>
-        <KpiTile
-          label="Gasto"
-          value={(pt.gasto / 1_000_000).toFixed(2)}
-          unit="M COP"
-          icon="dollar"
-          deltaValue={null}
-          goodDirection="down"
+        <PaidKpi label="Gasto" value={dash ?? formatCop(t.gasto)} caption="período del filtro" />
+        <PaidKpi
+          label="ROAS margen"
+          value={dash ?? (t.roas_margen_blended > 0 ? formatX(t.roas_margen_blended) : '—')}
+          caption={roasCaption}
+          tone={roasTone}
         />
-        <KpiTile
-          label="ROAS-margen"
-          value={roasMargenBlended > 0 ? roasMargenBlended.toFixed(2) : '—'}
-          unit="×"
-          icon="target"
-          deltaValue={null}
+        <PaidKpi
+          label="ROAS revenue"
+          value={dash ?? (t.roas_revenue_blended > 0 ? formatX(t.roas_revenue_blended) : '—')}
+          caption="referencia, no verdad"
         />
-        <KpiTile
-          label="ROAS-revenue"
-          value={roasRevenueBlended > 0 ? roasRevenueBlended.toFixed(2) : '—'}
-          unit="×"
-          icon="target"
-          deltaValue={null}
+        <PaidKpi
+          label="Compras atrib."
+          value={dash ?? formatNumber(Math.round(t.ventas_atribuidas))}
+          caption="por utm_term × COGS"
         />
-        <KpiTile
-          label="CTR avg"
-          value={ctrAvg.toFixed(2)}
-          unit="%"
-          icon="eye"
-          deltaValue={null}
-        />
-        <KpiTile
-          label="CPC avg"
-          value={formatNumber(Math.round(cpcAvg))}
-          unit="COP"
-          icon="cart"
-          deltaValue={null}
-          goodDirection="down"
-        />
-        <KpiTile
+        <PaidKpi
           label="CPA"
-          value={cpaBlended > 0 ? formatNumber(Math.round(cpaBlended)) : '—'}
-          unit="COP"
-          icon="cart"
-          deltaValue={null}
-          goodDirection="down"
+          value={dash ?? (t.cpa_blended > 0 ? formatCop(t.cpa_blended) : '—')}
+          caption={aov != null ? `vs AOV ${formatCop(aov)}` : 'gasto / compra atribuida'}
+          tone={cpaTone}
         />
-        <KpiTile
-          label="Compras"
-          value={formatNumber(pt.compras)}
-          icon="bag"
-          deltaValue={null}
+        <PaidKpi
+          label="Cobertura COGS"
+          value={healthR.errored ? '—' : cobertura != null ? formatPct(cobertura) : '—'}
+          caption={sinCogsPct != null ? `${formatPct(sinCogsPct)} sin costo mapeado` : 'catálogo activo'}
         />
       </div>
 
-      <CogsFaltanteAlert items={cogsFaltanteRaw} />
+      {/* ---- Campañas + (learnings / top ad) ---- */}
+      <div className="grid grid-2-1 ov-block">
+        <CampaignsTable
+          campaigns={campaigns}
+          breakeven={breakeven}
+          metaRoas={metaRoas}
+          range={range}
+          errored={campaignsErrored}
+        />
+        <div className="stack">
+          <CreativeLearnings learnings={learnings} />
+          <TopAdCard ad={adsR.errored ? null : topAd} />
+        </div>
+      </div>
 
-      <PaidCharts
-        campaigns={campaigns}
-        topAds={topAds}
-        learnings={learnings}
-        range={{ desde: range.desde, hasta: range.hasta }}
-        campaignsErrored={campaignsErrored}
-        totals={{
-          gasto: pt.gasto,
-          compras: pt.compras,
-          revenue: revenueTotal,
-          ctr_avg: ctrAvg,
-          cpc_avg: cpcAvg,
-        }}
-      />
+      {/* ---- Gasto vs revenue diario + Salud de la señal ---- */}
+      <div className="grid grid-2 ov-block">
+        <PaidDailyChart days={days} range={range} errored={dailyR.errored} />
+        <SignalHealth health={health} errored={healthR.errored} />
+      </div>
+
+      {/* ---- Ads con inversión en el período ---- */}
+      <div className="ov-block">
+        <AdsTable ads={ads} errored={adsR.errored} />
+      </div>
+
+      <p className="widget-note" style={{ marginTop: 4 }}>
+        Meta Ads · {periodoCompact} · América/Bogotá. ROAS-margen y $ atribuidos salen de la
+        atribución real cruzada contra Shopify (v_meta_ads_roas_real / v_paid_performance_diario),
+        no del pixel de Meta.
+      </p>
     </>
   )
 }

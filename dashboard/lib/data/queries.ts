@@ -142,6 +142,60 @@ export function getPaidRange(args: RangeArgs) {
   )()
 }
 
+// -----------------------------------------------------------------------------
+// Paid v2 (AIR-209, migración 125) — RPCs parametrizadas por rango. Sin canal:
+// todo /paid es paid_social por construcción (el topbar deshabilita el filtro de
+// canal aquí). Tag 'paid'. Sin catch silencioso: la page muestra el error.
+// -----------------------------------------------------------------------------
+
+/** Serie diaria gasto vs revenue ATRIBUIDO real del rango (chart de barras). */
+export function getPaidDaily(args: Pick<RangeArgs, 'desde' | 'hasta'>) {
+  return unstable_cache(
+    async () => {
+      const { data, error } = await supabase.rpc('get_paid_daily', {
+        p_desde: args.desde,
+        p_hasta: args.hasta,
+      })
+      if (error) throw error
+      return data ?? []
+    },
+    ['rpc_paid_daily', args.desde, args.hasta],
+    { tags: ['paid'], revalidate: CACHE_FALLBACK_SECONDS },
+  )()
+}
+
+/** Anuncios con gasto>0 en el rango (tabla a grano anuncio). */
+export function getPaidAds(args: Pick<RangeArgs, 'desde' | 'hasta'>) {
+  return unstable_cache(
+    async () => {
+      const { data, error } = await supabase.rpc('get_paid_ads', {
+        p_desde: args.desde,
+        p_hasta: args.hasta,
+      })
+      if (error) throw error
+      return data ?? []
+    },
+    ['rpc_paid_ads', args.desde, args.hasta],
+    { tags: ['paid'], revalidate: CACHE_FALLBACK_SECONDS },
+  )()
+}
+
+/** Salud de la señal + cobertura COGS del catálogo (fila única). */
+export function getPaidSignalHealth(args: Pick<RangeArgs, 'desde' | 'hasta'>) {
+  return unstable_cache(
+    async () => {
+      const { data, error } = await supabase.rpc('get_paid_signal_health', {
+        p_desde: args.desde,
+        p_hasta: args.hasta,
+      })
+      if (error) throw error
+      return data?.[0] ?? null
+    },
+    ['rpc_paid_signal_health', args.desde, args.hasta],
+    { tags: ['paid', 'producto'], revalidate: CACHE_FALLBACK_SECONDS },
+  )()
+}
+
 export function getTopSkusRange(args: RangeArgs, limit = 10) {
   return unstable_cache(
     async () => {
@@ -361,19 +415,6 @@ export const getCreativeLearnings = unstable_cache(
   },
   ['creative_learnings'],
   { tags: ['weekly'], revalidate: CACHE_FALLBACK_SECONDS }
-)
-
-// Productos sin COGS — alerta que sesga el ROAS-margen (AIR-65)
-export const getCogsFaltante = unstable_cache(
-  async () => {
-    const { data, error } = await supabase
-      .from('view_dashboard_cogs_faltante')
-      .select('*')
-    if (error) throw error
-    return data ?? []
-  },
-  ['cogs_faltante'],
-  { tags: ['paid', 'producto'], revalidate: CACHE_FALLBACK_SECONDS }
 )
 
 // =============================================================================
