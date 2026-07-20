@@ -519,6 +519,41 @@ body {
 .hbar-val { font-size: 12.5px; font-weight: 600; color: var(--fg); font-variant-numeric: tabular-nums; text-align: right; min-width: 52px; }
 .hbar-val small { color: var(--fg-3); font-weight: 500; }
 
+/* ---------- Paid v2 (AIR-209) ---------- */
+.widget-note { margin-top: 12px; font-size: 11px; line-height: 1.5; color: var(--fg-3); }
+
+.paid-kpi {
+  display: flex; flex-direction: column; gap: 4px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r-card, 12px); padding: 14px 16px; min-width: 0;
+}
+.paid-kpi-label { font-size: 11px; font-weight: 500; color: var(--fg-2); }
+.paid-kpi-value { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.1; }
+.paid-kpi-caption { font-size: 10.5px; color: var(--fg-3); }
+
+.learning-row { display: flex; gap: 10px; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--border-subtle); }
+.learning-row:last-child { border-bottom: none; }
+.learning-el { font-size: 12px; font-weight: 550; color: var(--fg); }
+.learning-meta { font-size: 10.5px; color: var(--fg-3); margin-top: 1px; }
+
+.topad-name { font-size: 12.5px; font-weight: 600; color: var(--fg); }
+.topad-bar { height: 10px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.topad-fill { height: 100%; border-radius: 999px; background: var(--accent); transition: width 0.5s cubic-bezier(0.2,0,0,1); }
+.topad-foot { display: flex; justify-content: space-between; gap: 10px; font-size: 11.5px; font-weight: 600; color: var(--fg-2); }
+
+.paid-daily { display: flex; gap: 12px; align-items: flex-end; padding-top: 8px; overflow-x: auto; min-height: calc(var(--daily-h, 150px) + 22px); }
+.paid-daily-col { display: flex; flex-direction: column; gap: 6px; align-items: center; flex: 0 0 auto; }
+.paid-daily-bars { display: flex; gap: 3px; align-items: flex-end; height: var(--daily-h, 150px); }
+.paid-daily-bar { width: 16px; border-radius: 3px; display: block; }
+.paid-daily-bar.gasto { background: var(--fg-3); opacity: 0.55; }
+.paid-daily-label { font-size: 10px; font-weight: 500; color: var(--fg-3); white-space: nowrap; }
+
+.signal-row { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid var(--border-subtle); }
+.signal-row:last-child { border-bottom: none; }
+.signal-row .pill { flex-shrink: 0; }
+.signal-title { font-size: 12px; font-weight: 550; color: var(--fg); }
+.signal-detail { font-size: 10.5px; color: var(--fg-3); margin-top: 1px; line-height: 1.45; }
+
 /* ---------- Funnel (v2 .fstep) ---------- */
 .fstep { display: grid; grid-template-columns: 130px 1fr 84px; gap: 14px; align-items: center; padding: 5px 0; }
 .fstep-label { font-size: 13px; color: var(--fg-2); }
@@ -758,6 +793,66 @@ button:focus-visible, a.side-item:focus-visible, .side-item:focus-visible, .kpi:
 .dq-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .dq-btn.primary:hover:not(:disabled) { background: var(--accent-deep); border-color: var(--accent-deep); }
 .dq-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.dq-btn.ghost { background: transparent; border-color: transparent; color: var(--fg-3); }
+.dq-btn.ghost:hover:not(:disabled) { color: var(--fg); background: var(--surface-2); border-color: var(--border); }
+
+/* ---------- el Cerebro v2 · cola de decisión (AIR-211) ---------- */
+.cq { display: flex; flex-direction: column; }
+.cq-head { padding: 0 0 12px; }
+.cq-subtitle { font-size: 12px; color: var(--fg-3); font-weight: 500; }
+.cq-list { display: flex; flex-direction: column; gap: 12px; }
+.cq-item {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.cq-item-h { display: flex; align-items: center; gap: 8px; }
+.cq-impact {
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em;
+  padding: 2px 7px; border-radius: 5px; white-space: nowrap;
+}
+.cq-impact.impact-alto  { color: var(--danger);  background: var(--danger-tint); }
+.cq-impact.impact-medio { color: var(--warning); background: var(--warning-tint); }
+.cq-dom { font-size: 11px; font-weight: 600; color: var(--fg-3); letter-spacing: 0.02em; white-space: nowrap; }
+.cq-rule { flex: 1; height: 1px; background: var(--border); min-width: 12px; }
+.cq-age { font-size: 11.5px; color: var(--fg-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.cq-title { font-size: 14px; font-weight: 650; color: var(--fg); line-height: 1.35; text-wrap: pretty; }
+.cq-evidence { font-size: 12.5px; color: var(--fg-3); line-height: 1.4; }
+.cq-btns { display: flex; gap: 8px; margin-top: 2px; flex-wrap: wrap; }
+.cq-caption { font-size: 11.5px; color: var(--fg-3); line-height: 1.5; margin-top: 14px; }
+
+/* ---------- Anomalías lateral (AIR-211) ---------- */
+.anom-list { display: flex; flex-direction: column; gap: 10px; }
+.anom-item {
+  border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 5px;
+}
+.anom-item.nivel-critico { background: var(--danger-tint);  border-color: color-mix(in oklab, var(--danger) 22%, transparent); }
+.anom-item.nivel-alerta  { background: var(--warning-tint); border-color: color-mix(in oklab, var(--warning) 22%, transparent); }
+.cq-impact.nivel-critico { color: var(--danger);  background: var(--surface); }
+.cq-impact.nivel-alerta  { color: var(--warning); background: var(--surface); }
+.anom-title { font-size: 13.5px; font-weight: 600; color: var(--fg); line-height: 1.3; text-wrap: pretty; }
+.anom-meta { font-size: 11.5px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.anom-link { font-size: 12.5px; font-weight: 550; color: var(--accent-deep); text-decoration: none; margin-top: 2px; }
+.anom-link:hover { text-decoration: underline; }
+
+/* ---------- Memoria del sistema (AIR-211) ---------- */
+.mem-list { display: flex; flex-direction: column; gap: 11px; }
+.mem-row { display: flex; align-items: baseline; gap: 8px; }
+.mem-label { font-size: 13px; color: var(--fg-2); white-space: nowrap; }
+.mem-lead { flex: 1; height: 1px; border-bottom: 1px dashed var(--border-2); align-self: center; min-width: 12px; }
+.mem-value { font-size: 13px; font-weight: 650; color: var(--fg); white-space: nowrap; }
+
+/* ---------- Cohortes RFM (AIR-211) ---------- */
+.rfm-list { display: flex; flex-direction: column; gap: 12px; }
+.rfm-row { display: flex; flex-direction: column; gap: 6px; }
+.rfm-line { display: flex; align-items: baseline; gap: 10px; }
+.rfm-name { font-size: 13px; font-weight: 600; color: var(--fg); white-space: nowrap; }
+.rfm-desc { flex: 1; font-size: 11.5px; color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: right; }
+.rfm-count { font-size: 13px; font-weight: 650; color: var(--fg); white-space: nowrap; }
+.rfm-track { height: 7px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
+.rfm-fill { display: block; height: 100%; border-radius: 4px; }
 
 /* ---------- KPI meta line ---------- */
 .kpi-meta {

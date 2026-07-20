@@ -103,7 +103,7 @@
             },
             {
               "name": "revision",
-              "value": "2024-10-15"
+              "value": "2025-07-15"
             }
           ]
         },
@@ -156,7 +156,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "const resp = $input.first() && $input.first().json;\nconst campaigns = (resp && Array.isArray(resp.data)) ? resp.data : [];\nconst included  = (resp && Array.isArray(resp.included)) ? resp.included : [];\nconst msgById = {};\nincluded.forEach(m => { msgById[m.id] = m; });\nreturn campaigns.map(c => {\n  const a = c.attributes || {};\n  const aud = (a.audiences && a.audiences.included) || [];\n  const audName = (aud[0] && aud[0].name) || null;\n  const msgRefs = (c.relationships && c.relationships[\"campaign-messages\"] && c.relationships[\"campaign-messages\"].data) || [];\n  const firstMsg = msgRefs[0] && msgById[msgRefs[0].id];\n  const content = firstMsg && firstMsg.attributes && firstMsg.attributes.definition && firstMsg.attributes.definition.content;\n  return { json: {\n    campaign_id: c.id,\n    nombre: a.name || \"\",\n    asunto: (content && content.subject) || null,\n    preview_text: (content && content.preview_text) || null,\n    segmento_nombre: audName,\n    enviado_at: a.send_time || null\n  } };\n});"
+        "jsCode": "function sanitize(v, maxLen) {\n  if (v === null || v === undefined) return v;\n  const s = String(v).replace(/[\\x00-\\x1F\\x7F]/g, ' ').replace(/<[^>]*>/g, '').replace(/[<>]/g, '').trim();\n  return maxLen ? s.slice(0, maxLen) : s;\n}\nconst resp = $input.first() && $input.first().json;\nconst campaigns = (resp && Array.isArray(resp.data)) ? resp.data : [];\nconst included  = (resp && Array.isArray(resp.included)) ? resp.included : [];\nconst msgById = {};\nincluded.forEach(m => { msgById[m.id] = m; });\nreturn campaigns.map(c => {\n  const a = c.attributes || {};\n  const aud = (a.audiences && a.audiences.included) || [];\n  const audName = (aud[0] && aud[0].name) || null;\n  const msgRefs = (c.relationships && c.relationships[\"campaign-messages\"] && c.relationships[\"campaign-messages\"].data) || [];\n  const firstMsg = msgRefs[0] && msgById[msgRefs[0].id];\n  const content = firstMsg && firstMsg.attributes && firstMsg.attributes.definition && firstMsg.attributes.definition.content;\n  return { json: {\n    campaign_id: c.id,\n    nombre: sanitize(a.name || \"\", 500),\n    asunto: sanitize((content && content.subject) || null, 500),\n    preview_text: sanitize((content && content.preview_text) || null, 500),\n    segmento_nombre: sanitize(audName, 200),\n    enviado_at: a.send_time || null\n  } };\n});"
       }
     },
     {
@@ -575,7 +575,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "const fecha = $(\"Set Config\").first().json.yesterdayISO;\nconst resp = $input.first() && $input.first().json;\nconst flows = (resp && resp.data && resp.data.attributes && Array.isArray(resp.data.attributes.flow_aggregation)) ? resp.data.attributes.flow_aggregation : [];\nconst rows = flows.map(f => {\n  const s = f.statistics || {};\n  const det = (f.flow_details && f.flow_details.attributes) || {};\n  return {\n    fecha,\n    klaviyo_flow_id: f.flow_id,\n    nombre: det.name || \"\",\n    estado: det.status || null,\n    trigger_type: det.triggerType || null,\n    enviados:     s.recipients       || 0,\n    entregados:   s.delivered        || 0,\n    abiertos:     s.opens_unique     || 0,\n    clics:        s.clicks_unique    || 0,\n    conversiones: s.conversions      || 0,\n    ingresos:     s.conversion_value || 0,\n    bajas:        s.unsubscribes     || 0\n  };\n});\nreturn [{ json: { rows } }];"
+        "jsCode": "function sanitize(v, maxLen) {\n  if (v === null || v === undefined) return v;\n  const s = String(v).replace(/[\\x00-\\x1F\\x7F]/g, ' ').replace(/<[^>]*>/g, '').replace(/[<>]/g, '').trim();\n  return maxLen ? s.slice(0, maxLen) : s;\n}\nconst fecha = $(\"Set Config\").first().json.yesterdayISO;\nconst resp = $input.first() && $input.first().json;\nconst flows = (resp && resp.data && resp.data.attributes && Array.isArray(resp.data.attributes.flow_aggregation)) ? resp.data.attributes.flow_aggregation : [];\nconst rows = flows.map(f => {\n  const s = f.statistics || {};\n  const det = (f.flow_details && f.flow_details.attributes) || {};\n  return {\n    fecha,\n    klaviyo_flow_id: f.flow_id,\n    nombre: sanitize(det.name || \"\", 500),\n    estado: sanitize(det.status || null, 100),\n    trigger_type: sanitize(det.triggerType || null, 100),\n    enviados:     s.recipients       || 0,\n    entregados:   s.delivered        || 0,\n    abiertos:     s.opens_unique     || 0,\n    clics:        s.clicks_unique    || 0,\n    conversiones: s.conversions      || 0,\n    ingresos:     s.conversion_value || 0,\n    bajas:        s.unsubscribes     || 0\n  };\n});\nreturn [{ json: { rows } }];"
       }
     },
     {

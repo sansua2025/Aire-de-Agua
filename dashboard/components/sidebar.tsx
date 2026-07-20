@@ -28,7 +28,7 @@ const navOperacion: NavItem[] = [
   { href: '/producto', icon: 'shopping', label: 'Producto' },
   { href: '/funnel',   icon: 'funnel',   label: 'Funnel' },
   { href: '/paid',     icon: 'target',   label: 'Paid' },
-  { href: '/email',    icon: 'mail',     label: 'Email', badge: 'WIP' },
+  { href: '/email',    icon: 'mail',     label: 'Email' },
   { href: '/pnl',      icon: 'dollar',   label: 'P&L',   badge: 'WIP', wip: true },
 ]
 

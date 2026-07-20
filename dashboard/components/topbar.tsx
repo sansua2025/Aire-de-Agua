@@ -15,7 +15,7 @@ const PAGE_META: Record<string, { title: string; week: string }> = {
   '/producto':   { title: 'Producto y Comercial',  week: 'Top SKUs · inventario · descuentos' },
   '/funnel':     { title: 'Funnel de conversión',  week: 'Amplitude' },
   '/paid':       { title: 'Paid · Meta Ads',       week: 'Campañas · creativos · ROAS real' },
-  '/email':      { title: 'Email · Klaviyo',       week: 'Integración en progreso' },
+  '/email':      { title: 'Email · Klaviyo',       week: 'Campañas · flows · lista · entregabilidad' },
   '/ai':         { title: 'el Cerebro',            week: 'Insights · anomalías · cohortes' },
   '/anomalias':  { title: 'Anomalías',             week: 'Salud de datos' },
   '/fuentes':    { title: 'Fuentes de datos',      week: 'Estado de integraciones' },
