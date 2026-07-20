@@ -573,6 +573,85 @@ export type RpcInventorySummary = {
   }>
 }
 
+/**
+ * Return de analytics.get_email (AIR-210, mig 126). jsonb con TODA la pantalla
+ * Email · Klaviyo v2. La lógica de dinero y tasas vive en SQL (las tasas del
+ * período se recomputan delivered-based desde SUMAS; NO se promedian las columnas
+ * GENERATED de klaviyo_campaigns, que usan denominadores mixtos de Klaviyo). Los
+ * numeric llegan como número JSON o string según PostgREST; el front normaliza con
+ * parseNum. bounce/spam son NULL (G3a: no existen en la ingesta E3E todavía).
+ */
+export type RpcEmailReturn = {
+  generado_hoy: string
+  ventana: { desde: string; hasta: string }
+  actividad: {
+    ultima_campana_at: string | null
+    total_campanas_historico: number
+    ultimo_flow_fecha: string | null
+    ultimo_sync: string | null
+    semanas_sin_campana: number | null
+    semanas_sin_flow: number | null
+    semanas_sin_sync: number | null
+    inactivo: boolean
+  }
+  periodo: {
+    kpis: {
+      campanas_count: number
+      enviados: number | string
+      entregados: number | string
+      abiertos: number | string
+      clics: number | string
+      conversiones: number | string
+      ingresos: number | string
+      bajas: number | string
+      open_rate: number | string | null
+      click_rate: number | string | null
+      cvr: number | string | null
+      ingreso_por_dest: number | string | null
+    }
+    ingresos_campanas: number | string
+    ingresos_flows: number | string
+    ingresos_email: number | string
+    revenue_total: number | string | null
+    campanas: Array<{
+      id: string
+      nombre: string | null
+      tipo: string | null
+      estado: string | null
+      enviados: number | string | null
+      entregados: number | string | null
+      open_rate: number | string | null
+      click_ctr: number | string | null
+      ingresos: number | string | null
+      enviado_at: string | null
+    }>
+  }
+  lista: {
+    total: number
+    suscritos: number
+    nuevos_semana: number
+    growth: Array<{ semana_iso: number; lunes: string; nuevos: number; acumulado: number }>
+  }
+  flows: {
+    live: Array<{
+      flow_id: string
+      nombre: string | null
+      estado: string | null
+      trigger_type: string | null
+      ingresos_30d: number | string
+      ingresos_hist: number | string
+      ultima_fecha: string | null
+    }>
+    faltantes: Array<{ clave: string; nombre: string; dormidas: number | null }>
+  }
+  entregabilidad: {
+    periodo: { delivery_rate: number | string; unsubscribe_rate: number | string | null; campanas_base: number } | null
+    historico: { delivery_rate: number | string; unsubscribe_rate: number | string | null; campanas_base: number } | null
+    bounce_rate: number | null
+    spam_rate: number | null
+  }
+}
+
 type AnalyticsFunctions = {
   get_kpis: { Args: RangeArgs; Returns: RpcKpisRow[] }
   get_funnel: { Args: RangeArgs; Returns: RpcFunnelRow[] }
@@ -593,6 +672,8 @@ type AnalyticsFunctions = {
   get_inventory_summary: { Args: { p_desde: string; p_hasta: string }; Returns: RpcInventorySummary }
   // AIR-208 (mig 124)
   get_funnel_history: { Args: { p_semanas?: number }; Returns: RpcFunnelHistoryRow[] }
+  // AIR-210 (mig 126) — jsonb escalar: PostgREST devuelve el objeto directamente.
+  get_email: { Args: { p_desde: string; p_hasta: string }; Returns: RpcEmailReturn }
 }
 
 /**

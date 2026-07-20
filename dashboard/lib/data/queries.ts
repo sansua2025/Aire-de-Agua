@@ -1,7 +1,7 @@
 import 'server-only'
 import { unstable_cache } from 'next/cache'
 import { supabase } from '@/lib/supabase/server'
-import type { RpcWtdPacingRow, RpcTarget, RpcTargetsReturn, RpcInventorySummary } from '@/types/analytics'
+import type { RpcWtdPacingRow, RpcTarget, RpcTargetsReturn, RpcInventorySummary, RpcEmailReturn } from '@/types/analytics'
 
 /**
  * Capa de queries server-side cacheadas con tags.
@@ -227,6 +227,34 @@ export const getTargets = unstable_cache(
   ['rpc_targets'],
   { tags: ['weekly'], revalidate: CACHE_FALLBACK_SECONDS },
 )
+
+// =============================================================================
+// Email · Klaviyo v2 (AIR-210, migración 126)
+// =============================================================================
+
+/**
+ * Pantalla Email · Klaviyo v2 (AIR-210, G3). jsonb con KPIs del período, split
+ * campañas/flows, flows LIVE + revenue 30d, estado FALTA de flows core,
+ * crecimiento de lista semanal, entregabilidad y estado de actividad de la cuenta.
+ * TODA la lógica de dinero/tasas vive en la RPC (tasas del período recomputadas
+ * delivered-based desde SUMAS — NUNCA se promedian las GENERATED). El canal NO
+ * aplica a email (la RPC no lo recibe). Cache keyeado por ventana; tag 'email'
+ * (lo invalida E3E Klaviyo Daily Sync vía POST /api/revalidate).
+ */
+export function getEmail(args: Pick<RangeArgs, 'desde' | 'hasta'>) {
+  return unstable_cache(
+    async (): Promise<RpcEmailReturn | null> => {
+      const { data, error } = await supabase.rpc('get_email', {
+        p_desde: args.desde,
+        p_hasta: args.hasta,
+      })
+      if (error) throw error
+      return (data ?? null) as RpcEmailReturn | null
+    },
+    ['rpc_email', args.desde, args.hasta],
+    { tags: ['email'], revalidate: CACHE_FALLBACK_SECONDS },
+  )()
+}
 
 // =============================================================================
 // Frescura de datos (sidebar · AIR-197)
