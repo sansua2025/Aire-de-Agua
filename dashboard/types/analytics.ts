@@ -738,6 +738,8 @@ type AnalyticsFunctions = {
   }
   // AIR-213 (mig 128) — detalle de las 6 fuentes (jsonb[]).
   get_fuentes_detail: { Args: Record<PropertyKey, never>; Returns: RpcFuenteDetail[] }
+  // AIR-200 (mig 129) — P&L del período + unit economics (jsonb escalar).
+  get_pnl_rango: { Args: { p_desde: string; p_hasta: string }; Returns: RpcPnLRangoReturn }
 }
 
 /**
@@ -817,4 +819,69 @@ export interface RpcFuenteDetail {
   vol1_valor: number | null
   vol2_label: string | null
   vol2_valor: number | null
+}
+
+// =============================================================================
+// AIR-200 (mig 129) — analytics.get_pnl_rango: P&L del período + unit economics.
+// Superset del contrato PnLSummary (lib/finanzas) que get_pnl_rango hereda de
+// analytics.get_pnl (fuente única, ADR-004) + opex prorrateado (por_categoria +
+// flag) + bloque unit_economics. jsonb escalar: PostgREST devuelve el objeto
+// directo. Los numeric del jsonb llegan como número; el front igual normaliza
+// con parseNum por robustez (patrón get_email/get_inventory_summary).
+// =============================================================================
+
+/** Una categoría de OPEX prorrateado del período (grano gasto_categorias.nombre). */
+export interface RpcPnLRangoOpexCategoria {
+  categoria: string
+  tipo: string
+  total: number
+}
+
+/** Unit economics del período (AIR-200). CAC es BLENDED (gasto paid / nuevos). */
+export interface RpcPnLRangoUnitEconomics {
+  ordenes: number
+  ordenes_con_descuento: number
+  ordenes_sin_cliente: number
+  pct_ordenes_descuento: number | string | null
+  aov: number | string | null
+  margen_bruto_pct: number | string | null
+  contribucion_por_orden: number | string | null
+  margen_bruto_por_orden: number | string | null
+  clientes_nuevos: number
+  clientes_recurrentes: number
+  cac_blended: number | string | null
+  cac_vs_margen_bruto_orden: number | string | null
+}
+
+/** Return de analytics.get_pnl_rango (AIR-200, mig 129). */
+export interface RpcPnLRangoReturn {
+  periodo: { desde: string; hasta: string }
+  revenue: {
+    bruto: number | string
+    envio_cobrado: number | string
+    descuentos: number | string
+    devoluciones: number | string
+    neto: number | string
+  }
+  costos: { cogs: number | string; cogs_reversado: number | string; cogs_neto: number | string }
+  pauta: { meta_gasto: number | string }
+  opex: {
+    total: number | string
+    por_tipo: Array<{ tipo: string; total: number | string }>
+    por_categoria: RpcPnLRangoOpexCategoria[]
+    prorrateado: boolean
+  }
+  utilidad: {
+    bruta: number | string
+    bruta_pct: number | string | null
+    neta: number | string
+    neta_pct: number | string | null
+  }
+  impuestos: { iva_teorico: number | string }
+  calidad: {
+    cobertura_cogs_pct: number | string | null
+    devoluciones_capturadas: boolean
+    opex_prorrateado: boolean
+  }
+  unit_economics: RpcPnLRangoUnitEconomics
 }

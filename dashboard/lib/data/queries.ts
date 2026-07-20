@@ -10,6 +10,7 @@ import type {
   RpcCerebroStats,
   RpcAnomaliaRow,
   RpcFuenteDetail,
+  RpcPnLRangoReturn,
 } from '@/types/analytics'
 
 /**
@@ -689,3 +690,32 @@ export const getFuentesDetail = unstable_cache(
     revalidate: CACHE_FALLBACK_SECONDS,
   },
 )
+
+// =============================================================================
+// AIR-200 (mig 129) — P&L del período + unit economics (módulo founder /pnl).
+// =============================================================================
+
+/**
+ * P&L completo del rango del filtro (AIR-200). jsonb de analytics.get_pnl_rango:
+ * cascada heredada de analytics.get_pnl (fuente única, ADR-004) + OPEX
+ * prorrateado por día + unit_economics (AOV, CAC blended, contribución/orden,
+ * % órdenes con descuento, nuevos vs recurrentes). TODA la lógica de dinero vive
+ * en SQL — el cliente solo formatea. Sin canal (el P&L es de todo el negocio:
+ * online + POS). Cache keyeado por ventana; tags de las fuentes que lo mueven
+ * (ventas → weekly/daily, pauta → paid, gastos vía fallback de revalidación).
+ * Sin catch silencioso: si la RPC falla, la page lo muestra con WidgetState.
+ */
+export function getPnlRango(args: Pick<RangeArgs, 'desde' | 'hasta'>) {
+  return unstable_cache(
+    async (): Promise<RpcPnLRangoReturn | null> => {
+      const { data, error } = await supabase.rpc('get_pnl_rango', {
+        p_desde: args.desde,
+        p_hasta: args.hasta,
+      })
+      if (error) throw error
+      return (data ?? null) as RpcPnLRangoReturn | null
+    },
+    ['rpc_pnl_rango', args.desde, args.hasta],
+    { tags: ['weekly', 'daily', 'paid', 'producto'], revalidate: CACHE_FALLBACK_SECONDS },
+  )()
+}
