@@ -357,21 +357,6 @@ type ViewCustomerPanel = ReadOnlyView<{
   ultima_actualizacion: string | null
 }>
 
-type ViewCogsFaltante = ReadOnlyView<{
-  producto_id: string
-  producto_titulo: string | null
-  tipo: string | null
-  estado_producto: string | null
-  variantes_sin_cogs: number | null
-  precio_promedio: number | null
-  ventas_90d: number | null
-  unidades_90d: number | null
-  revenue_90d: number | null
-  en_ssot: boolean | null
-  diagnostico: string | null
-  accion: string | null
-}>
-
 // =============================================================================
 // RPCs parametrizadas AIR-193 (migración 119). Firma uniforme (p_desde, p_hasta,
 // p_canal) — SECURITY DEFINER + grant a anon. Corte de día America/Bogota.
@@ -504,6 +489,53 @@ export type RpcWtdPacingRow = {
   prom_8sem: number | string | null
   banda_8sem: 'sobre' | 'dentro' | 'bajo' | null
   canal_aplicado: boolean
+}
+
+/**
+ * Row de analytics.get_paid_daily (AIR-209, mig 125). Serie diaria gasto vs
+ * revenue ATRIBUIDO real (nunca pixel). numeric llega como string por PostgREST.
+ */
+export type RpcPaidDailyRow = {
+  fecha: string
+  gasto: number | string
+  revenue_atribuido: number | string
+  margen_atribuido: number | string
+  roas_revenue: number | string | null
+  roas_margen: number | string | null
+}
+
+/**
+ * Row de analytics.get_paid_ads (AIR-209, mig 125). Anuncios con gasto>0 en el
+ * rango. `compras` es Meta-reportado (engagement, no revenue). `senal` es una
+ * etiqueta determinista de decisión. NO incluye ROAS-margen por anuncio (la
+ * atribución real es a grano adset; prorratearla estaría prohibido).
+ */
+export type RpcPaidAdsRow = {
+  ad_id: string | null
+  ad_name: string | null
+  campaign_name: string | null
+  gasto: number | string
+  impresiones: number | string
+  clics: number | string
+  ctr_pct: number | string | null
+  atc: number | string
+  compras: number | string
+  compras_total: number | string
+  senal: 'sin_conversion' | 'lider' | 'activo' | string
+}
+
+/**
+ * Row de analytics.get_paid_signal_health (AIR-209, mig 125). Fila única con los
+ * checks deterministas de salud de la señal + cobertura de COGS del catálogo.
+ */
+export type RpcPaidSignalHealthRow = {
+  cobertura_cogs_pct: number | string | null
+  variantes_activas: number
+  variantes_con_cogs: number
+  pixel_bug_dias: number
+  pixel_bug_adsets: number
+  adsets_atribuidos: number
+  adsets_con_gasto: number
 }
 
 /**
@@ -652,6 +684,20 @@ export type RpcEmailReturn = {
   }
 }
 
+/**
+ * Return de analytics.get_cerebro_stats (AIR-211, mig 127). jsonb con conteos
+ * agregados de la memoria del sistema + loop HITL que anon no puede leer directo
+ * (tablas public con RLS). Solo enteros (sin texto => sin superficie de
+ * injection). PostgREST devuelve el objeto jsonb directamente.
+ */
+export type RpcCerebroStats = {
+  insights_acumulados: number
+  acciones_30d: number
+  confirmaciones_28d: number
+  strategic_consolidados: number
+  brand_knowledge_hechos: number
+}
+
 type AnalyticsFunctions = {
   get_kpis: { Args: RangeArgs; Returns: RpcKpisRow[] }
   get_funnel: { Args: RangeArgs; Returns: RpcFunnelRow[] }
@@ -672,8 +718,14 @@ type AnalyticsFunctions = {
   get_inventory_summary: { Args: { p_desde: string; p_hasta: string }; Returns: RpcInventorySummary }
   // AIR-208 (mig 124)
   get_funnel_history: { Args: { p_semanas?: number }; Returns: RpcFunnelHistoryRow[] }
+  // AIR-209 (mig 125) — Paid v2
+  get_paid_daily: { Args: { p_desde: string; p_hasta: string }; Returns: RpcPaidDailyRow[] }
+  get_paid_ads: { Args: { p_desde: string; p_hasta: string }; Returns: RpcPaidAdsRow[] }
+  get_paid_signal_health: { Args: { p_desde: string; p_hasta: string }; Returns: RpcPaidSignalHealthRow[] }
   // AIR-210 (mig 126) — jsonb escalar: PostgREST devuelve el objeto directamente.
   get_email: { Args: { p_desde: string; p_hasta: string }; Returns: RpcEmailReturn }
+  // AIR-211 (mig 127) — jsonb escalar: PostgREST devuelve el objeto directamente.
+  get_cerebro_stats: { Args: Record<PropertyKey, never>; Returns: RpcCerebroStats }
 }
 
 /**
@@ -698,7 +750,6 @@ export type AnalyticsDatabase = {
       view_dashboard_inventory_health: ViewInventoryHealth
       view_dashboard_discount_mix: ViewDiscountMix
       view_dashboard_customer_panel: ViewCustomerPanel
-      view_dashboard_cogs_faltante: ViewCogsFaltante
     }
     Views: Record<string, never>
     Functions: AnalyticsFunctions

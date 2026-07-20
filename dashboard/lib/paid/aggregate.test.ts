@@ -22,7 +22,9 @@ function campaign(over: Partial<CampaignTotalsInput> = {}): CampaignTotalsInput 
     num_ads: 3,
     gasto: 1_000_000,
     compras: 10,
+    ventas_atribuidas: 8,
     margen_atribuido: 1_500_000,
+    revenue_atribuido: 2_000_000,
     ctr_pct: 2.5,
     cpc: 800,
     ...over,
@@ -45,6 +47,17 @@ describe('computeTotals', () => {
   it('roas_margen_blended = Σmargen / Σgasto', () => {
     const totals = computeTotals([campaign({ gasto: 1_000_000, margen_atribuido: 1_500_000 })])
     expect(totals.roas_margen_blended).toBeCloseTo(1.5, 5)
+  })
+
+  it('CPA v2 se calcula sobre compras ATRIBUIDAS, no las de Meta (AIR-209)', () => {
+    // gasto 1.94M, ventas_atribuidas 8+1=9, compras Meta 15 → CPA = 1.94M/9, no /15.
+    const totals = computeTotals([
+      campaign({ gasto: 1_000_000, ventas_atribuidas: 8, compras: 10, revenue_atribuido: 1_800_000 }),
+      campaign({ gasto: 943_245, ventas_atribuidas: 1, compras: 5, revenue_atribuido: 1_300_000 }),
+    ])
+    expect(totals.ventas_atribuidas).toBe(9)
+    expect(totals.cpa_blended).toBeCloseTo(1_943_245 / 9, 5)
+    expect(totals.roas_revenue_blended).toBeCloseTo(3_100_000 / 1_943_245, 5)
   })
 
   it('promedios ponderados por num_ads y sin división por cero', () => {
