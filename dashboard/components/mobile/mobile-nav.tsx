@@ -173,7 +173,7 @@ function MoreSheet({
   const analitica: MoreRow[] = [
     { href: '/funnel', label: 'Funnel de conversión', sub: 'Embudo · Amplitude' },
     { href: '/email',  label: 'Email · Klaviyo',       sub: 'Campañas · flows · entregabilidad' },
-    { href: '/pnl',    label: 'P&L del período',       sub: 'En construcción', wip: true },
+    { href: '/pnl',    label: 'P&L del período',       sub: 'Rentabilidad · unit economics' },
   ]
   const sistema: MoreRow[] = [
     {

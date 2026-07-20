@@ -21,6 +21,7 @@ const PAGE_META: Record<string, { title: string; short: string; week: string }> 
   '/funnel':     { title: 'Funnel de conversión',  short: 'Funnel',    week: 'Amplitude' },
   '/paid':       { title: 'Paid · Meta Ads',       short: 'Paid',      week: 'Campañas · creativos · ROAS real' },
   '/email':      { title: 'Email · Klaviyo',       short: 'Email',     week: 'Campañas · flows · lista · entregabilidad' },
+  '/pnl':        { title: 'P&L del período',       short: 'P&L',       week: 'Rentabilidad · unit economics' },
   '/ai':         { title: 'el Cerebro',            short: 'Cerebro',   week: 'Insights · anomalías · cohortes' },
   '/anomalias':  { title: 'Anomalías',             short: 'Anomalías', week: 'Salud de datos' },
   '/fuentes':    { title: 'Fuentes de datos',      short: 'Fuentes',   week: 'Estado de integraciones' },
@@ -64,7 +65,7 @@ export function Topbar({ signOutSlot, staleDot }: TopbarProps) {
 
   // Las páginas cableadas al filtro muestran el período efectivo en el topbar, no
   // un texto de período fijo (que era engañoso al cambiar de rango).
-  const FILTERED_PAGES = new Set(['/', '/funnel', '/paid', '/producto'])
+  const FILTERED_PAGES = new Set(['/', '/funnel', '/paid', '/producto', '/pnl'])
   const weekLabel = FILTERED_PAGES.has(pathname) ? presetLabel(range) : meta.week
 
   // El Overview solo se titula "semanal" cuando el hero es el pacing de la semana
@@ -91,7 +92,8 @@ export function Topbar({ signOutSlot, staleDot }: TopbarProps) {
     })
   }
 
-  const channelDisabled = pathname.startsWith('/paid') || pathname.startsWith('/email')
+  const channelDisabled =
+    pathname.startsWith('/paid') || pathname.startsWith('/email') || pathname.startsWith('/pnl')
 
   return (
     <header className="topbar" aria-busy={isPending}>
