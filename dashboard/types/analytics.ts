@@ -629,6 +629,18 @@ type AnalyticsFunctions = {
   get_paid_daily: { Args: { p_desde: string; p_hasta: string }; Returns: RpcPaidDailyRow[] }
   get_paid_ads: { Args: { p_desde: string; p_hasta: string }; Returns: RpcPaidAdsRow[] }
   get_paid_signal_health: { Args: { p_desde: string; p_hasta: string }; Returns: RpcPaidSignalHealthRow[] }
+  // AIR-212 (mig 128) — anomalías con nivel/estado derivados en SQL (G7).
+  get_anomalias: {
+    Args: {
+      p_desde?: string | null
+      p_hasta?: string | null
+      p_dominio?: string | null
+      p_nivel?: string | null
+    }
+    Returns: RpcAnomaliaRow[]
+  }
+  // AIR-213 (mig 128) — detalle de las 6 fuentes (jsonb[]).
+  get_fuentes_detail: { Args: Record<PropertyKey, never>; Returns: RpcFuenteDetail[] }
 }
 
 /**
@@ -659,4 +671,53 @@ export type AnalyticsDatabase = {
     Enums: Record<string, never>
     CompositeTypes: Record<string, never>
   }
+}
+
+// =============================================================================
+// AIR-212 / AIR-213 (mig 128) — Sistema · Anomalías & Fuentes de datos v2.
+// Tipos añadidos al final del archivo para minimizar conflictos con los PRs en
+// vuelo (#143/#144/#145) que también tocan este archivo.
+// =============================================================================
+
+export type AnomaliaNivel = 'critico' | 'alerta' | 'info'
+
+/** Fila de analytics.get_anomalias — nivel y estado ya derivados en SQL (G7). */
+export interface RpcAnomaliaRow {
+  id: string
+  dominio: string | null
+  titulo: string | null
+  descripcion: string | null
+  metrica_clave: string | null
+  valor_observado: number | string | null
+  valor_referencia: number | string | null
+  delta_pct: number | string | null
+  score_confianza: number | string | null
+  z_score: number | string | null
+  nivel: AnomaliaNivel
+  /** 'abierta' constante hoy — lifecycle/auto-cierre = WIP (G7b). */
+  estado: string
+  periodo_inicio: string | null
+  periodo_fin: string | null
+  accion_sugerida: string | null
+  created_at: string | null
+}
+
+/** Elemento del jsonb[] de analytics.get_fuentes_detail — una tarjeta de fuente. */
+export interface RpcFuenteDetail {
+  fuente: string
+  etiqueta: string
+  cadencia: string
+  umbral_dias: number
+  ultima_fecha: string | null
+  dias_desde_ultimo: number | null
+  stale: boolean
+  estado: 'ok' | 'lento' | 'sin_datos'
+  errores_7d: number
+  eventos_total: number
+  /** Último error ≤30d, mensaje ya saneado server-side (mig 128). */
+  ultimo_error: { mensaje: string; at: string } | null
+  vol1_label: string | null
+  vol1_valor: number | null
+  vol2_label: string | null
+  vol2_valor: number | null
 }
