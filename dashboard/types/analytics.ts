@@ -357,21 +357,6 @@ type ViewCustomerPanel = ReadOnlyView<{
   ultima_actualizacion: string | null
 }>
 
-type ViewCogsFaltante = ReadOnlyView<{
-  producto_id: string
-  producto_titulo: string | null
-  tipo: string | null
-  estado_producto: string | null
-  variantes_sin_cogs: number | null
-  precio_promedio: number | null
-  ventas_90d: number | null
-  unidades_90d: number | null
-  revenue_90d: number | null
-  en_ssot: boolean | null
-  diagnostico: string | null
-  accion: string | null
-}>
-
 // =============================================================================
 // RPCs parametrizadas AIR-193 (migración 119). Firma uniforme (p_desde, p_hasta,
 // p_canal) — SECURITY DEFINER + grant a anon. Corte de día America/Bogota.
@@ -553,6 +538,21 @@ export type RpcPaidSignalHealthRow = {
   adsets_con_gasto: number
 }
 
+/**
+ * Row de analytics.get_funnel_history (AIR-208, mig 124). Serie semanal de
+ * add-to-cart rate + CVR web, ambos recomputados desde las SUMAS semanales en
+ * SQL (no promediando las GENERATED). Los numeric llegan como string por
+ * PostgREST; el front normaliza con parseNumber. No segmenta por canal.
+ */
+export type RpcFunnelHistoryRow = {
+  semana_inicio: string
+  semana_fin: string
+  semana_iso: number
+  sesiones: number | string
+  atc_rate: number | string | null
+  cvr_web: number | string | null
+}
+
 /** Una meta configurada (analytics.dashboard_targets). */
 export type RpcTarget = {
   valor: number | null
@@ -563,6 +563,47 @@ export type RpcTarget = {
 }
 /** Return de analytics.get_targets — jsonb {metrica -> RpcTarget}. */
 export type RpcTargetsReturn = Record<string, RpcTarget>
+
+/**
+ * Return de analytics.get_inventory_summary (AIR-207, mig 123). jsonb con el
+ * resumen de inventario de Producto & Comercial v2. Toda la lógica de dinero
+ * (deadstock 60d, revenue 30d en riesgo, capital) se calcula en SQL. Los campos
+ * numéricos llegan como número JSON (jsonb); el front igual normaliza con
+ * parseNumber por robustez.
+ */
+export type RpcInventorySummary = {
+  generado_hoy: string
+  ventana_ventas: { desde: string; hasta: string }
+  cobertura_minima_und: number
+  stock_bajo_producto_und: number
+  stockout_critico_skus: number
+  stockout_inminente_skus: number
+  deadstock: { count: number; capital: number }
+  skus_vendiendo: number
+  total_skus: number
+  total_posiciones: number
+  ubicaciones: number
+  stockouts_costosos: Array<{
+    producto_id: string
+    producto_titulo: string | null
+    estado: 'stockout_critico' | 'stockout_inminente'
+    venta_30d_revenue: number
+    variantes_afectadas: number
+  }>
+  stock_por_producto: Array<{
+    producto_id: string
+    disponible: number
+    estado: 'ok' | 'bajo' | 'agotado'
+  }>
+  salud_por_coleccion: Array<{
+    coleccion: string
+    total: number
+    sanos: number
+    pct_sano: number
+    stockout_critico: number
+    stockout_inminente: number
+  }>
+}
 
 type AnalyticsFunctions = {
   get_kpis: { Args: RangeArgs; Returns: RpcKpisRow[] }
@@ -580,6 +621,10 @@ type AnalyticsFunctions = {
   // AIR-206 (mig 122)
   get_wtd_pacing: { Args: { p_hoy?: string | null; p_canal?: string | null }; Returns: RpcWtdPacingRow[] }
   get_targets: { Args: Record<PropertyKey, never>; Returns: RpcTargetsReturn }
+  // AIR-207 (mig 123) — jsonb escalar: PostgREST devuelve el objeto directamente.
+  get_inventory_summary: { Args: { p_desde: string; p_hasta: string }; Returns: RpcInventorySummary }
+  // AIR-208 (mig 124)
+  get_funnel_history: { Args: { p_semanas?: number }; Returns: RpcFunnelHistoryRow[] }
   // AIR-209 (mig 125) — Paid v2
   get_paid_daily: { Args: { p_desde: string; p_hasta: string }; Returns: RpcPaidDailyRow[] }
   get_paid_ads: { Args: { p_desde: string; p_hasta: string }; Returns: RpcPaidAdsRow[] }
@@ -608,7 +653,6 @@ export type AnalyticsDatabase = {
       view_dashboard_inventory_health: ViewInventoryHealth
       view_dashboard_discount_mix: ViewDiscountMix
       view_dashboard_customer_panel: ViewCustomerPanel
-      view_dashboard_cogs_faltante: ViewCogsFaltante
     }
     Views: Record<string, never>
     Functions: AnalyticsFunctions

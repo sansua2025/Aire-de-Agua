@@ -1,47 +1,55 @@
-import { KpiTile, Callout, WidgetState } from '@/components/ui'
+import { Callout, WidgetState } from '@/components/ui'
 import {
-  ProductoCharts,
-  type TopSkuDatum,
-  type DiscountTrendDatum,
-} from '@/components/producto/producto-charts'
-import {
-  InventoryTable,
-  type InventoryItem,
-} from '@/components/producto/inventory-table'
-import {
-  getTopSkusRange,
-  getInventoryHealth,
-  getDiscountMix,
-} from '@/lib/data/queries'
+  InventoryKpis,
+  type InventoryKpi,
+  TopProductsTable,
+  type TopProductRow,
+  StockoutsList,
+  type StockoutItem,
+  DeadstockCard,
+  DiscountBars,
+  type DiscountWeek,
+  CollectionHealth,
+  type CollectionHealthRow,
+} from '@/components/producto/producto-v2'
+import { getTopSkusRange, getInventorySummary, getDiscountMix } from '@/lib/data/queries'
 import {
   parseFilters,
   resolveRange,
   channelToToken,
-  describeFilters,
   formatRangeCompact,
   channelLabel,
 } from '@/lib/filters'
-import { formatCop, formatNumber } from '@/lib/format'
+import { formatCop, formatNumber, formatPct } from '@/lib/format'
 
 /**
- * Producto y Comercial · Dashboard v2 (AIR-194) — Server Component.
+ * Producto & Comercial · Founder Cockpit v2 (AIR-207 · Figma node 12:2).
+ * Server Component.
  *
- * Top SKUs desde analytics.get_top_skus(desde,hasta,limit,canal) — responde a
- * período y canal. Inventario (estado actual) y mix de descuento (tendencia
- * semanal) no tienen RPC parametrizada y conservan su fuente: son vistas de
- * estado/serie, no dependen del rango de ventas.
+ * Jerarquía founder-first:
+ *   1. KPI row (6): stockout crítico/inminente, deadstock, SKUs vendiendo,
+ *      margen avg top, discount rate.
+ *   2. Top productos (rank dual R/M + stock + señal) + [Stockouts que cuestan
+ *      plata · Capital inmovilizado].
+ *   3. Discount rate 8 sem + Salud de inventario por colección.
  *
- * Errores (AIR-196): sin catch silencioso.
+ * Fuentes: analytics.get_top_skus (período+canal), analytics.get_inventory_summary
+ * (G4, mig 123 — dinero SIEMPRE en SQL) y view_dashboard_discount_mix (ventana fija
+ * 8 semanas). Los widgets de inventario son FOTO ACTUAL (hoy America/Bogotá) y lo
+ * declaran con PeriodBadge; "SKUs vendiendo" y el top responden al filtro global.
+ *
+ * Decisión de Santiago (AIR-204, 2026-07-19): "solo data, sin botón" — no hay CTA
+ * de reposición ni de liquidación. Errores honestos por widget (AIR-199): un fetch
+ * fallido muestra estado de error, nunca $0.
  */
 
-function parseNumber(v: unknown): number | null {
+function parseNum(v: unknown): number | null {
   if (v == null) return null
   const n = typeof v === 'number' ? v : parseFloat(String(v))
   return isNaN(n) ? null : n
 }
 
-const shortLabel = (label: string | null) =>
-  (label || '—').replace(/^\d{4}-/, '')
+const shortWeek = (label: string | null) => (label || '—').replace(/^\d{4}-/, '')
 
 interface ProductoPageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>
@@ -51,15 +59,13 @@ export default async function ProductoPage({ searchParams }: ProductoPageProps) 
   const filters = parseFilters(await searchParams)
   const range = resolveRange(filters.range)
   const canal = channelToToken(filters.channel)
-  const periodoDesc = describeFilters(filters, range)
-  const periodoCompact = formatRangeCompact(range)
   const canalActivo = filters.channel !== 'all'
+  const periodoCompact = formatRangeCompact(range)
 
-  // Aislamiento por widget (AIR-197): allSettled. Top-SKUs, inventario y
-  // discount son fuentes independientes — si una falla, las otras siguen vivas.
+  // Aislamiento por widget (AIR-199): allSettled + pick honesto.
   const settled = await Promise.allSettled([
     getTopSkusRange({ desde: range.desde, hasta: range.hasta, canal }, 10),
-    getInventoryHealth(),
+    getInventorySummary({ desde: range.desde, hasta: range.hasta }),
     getDiscountMix(),
   ])
   const pick = <T,>(i: number, name: string): { value: T | null; errored: boolean } => {
@@ -68,175 +74,205 @@ export default async function ProductoPage({ searchParams }: ProductoPageProps) 
     console.error(`[producto] fuente "${name}" falló:`, r.reason)
     return { value: null, errored: true }
   }
-  const topSkusR = pick<Awaited<ReturnType<typeof getTopSkusRange>>>(0, 'get_top_skus')
-  const inventoryR = pick<Awaited<ReturnType<typeof getInventoryHealth>>>(1, 'inventory_health')
-  const discountR = pick<Awaited<ReturnType<typeof getDiscountMix>>>(2, 'discount_mix')
+  const topR = pick<Awaited<ReturnType<typeof getTopSkusRange>>>(0, 'get_top_skus')
+  const invR = pick<Awaited<ReturnType<typeof getInventorySummary>>>(1, 'get_inventory_summary')
+  const discR = pick<Awaited<ReturnType<typeof getDiscountMix>>>(2, 'discount_mix')
 
-  const topSkusErrored = topSkusR.errored
-  const inventoryErrored = inventoryR.errored
-  const discountErrored = discountR.errored
-  const topSkusRaw = topSkusR.value
-  const inventoryRaw = inventoryR.value
-  const discountRaw = discountR.value
+  const top = topR.value ?? []
+  const inv = invR.value
+  const disc = discR.value ?? []
 
-  // Top SKUs del período (get_top_skus).
-  const topSkus: TopSkuDatum[] = (topSkusRaw || []).map((s) => ({
-    producto_titulo: s.producto_titulo || '—',
-    revenue: parseNumber(s.revenue) ?? 0,
-    margen_total: parseNumber(s.margen_total) ?? 0,
-    margen_pct: parseNumber(s.margen_pct),
-    rank_revenue: parseNumber(s.rank_revenue) ?? 0,
-    rank_margen: parseNumber(s.rank_margen) ?? 0,
-    unidades: parseNumber(s.unidades) ?? 0,
-    ordenes: parseNumber(s.ordenes) ?? 0,
-    ticket_promedio: parseNumber(s.ticket_promedio),
-    coleccion: s.coleccion,
-    tipo: s.tipo,
-  }))
+  // ---- KPI row ----
+  const stockoutCrit = parseNum(inv?.stockout_critico_skus) ?? 0
+  const stockoutInm = parseNum(inv?.stockout_inminente_skus) ?? 0
+  const deadCount = parseNum(inv?.deadstock?.count) ?? 0
+  const deadCapital = parseNum(inv?.deadstock?.capital) ?? 0
+  const skusVend = parseNum(inv?.skus_vendiendo) ?? 0
+  const totalSkus = parseNum(inv?.total_skus) ?? 0
+  const coberturaMin = parseNum(inv?.cobertura_minima_und) ?? 5
 
-  // Inventory health (estado actual del catálogo — sin dimensión de rango).
-  const inventory: InventoryItem[] = (inventoryRaw || []).map((i) => ({
-    producto_id: i.producto_id,
-    producto_titulo: i.producto_titulo,
-    variante_id: i.variante_id,
-    ubicacion_id: i.ubicacion_id,
-    sku: i.sku,
-    talla: i.talla,
-    color: i.color,
-    ubicacion_nombre: i.ubicacion_nombre,
-    cantidad_disponible: parseNumber(i.cantidad_disponible),
-    unidades_vendidas_14d: parseNumber(i.unidades_vendidas_14d),
-    estado_salud: i.estado_salud,
-    dias_hasta_stockout: parseNumber(i.dias_hasta_stockout),
-    capital_inmovilizado: parseNumber(i.capital_inmovilizado),
-  }))
+  // Margen avg del top: margen BLENDED (Σ margen_total / Σ revenue) — ambos ya
+  // vienen calculados por get_top_skus (margen_linea con su cobertura_cogs); aquí
+  // solo se agrega la razón, no se recalcula dinero.
+  const sumRev = top.reduce((s, t) => s + (parseNum(t.revenue) ?? 0), 0)
+  const sumMargen = top.reduce((s, t) => s + (parseNum(t.margen_total) ?? 0), 0)
+  const margenAvgTop = sumRev > 0 ? (sumMargen / sumRev) * 100 : null
 
-  const stockoutsCriticos = inventory.filter((i) => i.estado_salud === 'stockout_critico').length
-  const stockoutsInminentes = inventory.filter((i) => i.estado_salud === 'stockout_inminente').length
-  const deadstockSkus = inventory.filter((i) => i.estado_salud === 'deadstock').length
-  const capitalInmovilizado = inventory
-    .filter((i) => i.estado_salud === 'deadstock')
-    .reduce((sum, i) => sum + (i.capital_inmovilizado ?? 0), 0)
+  // Discount: rate de la semana actual + máximo de las 8 semanas.
+  const discSorted = [...disc]
+    .filter((d) => d.semana_inicio)
+    .sort((a, b) => ((a.semana_inicio ?? '') < (b.semana_inicio ?? '') ? -1 : 1))
+    .slice(-8)
+  const discCurrent = discSorted.find((d) => d.is_current) ?? discSorted[discSorted.length - 1]
+  const discCurrentRate = parseNum(discCurrent?.discount_rate_pct) ?? 0
+  const discMax = discSorted.reduce((m, d) => Math.max(m, parseNum(d.discount_rate_pct) ?? 0), 0)
 
-  const totalSkusVendiendo = inventory.filter((i) => (i.unidades_vendidas_14d ?? 0) > 0).length
+  const kpis: InventoryKpi[] = [
+    {
+      id: 'critico',
+      label: 'Stockout crítico',
+      value: `${formatNumber(stockoutCrit)} SKUs`,
+      sub: 'agotado con venta reciente',
+      tone: stockoutCrit > 0 ? 'danger' : 'default',
+    },
+    {
+      id: 'inminente',
+      label: 'Stockout inminente',
+      value: `${formatNumber(stockoutInm)} SKUs`,
+      sub: `≤${coberturaMin} und, aún vendiendo`,
+    },
+    {
+      id: 'deadstock',
+      label: 'Deadstock',
+      value: `${formatNumber(deadCount)} · ${formatCop(deadCapital)}`,
+      sub: 'capital inmovilizado · 60+ días',
+    },
+    {
+      id: 'vendiendo',
+      label: 'SKUs vendiendo',
+      value: `${formatNumber(skusVend)} / ${formatNumber(totalSkus)}`,
+      sub: 'período del filtro',
+    },
+    {
+      id: 'margen',
+      label: 'Margen avg top',
+      value: margenAvgTop != null ? formatPct(margenAvgTop) : '—',
+      sub: 'top 10 por revenue',
+    },
+    {
+      id: 'discount',
+      label: 'Discount rate',
+      value: formatPct(discCurrentRate),
+      sub: `8 sem: max ${formatPct(discMax)}`,
+    },
+  ]
 
-  const margenPromedio = topSkus.length > 0
-    ? topSkus.reduce((s, t) => s + (t.margen_pct ?? 0), 0) / topSkus.length
-    : 0
-  const revenueTop = topSkus.reduce((s, t) => s + t.revenue, 0)
+  // ---- Top productos (rank dual + stock badge + señal) ----
+  const stockMap = new Map(
+    (inv?.stock_por_producto ?? []).map((s) => [s.producto_id, s]),
+  )
+  const rows: TopProductRow[] = top.map((t) => {
+    const st = stockMap.get(t.producto_id)
+    const disp = st ? parseNum(st.disponible) ?? 0 : null
+    let stock: TopProductRow['stock']
+    if (!st) stock = { kind: 'unknown', label: '—' }
+    else if (st.estado === 'agotado') stock = { kind: 'agotado', label: 'AGOTADO' }
+    else if (st.estado === 'bajo') stock = { kind: 'bajo', label: `${formatNumber(disp)} und` }
+    else stock = { kind: 'ok', label: 'OK' }
 
-  const discountTrend: DiscountTrendDatum[] = (discountRaw || []).map((d) => ({
-    w: shortLabel(d.semana_label),
-    rate: parseNumber(d.discount_rate_pct) ?? 0,
-    ordenes: parseNumber(d.ordenes) ?? 0,
-    aov_sin: parseNumber(d.aov_sin_codigo),
-    aov_con: parseNumber(d.aov_con_codigo),
-    pct_codigo: parseNumber(d.pct_ordenes_con_codigo) ?? 0,
-    is_current: !!d.is_current,
-  }))
-
-  const actionTitle = (() => {
-    if (stockoutsCriticos > 0) {
-      return `${stockoutsCriticos} SKUs en stockout crítico — perdiendo ventas`
+    const rankRevenue = parseNum(t.rank_revenue)
+    const rankMargen = parseNum(t.rank_margen)
+    // Señal (NO CTA — solo data): reponer si agotado o crítico (≤cobertura); revisar
+    // margen si "vende ≠ rinde" (rank de margen ≥3 posiciones peor que el de revenue).
+    let senal: TopProductRow['senal'] = null
+    if (stock.kind === 'agotado' || (stock.kind === 'bajo' && disp != null && disp <= coberturaMin)) {
+      senal = { text: 'Reponer', tone: 'danger' }
+    } else if (rankRevenue != null && rankMargen != null && rankMargen - rankRevenue >= 3) {
+      senal = { text: 'Revisar margen', tone: 'warning' }
     }
-    if (capitalInmovilizado > 10_000_000) {
-      return `${formatCop(capitalInmovilizado)} en deadstock · ${deadstockSkus} SKUs sin movimiento`
+
+    return {
+      producto_id: t.producto_id,
+      titulo: t.producto_titulo || '—',
+      unidades: formatNumber(parseNum(t.unidades) ?? 0),
+      revenue: formatCop(parseNum(t.revenue) ?? 0),
+      margen: t.margen_pct != null ? formatPct(parseNum(t.margen_pct)) : '—',
+      rankRevenue,
+      rankMargen,
+      stock,
+      senal,
     }
-    return 'Producto y Comercial — operación de inventario'
-  })()
+  })
+
+  // ---- Stockouts que cuestan plata ----
+  const stockoutItems: StockoutItem[] = (inv?.stockouts_costosos ?? []).map((s) => ({
+    producto_id: s.producto_id,
+    titulo: s.producto_titulo || '—',
+    estado: s.estado,
+    ventaTexto: `vendía ${formatCop(parseNum(s.venta_30d_revenue) ?? 0)} / 30d`,
+  }))
+
+  // ---- Deadstock (sugerencia rule-based, sin cifras inventadas) ----
+  const deadSugerencia =
+    deadCount > 0
+      ? `Sin venta en 60+ días. Candidato a liquidación controlada (bundle o descuento ≤15%) para recuperar caja sin tocar los productos héroe.`
+      : 'Sin capital inmovilizado en deadstock de 60+ días. Inventario en rotación.'
+
+  // ---- Discount bars + lectura founder (reglas simples, sin llamada a Claude) ----
+  const weeks: DiscountWeek[] = discSorted.map((d) => ({
+    label: shortWeek(d.semana_label),
+    rate: parseNum(d.discount_rate_pct) ?? 0,
+    isCurrent: !!d.is_current,
+  }))
+  const recientes = weeks.slice(-3).map((w) => w.rate)
+  const recientesBajos = recientes.length > 0 && recientes.every((r) => r < 1)
+  const reading = recientesBajos
+    ? `Vendes casi todo a precio completo las últimas semanas — sano para margen. Cruzándolo con el deadstock (${formatCop(deadCapital)}), hay espacio para un descuento quirúrgico en lo estancado sin tocar los héroes.`
+    : discMax >= 15
+      ? `El discount rate llegó a ${formatPct(discMax)} en las últimas 8 semanas — vigila que la promoción no esté erosionando el margen de los productos que ya rotan.`
+      : `Discount rate en niveles bajos y estables. El margen no está siendo comido por promociones.`
+
+  // ---- Salud por colección ----
+  const totalPos = parseNum(inv?.total_posiciones) ?? 0
+  const ubicaciones = parseNum(inv?.ubicaciones) ?? 0
+  const collRows: CollectionHealthRow[] = (inv?.salud_por_coleccion ?? []).map((c) => {
+    const pct = parseNum(c.pct_sano) ?? 0
+    const stockouts = (c.stockout_critico ?? 0) + (c.stockout_inminente ?? 0)
+    const nota =
+      stockouts > 0
+        ? `${stockouts} stockout${stockouts === 1 ? '' : 's'} · ${c.total} posiciones`
+        : `${c.total} posiciones`
+    return {
+      coleccion: c.coleccion,
+      pctSano: pct,
+      nota,
+      notaTone: (c.stockout_critico ?? 0) > 0 ? 'danger' : 'muted',
+      tone: pct >= 70 ? 'success' : pct >= 40 ? 'warning' : 'danger',
+    }
+  })
+  const collCaption = `${formatNumber(totalPos)} posiciones · ${formatNumber(ubicaciones)} ubicaciones`
 
   return (
     <>
-      <div className="page-hero">
-        <div>
-          <h1>{actionTitle}</h1>
-          <div className="lede">
-            Salud del catálogo en tiempo real desde Shopify webhooks. Stockouts pierden venta inmediata,
-            deadstock inmoviliza capital. Top SKUs muestra rank dual revenue/margen — los #1 por revenue
-            no siempre son los más rentables.
-          </div>
-        </div>
-        <div className="meta-block">
-          <span>Top SKUs · <span className="v">{periodoDesc}</span></span>
-          <span>SKUs alerta · <span className="v">{stockoutsCriticos + stockoutsInminentes + deadstockSkus}</span></span>
-          <span>Margen avg top · <span className="v">{margenPromedio.toFixed(1)}%</span></span>
-        </div>
-      </div>
-
-      {canalActivo && (
-        <Callout kind="accent" title={`Top SKUs filtrados · ${channelLabel(filters.channel)}`}>
-          Los Top SKUs se restringen a ventas web atribuidas a este canal. El inventario y la tendencia
-          de descuento son de estado/serie y no se segmentan por canal.
-        </Callout>
-      )}
-
-      {inventoryErrored && (
-        <WidgetState state="error" title="No se pudo cargar el inventario">
-          Las vistas de inventario no respondieron. Los KPIs de stockout/deadstock de abajo NO son
-          ceros reales: es un error de la fuente. Reintenta o revisa el estado de Supabase.
+      {invR.errored && (
+        <WidgetState state="error" title="No se pudo cargar el resumen de inventario">
+          analytics.get_inventory_summary no respondió. Los KPIs de stockout/deadstock NO son ceros
+          reales: es un error de la fuente. Reintenta o revisa el estado de Supabase.
         </WidgetState>
       )}
 
-      {/* KPI tiles comerciales */}
-      <div className="grid grid-kpis" style={inventoryErrored ? { opacity: 0.4 } : undefined}>
-        <KpiTile
-          label="Stockout crítico"
-          value={String(stockoutsCriticos)}
-          unit="SKUs"
-          icon="alert"
-          deltaValue={null}
-          goodDirection="down"
-        />
-        <KpiTile
-          label="Inminente"
-          value={String(stockoutsInminentes)}
-          unit="SKUs"
-          icon="cart"
-          deltaValue={null}
-          goodDirection="down"
-        />
-        <KpiTile
-          label="Deadstock"
-          value={String(deadstockSkus)}
-          unit="SKUs"
-          icon="bag"
-          deltaValue={null}
-        />
-        <KpiTile
-          label="Capital inmov."
-          value={(capitalInmovilizado / 1_000_000).toFixed(1)}
-          unit="M COP"
-          icon="dollar"
-          deltaValue={null}
-          goodDirection="down"
-        />
-        <KpiTile
-          label="Top revenue"
-          value={(revenueTop / 1_000_000).toFixed(2)}
-          unit="M COP"
-          icon="dollar"
-          deltaValue={null}
-        />
-        <KpiTile
-          label="SKUs vendiendo"
-          value={formatNumber(totalSkusVendiendo)}
-          icon="users"
-          deltaValue={null}
-        />
+      {/* 1. KPI row */}
+      <div style={invR.errored ? { opacity: 0.4 } : undefined}>
+        <InventoryKpis kpis={kpis} />
       </div>
 
-      {/* Charts: top SKUs + discount trend */}
-      <ProductoCharts
-        topSkus={topSkus}
-        discountTrend={discountTrend}
-        range={{ desde: range.desde, hasta: range.hasta }}
-        topSkusErrored={topSkusErrored}
-        discountErrored={discountErrored}
-      />
+      {canalActivo && (
+        <div className="ov-block">
+          <Callout kind="accent" title={`Filtro de canal activo · ${channelLabel(filters.channel)}`}>
+            Los top productos se restringen a ventas web atribuidas a este canal. Los KPIs de inventario
+            (stockout, deadstock, colección) son foto actual del catálogo y no se segmentan por canal.
+          </Callout>
+        </div>
+      )}
 
-      {/* Inventory table con filtros */}
-      <div style={{ marginTop: 14 }}>
-        <InventoryTable items={inventory} />
+      {/* 2. Top productos + Stockouts/Deadstock */}
+      <div className="grid grid-21 ov-block">
+        <TopProductsTable rows={rows} range={range} errored={topR.errored} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--gap)' }}>
+          <StockoutsList items={stockoutItems} errored={invR.errored} />
+          <DeadstockCard
+            count={deadCount}
+            capital={formatCop(deadCapital)}
+            sugerencia={deadSugerencia}
+            errored={invR.errored}
+          />
+        </div>
+      </div>
+
+      {/* 3. Discount rate + Salud por colección */}
+      <div className="grid grid-2 ov-block">
+        <DiscountBars weeks={weeks} reading={reading} errored={discR.errored} />
+        <CollectionHealth rows={collRows} caption={collCaption} errored={invR.errored} />
       </div>
     </>
   )
