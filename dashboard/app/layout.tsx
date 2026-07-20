@@ -1,5 +1,13 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import './globals.css'
+
+// viewport-fit=cover expone las safe-area insets (env(safe-area-inset-*)) que la
+// tab bar móvil usa para no quedar bajo el home indicator del iPhone (AIR-218).
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
+}
 
 export const metadata: Metadata = {
   // Base para resolver el og:image relativo a URL absoluta (requerido por Next

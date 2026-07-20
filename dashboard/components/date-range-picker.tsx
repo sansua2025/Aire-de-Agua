@@ -217,14 +217,19 @@ export function DateRangePicker({ value, onChange, minDate }: DateRangePickerPro
 
 // ── Calendario de rango (selección en dos clics) ─────────────────────────────
 
-interface CustomCalendarProps {
+export interface CustomCalendarProps {
   value: RangeToken
   hoy: string
   minDate?: string
   onApply: (token: RangeToken) => void
 }
 
-function CustomCalendar({ value, hoy, minDate, onApply }: CustomCalendarProps) {
+/**
+ * Calendario de rango reutilizable. Lo consume el popover del topbar (desktop) y
+ * la hoja de período móvil (AIR-218) — misma semántica de selección en dos clics,
+ * solo cambia el contenedor. No calcula nada de negocio: emite un RangeToken.
+ */
+export function CustomCalendar({ value, hoy, minDate, onApply }: CustomCalendarProps) {
   // Semilla: si el valor actual ya es un rango custom, arranca ahí; si no, hoy.
   const seed = isCustomRange(value) ? resolveRange(value) : null
   const anchorISO = seed?.hasta ?? hoy

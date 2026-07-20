@@ -1128,7 +1128,7 @@ button:focus-visible, a.side-item:focus-visible, .side-item:focus-visible, .kpi:
 /* Print */
 @media print {
   @page { size: A4 landscape; margin: 12mm; }
-  .no-print, .sidebar, .topbar { display: none !important; }
+  .no-print, .sidebar, .topbar, .mtab { display: none !important; }
   .app { display: block; }
   .content { overflow: visible !important; height: auto !important; }
   .page { max-width: none; padding: 0; }
@@ -1232,4 +1232,248 @@ button:focus-visible, a.side-item:focus-visible, .side-item:focus-visible, .kpi:
   font-size: 11px; padding: 1px 5px; border-radius: 5px;
   background: var(--surface-3); color: var(--fg-2);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* =============================================================================
+ * MÓVIL v2 (AIR-218 · Figma frames M·*, 390×844). Shell móvil: sidebar oculto,
+ * tab bar fija al pie, topbar compacto y hojas inferiores (período + "Más").
+ * Aditivo: en desktop todos estos elementos quedan display:none — cero regresión.
+ * ========================================================================== */
+
+/* Envoltorios del topbar: los controles desktop viven en .topbar-desktop; el pill
+   de período móvil + punto de frescura en .topbar-mobile. Estado por defecto
+   (desktop): controles visibles, piezas móviles ocultas. */
+.topbar-desktop { display: flex; align-items: center; gap: 12px; }
+.topbar-mobile { display: none; align-items: center; gap: 10px; }
+.topbar-mono { display: none; }
+.topbar-title-m { display: none; }
+
+/* Tab bar y hojas: ocultas fuera del breakpoint móvil (no renderizan en desktop
+   salvo el nodo <nav>, que queda display:none). */
+.mtab { display: none; }
+
+/* ---------- Hojas inferiores (bottom sheets) — período y "Más" ---------- */
+.msheet-root {
+  position: fixed; inset: 0; z-index: 120;
+  display: flex; flex-direction: column; justify-content: flex-end;
+}
+.msheet-scrim { position: absolute; inset: 0; background: var(--scrim); animation: msheetFade 0.2s ease; }
+.msheet {
+  position: relative;
+  background: var(--surface);
+  border-top-left-radius: 22px; border-top-right-radius: 22px;
+  box-shadow: var(--shadow-overlay);
+  max-height: 90vh;
+  display: flex; flex-direction: column;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  animation: msheetUp 0.26s cubic-bezier(0.2, 0, 0, 1);
+}
+@keyframes msheetFade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes msheetUp { from { transform: translateY(100%); } to { transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .msheet, .msheet-scrim { animation: none; }
+}
+.msheet-grip {
+  width: 40px; height: 5px; border-radius: 999px;
+  background: var(--border-2); opacity: 0.7;
+  margin: 8px auto 2px;
+}
+.msheet-x {
+  width: 32px; height: 32px; display: grid; place-items: center;
+  background: var(--surface-2); border: none; border-radius: 999px;
+  color: var(--fg-2); cursor: pointer;
+}
+.msheet-x:hover { background: var(--surface-3); color: var(--fg); }
+
+/* ---------- Hoja "Más" (frame 56:2) ---------- */
+.mmore-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 18px 12px;
+}
+.mmore-head h2 { font-size: 20px; font-weight: 700; letter-spacing: -0.015em; }
+.mmore-body {
+  overflow-y: auto;
+  padding: 0 16px 20px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.mmore-section {
+  font-size: 11px; font-weight: 650; color: var(--fg-3);
+  letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 8px 4px 0;
+}
+.mmore-group {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 14px; padding: 0 16px;
+  display: flex; flex-direction: column;
+}
+.mmore-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 13px 0; text-decoration: none; color: inherit;
+  background: none; border: none; width: 100%; text-align: left;
+  font-family: inherit; cursor: pointer;
+}
+.mmore-row + .mmore-row { border-top: 1px solid var(--border); }
+.mmore-row-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.mmore-row-label { font-size: 14px; font-weight: 550; color: var(--fg); }
+.mmore-row-sub { font-size: 11px; color: var(--fg-3); }
+.mmore-row-sub.danger { color: var(--danger); }
+.mmore-row-sub.warning { color: var(--warning); }
+.mmore-row-sub.success { color: var(--success); }
+.mmore-row-badge {
+  font-size: 11.5px; font-weight: 700; color: var(--danger);
+  background: var(--danger-tint); border-radius: 999px; padding: 1px 8px;
+}
+.mmore-row-chev { color: var(--fg-3); flex-shrink: 0; }
+.mmore-row.active .mmore-row-label { color: var(--accent-deep); }
+.mmore-row-wip { cursor: default; opacity: 0.75; }
+.mmore-wip-badge {
+  font-size: 10px; font-weight: 700; color: var(--warning);
+  background: var(--warning-tint); border-radius: 999px; padding: 1px 7px;
+}
+.mmore-prefs { padding: 4px 16px; }
+.mmore-pref-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 11px 0; font-size: 14px; font-weight: 550; color: var(--fg);
+}
+.mmore-session {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 14px; padding: 12px 16px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.mmore-email { font-size: 12px; font-weight: 500; color: var(--fg-2); }
+/* El signOutSlot (form con .signout-btn) se restilea como el enlace rojo del mockup. */
+.mmore-session .signout-btn {
+  height: auto; padding: 0; border: none; background: none;
+  color: var(--danger); font-size: 13px; font-weight: 650; text-align: left;
+}
+.mmore-session .signout-btn:hover { background: none; border: none; color: var(--danger); text-decoration: underline; }
+
+/* ---------- Hoja de período (frame 52:2) ---------- */
+.psheet-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 20px 14px;
+}
+.psheet-head h2 { font-size: 20px; font-weight: 700; letter-spacing: -0.015em; }
+.psheet-body { overflow-y: auto; padding: 0 20px 8px; }
+.psheet-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.psheet-grid.two { grid-template-columns: 1fr 1fr; }
+.psheet-pill {
+  padding: 13px 12px; border-radius: 12px;
+  background: var(--surface-2); border: 1px solid transparent;
+  color: var(--fg-2); font-family: inherit; font-size: 13.5px; font-weight: 550;
+  cursor: pointer; text-align: center; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+  transition: color 0.15s, border-color 0.15s;
+}
+.psheet-pill:hover:not(:disabled):not(.active) { color: var(--fg); }
+.psheet-pill.active {
+  background: var(--fg); color: var(--bg); border-color: var(--fg); font-weight: 650;
+}
+.psheet-pill:disabled { opacity: 0.45; cursor: not-allowed; }
+.psheet-label {
+  font-size: 13px; font-weight: 650; color: var(--fg);
+  margin: 20px 0 10px;
+}
+.psheet-label-note { font-weight: 400; color: var(--fg-3); font-size: 12px; }
+.psheet-cal {
+  margin-top: 12px; padding: 12px;
+  background: var(--surface-2); border-radius: 14px;
+}
+.psheet-foot {
+  padding: 12px 20px calc(16px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--border);
+}
+.psheet-apply {
+  width: 100%; padding: 14px; border-radius: 14px;
+  background: var(--accent); border: none; color: var(--on-accent);
+  font-family: inherit; font-size: 15px; font-weight: 650; cursor: pointer;
+  transition: background 0.15s;
+}
+.psheet-apply:hover { background: var(--accent-deep); }
+
+/* Pill de período del topbar móvil */
+.mperiod-trigger {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 34px; padding: 0 12px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 999px; color: var(--fg);
+  font-family: inherit; font-size: 12.5px; font-weight: 600;
+  cursor: pointer; white-space: nowrap; max-width: 52vw;
+}
+.mperiod-trigger .mperiod-label { overflow: hidden; text-overflow: ellipsis; }
+.mperiod-trigger svg { color: var(--fg-3); flex-shrink: 0; }
+.topbar-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+/* =============================================================================
+ * Breakpoint móvil (<768px): activa el shell móvil.
+ * ========================================================================== */
+@media (max-width: 767px) {
+  .sidebar { display: none; }
+
+  .topbar { height: 54px; padding: 0 14px; gap: 8px; }
+  .topbar-desktop { display: none; }
+  .topbar-mobile { display: flex; }
+  .topbar-title { display: none; }
+  .topbar-week { display: none; }
+  .topbar-mono {
+    display: inline-block;
+    font-family: 'Bodoni Moda', Georgia, 'Times New Roman', serif;
+    font-size: 22px; line-height: 1; color: var(--fg-2);
+    margin-right: 2px;
+  }
+  .topbar-title-m {
+    display: inline-block;
+    font-size: 17px; font-weight: 700; letter-spacing: -0.01em;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  /* Contenido: menos padding lateral + espacio para la tab bar fija. */
+  .page { padding: 16px 14px calc(80px + env(safe-area-inset-bottom, 0px)); }
+
+  /* La cola de decisión del Overview pasa a carrusel horizontal con snap (peek de
+     la siguiente card), como en el frame 51:2, en vez de apilarse. */
+  .dq-cards {
+    grid-template-columns: none;
+    display: flex; gap: 12px;
+    overflow-x: auto; scroll-snap-type: x mandatory;
+    margin: 0 -14px; padding: 2px 14px 4px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .dq-cards > .dq-card { flex: 0 0 84%; scroll-snap-align: start; }
+  .dq-cards > .dq-empty { flex: 1 0 100%; }
+
+  /* Tab bar fija al pie (frame 56:2 TabBar). */
+  .mtab {
+    display: flex;
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 90;
+    background: color-mix(in srgb, var(--surface) 92%, transparent);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    border-top: 1px solid var(--border);
+    padding: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px));
+  }
+  .mtab-item {
+    flex: 1 0 0; min-width: 0;
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+    padding: 4px 0;
+    background: none; border: none; cursor: pointer;
+    font-family: inherit; text-decoration: none;
+    color: var(--fg-3);
+  }
+  .mtab-item.active { color: var(--accent-deep); }
+  .mtab-ico { position: relative; display: grid; place-items: center; }
+  .mtab-badge {
+    position: absolute; top: -5px; left: 100%; margin-left: -8px;
+    min-width: 15px; height: 15px; padding: 0 4px;
+    display: grid; place-items: center;
+    background: var(--danger); color: #fff;
+    font-size: 9px; font-weight: 700; line-height: 1;
+    border-radius: 999px;
+  }
+  .mtab-lbl { font-size: 10px; font-weight: 600; }
+}
+
+/* Pantallas muy estrechas (≤360px): afina el pill de período para que no empuje. */
+@media (max-width: 360px) {
+  .mperiod-trigger { max-width: 46vw; padding: 0 10px; font-size: 12px; }
+  .topbar-title-m { font-size: 16px; }
 }
