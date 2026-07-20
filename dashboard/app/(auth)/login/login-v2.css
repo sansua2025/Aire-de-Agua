@@ -1,0 +1,242 @@
+/* =============================================================================
+ * Login · el Cerebro — v2 (AIR-214 / Fase C de AIR-204)
+ * Restyle editorial del login del dashboard (Figma node 26:2, 1440×900).
+ * Estilos SCOPEADOS a `.lg-root` con prefijo propio `.lg-*` — NO heredan los
+ * tokens data-theme del dashboard ni tocan globals.css, así que conviven sin
+ * conflicto con otras ramas en vuelo (#148) y el login del dashboard es 100%
+ * independiente del shell. Split-screen 50/50 en desktop; columna única (marca
+ * arriba) en mobile. Paleta literal del design-spec de marca (negro/crema/oliva).
+ * Solo capa visual: la lógica de auth (NextAuth/allowlist) queda intacta.
+ * =========================================================================== */
+
+.lg-root {
+  --lg-black: #0b0b09;
+  --lg-cream: #f9f8f5;
+  /* Oliva del wordmark sobre negro: aclarado desde el Figma #585a43 para
+   * despejar WCAG AA-large sobre el panel negro (un logotipo estaría exento,
+   * pero se erra hacia el cumplimiento). El oliva del monograma sobre crema
+   * (alto contraste) sí conserva el hex exacto del mock. */
+  --lg-olive-brand: #7a7d5f;
+  --lg-olive-ink: #585a43;   /* monograma sobre crema (Figma exacto) */
+  --lg-olive-tag: #8c8f73;   /* tagline sobre negro (Figma exacto, AA ok) */
+  --lg-ink: #171c26;         /* títulos sobre crema */
+  --lg-ink-2: #5f6675;       /* subtítulo / copy (Figma ~#6b7380, oscurecido → AA) */
+  --lg-ink-3: #646b79;       /* microcopy / footer (Figma ~#8c94a1, oscurecido → AA) */
+  --lg-divider: #e5e8ed;
+  --lg-err-bg: #f6e4de;
+  --lg-err-border: #e7c6bb;
+  --lg-err-ink: #8a3b28;
+
+  position: fixed;
+  inset: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: row;
+  background: var(--lg-cream);
+  color: var(--lg-ink);
+  font-family: var(--font-lg-sans, 'Inter'), -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  z-index: 0;
+}
+
+.lg-root *,
+.lg-root *::before,
+.lg-root *::after { box-sizing: border-box; }
+
+/* ── Panel izquierdo · marca (negro) ─────────────────────────────────────── */
+.lg-brand {
+  flex: 1 1 50%;
+  min-width: 0;
+  background: var(--lg-black);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 32px;
+  overflow: hidden;
+}
+
+.lg-wordmark {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: var(--lg-olive-brand);
+  font-family: var(--font-lg-serif, 'Bodoni Moda'), Georgia, 'Times New Roman', serif;
+  line-height: 1;
+  text-align: center;
+}
+.lg-wm-1 { font-size: clamp(72px, 14vw, 150px); font-weight: 400; letter-spacing: 2px; }
+.lg-wm-2 { font-size: clamp(28px, 4vw, 44px); font-weight: 400; font-style: italic; }
+.lg-wm-3 { font-size: clamp(80px, 15.5vw, 170px); font-weight: 500; font-style: italic; line-height: 0.9; }
+
+.lg-tag {
+  margin-top: 48px;
+  color: var(--lg-olive-tag);
+  font-size: 13px;
+  letter-spacing: 3px;
+  text-align: center;
+}
+
+/* ── Panel derecho · auth (crema) ────────────────────────────────────────── */
+.lg-auth {
+  flex: 1 1 50%;
+  min-width: 0;
+  background: var(--lg-cream);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 32px;
+}
+
+.lg-panel {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  text-align: center;
+}
+
+.lg-mono {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--lg-olive-ink);
+  font-family: var(--font-lg-serif, 'Bodoni Moda'), Georgia, serif;
+  line-height: 1;
+}
+.lg-mono-a { font-size: 54px; font-weight: 400; }
+.lg-mono-de { font-size: 16px; font-weight: 400; font-style: italic; }
+.lg-mono-a2 { font-size: 60px; font-weight: 500; font-style: italic; }
+
+.lg-title {
+  margin: 0;
+  color: var(--lg-ink);
+  font-family: var(--font-lg-serif, 'Bodoni Moda'), Georgia, serif;
+  font-style: italic;
+  font-weight: 400;
+  font-size: 30px;
+  line-height: 1.1;
+}
+
+.lg-sub {
+  margin: 0;
+  color: var(--lg-ink-2);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.lg-div {
+  width: 100%;
+  height: 1px;
+  border: 0;
+  margin: 0;
+  background: var(--lg-divider);
+}
+
+.lg-restr {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.lg-restr-h {
+  margin: 0;
+  color: var(--lg-ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+.lg-restr-copy {
+  margin: 0;
+  color: var(--lg-ink-2);
+  font-size: 12px;
+  line-height: 1.5;
+  max-width: 340px;
+}
+
+/* Aviso de error de auth (cuenta no autorizada / fallo) — nunca pantalla blanca */
+.lg-error {
+  width: 100%;
+  padding: 11px 14px;
+  border-radius: 10px;
+  background: var(--lg-err-bg);
+  border: 1px solid var(--lg-err-border);
+  color: var(--lg-err-ink);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+/* CTA · Continuar con Google (botón negro, radio 10) */
+.lg-form { width: 100%; display: flex; flex-direction: column; }
+.lg-google {
+  width: 100%;
+  padding: 13px;
+  border: none;
+  border-radius: 10px;
+  background: var(--lg-black);
+  color: #fff;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  cursor: pointer;
+  transition: opacity 0.15s ease, transform 0.05s ease;
+}
+.lg-google:hover { opacity: 0.9; }
+.lg-google:active { transform: translateY(1px); }
+.lg-google:focus-visible {
+  outline: 2px solid var(--lg-olive-ink);
+  outline-offset: 2px;
+}
+.lg-g {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--lg-ink);
+  font-size: 12px;
+  font-weight: 600;
+  display: grid;
+  place-items: center;
+}
+
+.lg-micro {
+  margin: 0;
+  color: var(--lg-ink-3);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.lg-foot {
+  margin-top: 8px;
+  color: var(--lg-ink-3);
+  font-size: 10px;
+  letter-spacing: 1px;
+}
+
+/* ── Mobile · columna única (marca arriba) ───────────────────────────────── */
+@media (max-width: 768px) {
+  .lg-root { flex-direction: column; }
+  .lg-brand {
+    flex: 0 0 auto;
+    min-height: 40vh;
+    padding: 56px 24px;
+  }
+  .lg-auth {
+    flex: 1 0 auto;
+    padding: 40px 24px calc(40px + env(safe-area-inset-bottom, 0px));
+  }
+  .lg-tag { margin-top: 32px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lg-google { transition: none; }
+}
