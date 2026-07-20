@@ -1,14 +1,18 @@
 /**
- * Contrato único de filtros globales del dashboard (AIR-194).
+ * Contrato único de filtros globales del dashboard (AIR-194, ampliado en AIR-195).
  *
  * Fuente de verdad = searchParams de la URL. Este módulo es el ÚNICO
  * parser/serializer: lo comparten los server components (que resuelven
  * `desde/hasta/canal` y llaman las RPCs de AIR-193) y el topbar cliente (que
  * muta la URL). No importa `server-only` — Intl corre igual en server y cliente.
  *
- * Diseñado para que AIR-195 (date-picker custom / presets extra) solo tenga que
- * ampliar `RangePreset` / añadir `desde,hasta` explícitos al contrato, sin tocar
- * el cableado de las pages ni de las queries.
+ * AIR-195 amplía el contrato SIN tocar el cableado de pages/queries:
+ *   - Presets nuevos: `ayer`, `month_current` (mes en curso), `quarter_current`
+ *     (trimestre en curso).
+ *   - Rango CUSTOM serializado en la propia clave `range` como
+ *     `YYYY-MM-DD_YYYY-MM-DD` (p.ej. `?range=2026-06-01_2026-06-30`). Así
+ *     `resolveRange(filters.range)` sigue resolviendo todo desde un solo string y
+ *     ninguna page cambia su call-site.
  *
  * Corte de día en **America/Bogota** (UTC-5, sin DST): el server corre en UTC,
  * así que "hoy" se calcula con Intl sobre la zona de Bogotá. A las 23:00 UTC del
@@ -16,12 +20,30 @@
  * borde es el que perdía ventas en las vistas con ventana fija evaluada en UTC.
  */
 
-export type RangePreset = 'hoy' | '7d' | '14d' | '30d' | '90d' | 'week_current'
+export type RangePreset =
+  | 'hoy'
+  | 'ayer'
+  | '7d'
+  | '14d'
+  | '30d'
+  | '90d'
+  | 'week_current'
+  | 'month_current'
+  | 'quarter_current'
+
+/**
+ * Token de rango tal como vive en la URL: un preset conocido O un rango custom
+ * `YYYY-MM-DD_YYYY-MM-DD`. `(string & {})` conserva el autocompletado de los
+ * presets sin colapsar la unión a `string`; la validez real se garantiza en
+ * runtime (`parseFilters`), que es donde importa: la URL es input no confiable.
+ */
+export type RangeToken = RangePreset | (string & {})
+
 export type ChannelKey = 'all' | 'paid_social' | 'organic' | 'direct' | 'email'
 export type CompareKey = 'prev_week' | 'prev_year' | 'goal' | 'none'
 
 export interface Filters {
-  range: RangePreset
+  range: RangeToken
   channel: ChannelKey
   compare: CompareKey
 }
@@ -29,7 +51,7 @@ export interface Filters {
 /** Rango resuelto a fechas absolutas (cortadas en America/Bogota). */
 export interface ResolvedRange {
   desde: string // YYYY-MM-DD (Bogotá), inclusivo
-  hasta: string // YYYY-MM-DD (Bogotá) = hoy en Bogotá, inclusivo
+  hasta: string // YYYY-MM-DD (Bogotá), inclusivo (= hoy Bogotá en los presets vivos)
   dias: number
 }
 
@@ -39,9 +61,10 @@ export const DEFAULT_FILTERS: Filters = {
   compare: 'prev_week',
 }
 
-// Días de cada preset de conteo. `week_current` (Sem. en curso) NO es un conteo
-// fijo de días: resuelve a [lunes ISO, hoy] y se maneja aparte en resolveRange.
-const RANGE_DAYS: Record<Exclude<RangePreset, 'week_current'>, number> = {
+// Presets de "N días terminando hoy". `ayer`, `week_current`, `month_current` y
+// `quarter_current` NO son conteos fijos: se resuelven aparte en resolveRange.
+type CountPreset = 'hoy' | '7d' | '14d' | '30d' | '90d'
+const RANGE_DAYS: Record<CountPreset, number> = {
   'hoy': 1,
   '7d': 7,
   '14d': 14,
@@ -49,11 +72,60 @@ const RANGE_DAYS: Record<Exclude<RangePreset, 'week_current'>, number> = {
   '90d': 90,
 }
 
-const RANGE_VALUES = new Set<string>([...Object.keys(RANGE_DAYS), 'week_current'])
+/** Orden canónico de los presets para la lista del picker. Custom se maneja aparte. */
+export const RANGE_PRESETS: RangePreset[] = [
+  'hoy', 'ayer', '7d', '14d', '30d', '90d',
+  'week_current', 'month_current', 'quarter_current',
+]
+
+const RANGE_VALUES = new Set<string>(RANGE_PRESETS)
 const CHANNEL_VALUES = new Set<ChannelKey>(['all', 'paid_social', 'organic', 'direct', 'email'])
 const COMPARE_VALUES = new Set<CompareKey>(['prev_week', 'prev_year', 'goal', 'none'])
 
 const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
+
+// -----------------------------------------------------------------------------
+// Rango custom: "YYYY-MM-DD_YYYY-MM-DD"
+// -----------------------------------------------------------------------------
+
+const CUSTOM_RE = /^(\d{4})-(\d{2})-(\d{2})_(\d{4})-(\d{2})-(\d{2})$/
+
+/** true si `iso` (YYYY-MM-DD) es una fecha de calendario real (rechaza 2026-02-30). */
+function isRealISODate(iso: string): boolean {
+  const [y, m, d] = iso.split('-').map(Number)
+  if (!y || !m || !d) return false
+  const dt = new Date(Date.UTC(y, m - 1, d))
+  return (
+    dt.getUTCFullYear() === y &&
+    dt.getUTCMonth() === m - 1 &&
+    dt.getUTCDate() === d
+  )
+}
+
+/**
+ * Parsea un token custom. Devuelve `{desde, hasta}` solo si es estructuralmente
+ * válido: ambas fechas reales y `desde <= hasta` (comparación lexicográfica, que
+ * es correcta para ISO). Cualquier otra cosa ⇒ null (el llamador cae al default).
+ */
+function parseCustomRange(range: string): { desde: string; hasta: string } | null {
+  const m = CUSTOM_RE.exec(range)
+  if (!m) return null
+  const desde = `${m[1]}-${m[2]}-${m[3]}`
+  const hasta = `${m[4]}-${m[5]}-${m[6]}`
+  if (!isRealISODate(desde) || !isRealISODate(hasta)) return null
+  if (desde > hasta) return null
+  return { desde, hasta }
+}
+
+/** true si el token es un rango custom válido. */
+export function isCustomRange(range: string): boolean {
+  return parseCustomRange(range) !== null
+}
+
+/** Construye el token custom a partir de dos fechas ISO ya validadas por el UI. */
+export function makeCustomRange(desde: string, hasta: string): RangeToken {
+  return `${desde}_${hasta}`
+}
 
 // -----------------------------------------------------------------------------
 // Parsing / serialización de searchParams
@@ -78,6 +150,8 @@ function readParam(params: RawSearchParams, key: string): string | undefined {
 
 /**
  * Parser tolerante: cualquier valor inválido/ausente cae al default. Nunca lanza.
+ * `range` acepta un preset conocido O un rango custom válido (fechas reales,
+ * desde <= hasta); un custom malformado o con fechas imposibles cae a `7d`.
  * Fuente de verdad para todas las pages.
  */
 export function parseFilters(params: RawSearchParams): Filters {
@@ -85,10 +159,10 @@ export function parseFilters(params: RawSearchParams): Filters {
   const rawChannel = readParam(params, 'channel')
   const rawCompare = readParam(params, 'compare')
 
+  const rangeValid = !!rawRange && (RANGE_VALUES.has(rawRange) || isCustomRange(rawRange))
+
   return {
-    range: rawRange && RANGE_VALUES.has(rawRange)
-      ? (rawRange as RangePreset)
-      : DEFAULT_FILTERS.range,
+    range: rangeValid ? (rawRange as RangeToken) : DEFAULT_FILTERS.range,
     channel: rawChannel && CHANNEL_VALUES.has(rawChannel as ChannelKey)
       ? (rawChannel as ChannelKey)
       : DEFAULT_FILTERS.channel,
@@ -101,6 +175,7 @@ export function parseFilters(params: RawSearchParams): Filters {
 /**
  * Serializa a URLSearchParams omitiendo los valores por default (URL limpia y
  * compartible: `?range=30d&channel=email`). Serializer compartido con el topbar.
+ * Un rango custom nunca es el default ⇒ siempre se emite `range=YYYY-MM-DD_...`.
  */
 export function toSearchParams(f: Filters): URLSearchParams {
   const p = new URLSearchParams()
@@ -140,16 +215,42 @@ export function todayBogota(now: Date = new Date()): string {
   }).format(now)
 }
 
+const DAY_MS = 86_400_000
+
+function isoFromMs(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10)
+}
+
+/** Conteo de días inclusivo entre dos fechas ISO (Bogotá sin DST ⇒ exacto). */
+function daysInclusive(desde: string, hasta: string): number {
+  const [ay, am, ad] = desde.split('-').map(Number)
+  const [by, bm, bd] = hasta.split('-').map(Number)
+  return Math.round((Date.UTC(by, bm - 1, bd) - Date.UTC(ay, am - 1, ad)) / DAY_MS) + 1
+}
+
 /**
- * Resuelve un preset a `(desde, hasta)` absolutos, ambos inclusivos y cortados
- * en Bogotá. `hasta` = hoy Bogotá; `desde` = hasta − (dias − 1). Aritmética de
- * días sobre el calendario (Bogotá no tiene DST, así que restar días enteros
- * sobre la fecha a medianoche UTC es exacto).
+ * Resuelve un token de rango a `(desde, hasta)` absolutos, ambos inclusivos y
+ * cortados en Bogotá. Presets de conteo terminan HOY; `ayer` es un único día;
+ * `week/month/quarter_current` van desde el inicio del período (lunes ISO / 1º
+ * de mes / 1º del trimestre) hasta hoy; un token custom devuelve sus dos fechas.
+ * Aritmética de días sobre el calendario (Bogotá no tiene DST, así que restar
+ * días enteros sobre la fecha a medianoche UTC es exacto).
  */
-export function resolveRange(range: RangePreset, now: Date = new Date()): ResolvedRange {
+export function resolveRange(range: RangeToken, now: Date = new Date()): ResolvedRange {
+  const custom = parseCustomRange(range)
+  if (custom) {
+    return { desde: custom.desde, hasta: custom.hasta, dias: daysInclusive(custom.desde, custom.hasta) }
+  }
+
   const hasta = todayBogota(now)
   const [y, m, d] = hasta.split('-').map(Number)
   const baseMs = Date.UTC(y, m - 1, d)
+
+  // "Ayer": el día anterior a hoy, un solo día.
+  if (range === 'ayer') {
+    const desde = isoFromMs(baseMs - DAY_MS)
+    return { desde, hasta: desde, dias: 1 }
+  }
 
   // "Semana en curso": desde = lunes ISO de la semana de hoy (Bogotá). Coincide
   // con date_trunc('week', hoy) de Postgres que usa get_wtd_pacing → el hero WTD
@@ -157,14 +258,26 @@ export function resolveRange(range: RangePreset, now: Date = new Date()): Resolv
   if (range === 'week_current') {
     const dow = new Date(baseMs).getUTCDay() // 0=domingo … 6=sábado
     const offsetLunes = (dow + 6) % 7        // días transcurridos desde el lunes
-    const desdeMs = baseMs - offsetLunes * 86_400_000
-    const desde = new Date(desdeMs).toISOString().slice(0, 10)
+    const desde = isoFromMs(baseMs - offsetLunes * DAY_MS)
     return { desde, hasta, dias: offsetLunes + 1 }
   }
 
-  const dias = RANGE_DAYS[range] ?? RANGE_DAYS['7d']
-  const desdeMs = baseMs - (dias - 1) * 86_400_000
-  const desde = new Date(desdeMs).toISOString().slice(0, 10)
+  // "Mes en curso": desde = 1º del mes de hoy hasta hoy.
+  if (range === 'month_current') {
+    const desde = `${hasta.slice(0, 7)}-01`
+    return { desde, hasta, dias: daysInclusive(desde, hasta) }
+  }
+
+  // "Trimestre en curso": desde = 1º del trimestre calendario (ene/abr/jul/oct).
+  if (range === 'quarter_current') {
+    const qStartMonth = Math.floor((m - 1) / 3) * 3 + 1
+    const desde = `${y}-${String(qStartMonth).padStart(2, '0')}-01`
+    return { desde, hasta, dias: daysInclusive(desde, hasta) }
+  }
+
+  // Presets de conteo fijo terminando hoy.
+  const dias = RANGE_DAYS[range as CountPreset] ?? RANGE_DAYS['7d']
+  const desde = isoFromMs(baseMs - (dias - 1) * DAY_MS)
   return { desde, hasta, dias }
 }
 
@@ -194,29 +307,33 @@ export function channelToToken(channel: ChannelKey): string | null {
 
 const RANGE_LABEL: Record<RangePreset, string> = {
   'hoy': 'Hoy',
+  'ayer': 'Ayer',
   '7d': 'Últimos 7 días',
   '14d': 'Últimos 14 días',
   '30d': 'Últimos 30 días',
   '90d': 'Últimos 90 días',
   'week_current': 'Semana en curso',
+  'month_current': 'Mes en curso',
+  'quarter_current': 'Trimestre en curso',
 }
 
-/** Etiqueta corta para el segmented del topbar (Hoy / 7d / … / Sem. en curso). */
+/** Etiqueta corta para el picker (Hoy / 7d / … / Sem. en curso). */
 const RANGE_SHORT: Record<RangePreset, string> = {
   'hoy': 'Hoy',
+  'ayer': 'Ayer',
   '7d': '7d',
   '14d': '14d',
   '30d': '30d',
   '90d': '90d',
   'week_current': 'Sem. en curso',
+  'month_current': 'Mes en curso',
+  'quarter_current': 'Trimestre',
 }
 
-export function presetShort(range: RangePreset): string {
-  return RANGE_SHORT[range] ?? range
+export function presetShort(range: RangeToken): string {
+  if (isCustomRange(range)) return 'Personalizado'
+  return RANGE_SHORT[range as RangePreset] ?? range
 }
-
-/** Orden canónico de los presets para el segmented del topbar. */
-export const RANGE_PRESETS: RangePreset[] = ['hoy', '7d', '14d', '30d', '90d', 'week_current']
 
 const CHANNEL_LABEL: Record<ChannelKey, string> = {
   all: 'Todos los canales',
@@ -226,8 +343,19 @@ const CHANNEL_LABEL: Record<ChannelKey, string> = {
   email: 'Email',
 }
 
-export function presetLabel(range: RangePreset): string {
-  return RANGE_LABEL[range] ?? range
+export function presetLabel(range: RangeToken): string {
+  if (isCustomRange(range)) return 'Rango personalizado'
+  return RANGE_LABEL[range as RangePreset] ?? range
+}
+
+/**
+ * Etiqueta para el botón del picker en el topbar: para un rango custom muestra
+ * las fechas compactas ("1 – 30 jun") para que el founder vea exactamente qué
+ * eligió; para un preset, su label completo.
+ */
+export function rangeButtonLabel(range: RangeToken, now: Date = new Date()): string {
+  if (isCustomRange(range)) return formatRangeCompact(resolveRange(range, now))
+  return presetLabel(range)
 }
 
 /**

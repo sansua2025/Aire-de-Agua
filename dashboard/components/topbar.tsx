@@ -4,7 +4,8 @@ import { useState, useRef, useEffect, useTransition, ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter, usePathname, useSearchParams } from 'next/navigation'
 import { Icon } from './icon'
-import { parseFilters, toSearchParams, presetLabel, presetShort, RANGE_PRESETS, type Filters } from '@/lib/filters'
+import { DateRangePicker } from './date-range-picker'
+import { parseFilters, toSearchParams, presetLabel, type Filters } from '@/lib/filters'
 
 // week: subtítulo estático SOLO para páginas NO cableadas al filtro global. Las
 // páginas de FILTERED_PAGES muestran el período efectivo (presetLabel), así que
@@ -20,11 +21,6 @@ const PAGE_META: Record<string, { title: string; week: string }> = {
   '/fuentes':    { title: 'Fuentes de datos',      week: 'Estado de integraciones' },
 }
 
-// Labels del picker de período: fuente única en lib/filters (presetLabel /
-// presetShort), para no repetir textos de período en dos sitios (AIR-197).
-// Incluye "Sem. en curso" (AIR-206), extensión del mecanismo de filtros AIR-194.
-const dateOptions = RANGE_PRESETS.map((r) => ({ value: r, label: presetShort(r) }))
-
 const channelOptions = [
   { value: 'all',         label: 'Todos los canales' },
   { value: 'paid_social', label: 'Paid Social' },
@@ -33,9 +29,12 @@ const channelOptions = [
   { value: 'email',       label: 'Email' },
 ] as const
 
+// `prev_year` (año-sobre-año) requiere SQL nuevo: get_kpis solo calcula `prev` =
+// período inmediatamente anterior. Se deja deshabilitado ("próximamente") hasta
+// que la RPC soporte la ventana YoY — nunca se computa el delta en el cliente.
 const compareOptions = [
   { value: 'prev_week', label: 'vs período anterior',         disabled: false },
-  { value: 'prev_year', label: 'vs mismo período año ant.',   disabled: true,  note: 'sep 2026' },
+  { value: 'prev_year', label: 'vs mismo período año ant.',   disabled: true,  note: 'próximamente' },
   { value: 'goal',      label: 'vs meta',                     disabled: false },
   { value: 'none',      label: 'Sin comparativa',             disabled: false },
 ] as const
@@ -88,11 +87,8 @@ export function Topbar({ signOutSlot }: TopbarProps) {
 
       <span className="topbar-spacer" />
 
-      <FilterButton
-        icon="cal"
-        label="Período"
+      <DateRangePicker
         value={range}
-        options={dateOptions}
         onChange={(v) => updateParam('range', v)}
       />
       <FilterButton
