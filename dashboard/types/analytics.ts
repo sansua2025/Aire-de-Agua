@@ -605,6 +605,20 @@ export type RpcInventorySummary = {
   }>
 }
 
+/**
+ * Return de analytics.get_cerebro_stats (AIR-211, mig 127). jsonb con conteos
+ * agregados de la memoria del sistema + loop HITL que anon no puede leer directo
+ * (tablas public con RLS). Solo enteros (sin texto => sin superficie de
+ * injection). PostgREST devuelve el objeto jsonb directamente.
+ */
+export type RpcCerebroStats = {
+  insights_acumulados: number
+  acciones_30d: number
+  confirmaciones_28d: number
+  strategic_consolidados: number
+  brand_knowledge_hechos: number
+}
+
 type AnalyticsFunctions = {
   get_kpis: { Args: RangeArgs; Returns: RpcKpisRow[] }
   get_funnel: { Args: RangeArgs; Returns: RpcFunnelRow[] }
@@ -629,6 +643,8 @@ type AnalyticsFunctions = {
   get_paid_daily: { Args: { p_desde: string; p_hasta: string }; Returns: RpcPaidDailyRow[] }
   get_paid_ads: { Args: { p_desde: string; p_hasta: string }; Returns: RpcPaidAdsRow[] }
   get_paid_signal_health: { Args: { p_desde: string; p_hasta: string }; Returns: RpcPaidSignalHealthRow[] }
+  // AIR-211 (mig 127) — jsonb escalar: PostgREST devuelve el objeto directamente.
+  get_cerebro_stats: { Args: Record<PropertyKey, never>; Returns: RpcCerebroStats }
 }
 
 /**

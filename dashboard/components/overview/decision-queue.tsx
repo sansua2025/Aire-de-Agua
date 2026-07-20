@@ -1,16 +1,15 @@
 'use client'
 
-import { useState, useTransition } from 'react'
-import { useRouter } from 'next/navigation'
+import { useDecision } from '@/components/ai/use-decision'
 
 /**
  * DecisionQueue · "Requiere tu decisión" del Overview v2 (AIR-206).
  *
  * Muestra el top-3 de la cola HITL (view_dashboard_cola_agrupada) con severidad,
- * dominio, título y evidencia. Aprobar/Rechazar ejecuta la RPC vía
- * /api/propuestas/estado (batch por grupo de ids) de forma optimista: la card
- * sale de la lista al instante y, si el POST falla, vuelve con un mensaje de
- * error (nunca desaparece silenciosamente).
+ * dominio, título y evidencia. Aprobar/Rechazar ejecuta la RPC vía el módulo de
+ * mutación compartido useDecision (AIR-211) → POST /api/propuestas/estado (batch
+ * por grupo de ids) de forma optimista: la card sale de la lista al instante y,
+ * si el POST falla, vuelve con un mensaje de error (nunca desaparece en silencio).
  *
  * Los textos ya vienen SANEADOS del server component (page.tsx): este componente
  * es presentación + acción, no re-procesa datos externos. React escapa por
@@ -38,49 +37,9 @@ const SEV_LABEL: Record<DecisionItem['severidad'], string> = {
 }
 
 export function DecisionQueue({ items, total }: DecisionQueueProps) {
-  const router = useRouter()
-  const [isPending, startTransition] = useTransition()
-  const [resolved, setResolved] = useState<Set<string>>(new Set())
-  const [error, setError] = useState<string | null>(null)
-  const [busyKey, setBusyKey] = useState<string | null>(null)
+  const { decide, error, isResolved, isBusy } = useDecision()
 
-  const visible = items.filter((it) => !resolved.has(it.ids[0]))
-
-  async function decide(item: DecisionItem, estado: 'hecho' | 'descartado') {
-    setError(null)
-    setBusyKey(item.ids[0])
-    // Optimista: saca la card de la lista de inmediato.
-    setResolved((prev) => new Set(prev).add(item.ids[0]))
-    try {
-      const res = await fetch('/api/propuestas/estado', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids: item.ids, estado }),
-      })
-      const data = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null
-      if (!res.ok || !data?.ok) {
-        // Revertir: la decisión no se aplicó.
-        setResolved((prev) => {
-          const next = new Set(prev)
-          next.delete(item.ids[0])
-          return next
-        })
-        setError(data?.error || 'No se pudo registrar la decisión. Reintenta.')
-      } else {
-        // Refresca los server components (la cola y los badges de nav).
-        startTransition(() => router.refresh())
-      }
-    } catch {
-      setResolved((prev) => {
-        const next = new Set(prev)
-        next.delete(item.ids[0])
-        return next
-      })
-      setError('Error de red al registrar la decisión. Reintenta.')
-    } finally {
-      setBusyKey(null)
-    }
-  }
+  const visible = items.filter((it) => !isResolved(it.ids[0]))
 
   if (items.length === 0) {
     return (
@@ -106,7 +65,7 @@ export function DecisionQueue({ items, total }: DecisionQueueProps) {
           <div className="dq-empty">Decisiones registradas. Actualizando la cola…</div>
         ) : (
           visible.map((it) => {
-            const busy = busyKey === it.ids[0] || isPending
+            const busy = isBusy(it.ids[0])
             return (
               <article className={`dq-card sev-${it.severidad}`} key={it.ids[0]}>
                 <div className="dq-card-h">
@@ -120,7 +79,7 @@ export function DecisionQueue({ items, total }: DecisionQueueProps) {
                     type="button"
                     className="dq-btn primary"
                     disabled={busy}
-                    onClick={() => decide(it, 'hecho')}
+                    onClick={() => decide(it.ids, 'hecho')}
                   >
                     Aprobar
                   </button>
@@ -128,7 +87,7 @@ export function DecisionQueue({ items, total }: DecisionQueueProps) {
                     type="button"
                     className="dq-btn"
                     disabled={busy}
-                    onClick={() => decide(it, 'descartado')}
+                    onClick={() => decide(it.ids, 'descartado')}
                   >
                     Rechazar
                   </button>

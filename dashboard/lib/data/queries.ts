@@ -1,7 +1,7 @@
 import 'server-only'
 import { unstable_cache } from 'next/cache'
 import { supabase } from '@/lib/supabase/server'
-import type { RpcWtdPacingRow, RpcTarget, RpcTargetsReturn, RpcInventorySummary } from '@/types/analytics'
+import type { RpcWtdPacingRow, RpcTarget, RpcTargetsReturn, RpcInventorySummary, RpcCerebroStats } from '@/types/analytics'
 
 /**
  * Capa de queries server-side cacheadas con tags.
@@ -247,6 +247,8 @@ export type WtdPacing = RpcWtdPacingRow
 export type Target = RpcTarget
 /** Metas del cockpit (analytics.get_targets). */
 export type Targets = RpcTargetsReturn
+/** Conteos del Cerebro (analytics.get_cerebro_stats · AIR-211). */
+export type CerebroStats = RpcCerebroStats
 
 /**
  * Pacing de la semana en curso (AIR-206, G2). `hoy` se pasa explícito (resuelto
@@ -280,6 +282,22 @@ export const getTargets = unstable_cache(
   },
   ['rpc_targets'],
   { tags: ['weekly'], revalidate: CACHE_FALLBACK_SECONDS },
+)
+
+/**
+ * Conteos agregados del Cerebro (AIR-211, mig 127) — memoria de 3 capas + loop
+ * HITL. Solo enteros (sin texto). Tag 'insights': lo invalida el write-path de
+ * decisiones (aprobar/rechazar) y cualquier revalidación de insights, igual que
+ * la cola. Sin filtro global: son conteos de estado vivo, no una serie.
+ */
+export const getCerebroStats = unstable_cache(
+  async (): Promise<CerebroStats | null> => {
+    const { data, error } = await supabase.rpc('get_cerebro_stats')
+    if (error) throw error
+    return (data ?? null) as CerebroStats | null
+  },
+  ['rpc_cerebro_stats'],
+  { tags: ['insights', 'weekly'], revalidate: CACHE_FALLBACK_SECONDS },
 )
 
 // =============================================================================
@@ -490,14 +508,51 @@ export const getInsightsActivos = unstable_cache(
  * con veces_en_grupo / ids_grupo / rango de aparición. Reemplaza a
  * getInsightsActivos como fuente de la cola; la vista sin agrupar sigue
  * existiendo para expandir un grupo (ver getInsightsPorIds).
+ *
+ * Accionabilidad (AIR-84): esta fuente COMPARTIDA alimenta el KPI "Esperando
+ * decisión", la CerebroQueue, el badge del sidebar, el top-3 del Overview y el
+ * Plan de acción del Funnel. Todos esperan SOLO ítems que de verdad esperan una
+ * decisión humana. El predicado replica el bucket "cola" del `bucketize` v1:
+ *   - requiere_del_humano IN ('aprobar','decidir_urgente')  → accionable
+ *     (excluye contexto/FYI: informacion, celebrar, null y cualquier otro valor)
+ *   - estado_accion NOT IN ('hecho','descartado')           → no terminal
+ *     (aprobar/rechazar algo ya decidido es incoherente)
+ * La vista CRUDA trae también contexto (~30) y terminal (~7); pintarla directa
+ * sobrecuenta el backlog ~2.3× y ofrece botones Aprobar/Rechazar sobre ítems ya
+ * hechos o meramente informativos. Filtrar aquí reconcilia page + badge + Overview
+ * + Funnel de una sola vez.
+ *
+ * Snooze (AIR-211): "Decidir después" marca estado_accion='pospuesto' con
+ * snooze_hasta futuro. La vista no excluye snoozed, así que se filtra aquí —
+ * en la misma fuente COMPARTIDA — para que todos vean el MISMO conjunto (un item
+ * pospuesto desaparece hasta su fecha; al vencer, reaparece; un pospuesto sin
+ * fecha o ya vencido sigue en cola). Corte de día America/Bogota.
  */
+const COLA_RDH_ACCIONABLE = new Set(['aprobar', 'decidir_urgente'])
+const COLA_ESTADO_TERMINAL = new Set(['hecho', 'descartado'])
+
 export const getColaAgrupada = unstable_cache(
   async () => {
     const { data, error } = await supabase
       .from('view_dashboard_cola_agrupada')
       .select('*')
     if (error) throw error
-    return data ?? []
+    const hoyBogota = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Bogota',
+    }).format(new Date())
+    return (data ?? []).filter((r) => {
+      // Accionabilidad AIR-84: solo lo que espera decisión real entra a la cola.
+      if (!COLA_RDH_ACCIONABLE.has(r.requiere_del_humano ?? '')) return false
+      if (COLA_ESTADO_TERMINAL.has(r.estado_accion ?? '')) return false
+      // Snooze (AIR-211): el pospuesto-futuro desaparece hasta su fecha.
+      if (
+        r.estado_accion === 'pospuesto' &&
+        r.snooze_hasta != null &&
+        r.snooze_hasta.slice(0, 10) > hoyBogota
+      )
+        return false
+      return true
+    })
   },
   ['cola_agrupada'],
   { tags: ['insights'], revalidate: CACHE_FALLBACK_SECONDS }
