@@ -1,9 +1,10 @@
 import type { Metadata } from 'next'
 import { headers } from 'next/headers'
-import { Inter } from 'next/font/google'
+import { Bodoni_Moda, Inter } from 'next/font/google'
 import { signIn } from '@/auth'
 import { isGastosHost } from '@/lib/gastos/hosts'
 import './gastos-login.css'
+import './login-v2.css'
 
 interface LoginPageProps {
   searchParams: Promise<{ callbackUrl?: string; error?: string }>
@@ -69,6 +70,24 @@ const inter = Inter({
   display: 'swap',
 })
 
+// Fuentes del login v2 del dashboard (AIR-214). Servidas localmente por next/font
+// (self-hosted, sin CDN externo). Bodoni Moda es la tipografía editorial de marca;
+// Inter para el cuerpo. Las `variable` solo se aplican al contenedor `.lg-root`,
+// así que no afectan al resto del app.
+const bodoni = Bodoni_Moda({
+  subsets: ['latin'],
+  weight: ['400', '500'],
+  style: ['normal', 'italic'],
+  variable: '--font-lg-serif',
+  display: 'swap',
+})
+const interLogin = Inter({
+  subsets: ['latin'],
+  weight: ['400', '500', '600'],
+  variable: '--font-lg-sans',
+  display: 'swap',
+})
+
 export default async function LoginPage({ searchParams }: LoginPageProps) {
   const { callbackUrl, error } = await searchParams
   const host = (await headers()).get('host')
@@ -86,72 +105,73 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
     )
   }
 
-  // ── Login del dashboard (el Cerebro) — INTACTO ────────────────────────────
+  // ── Login del dashboard (el Cerebro) — v2 (AIR-214) ───────────────────────
+  // Restyle editorial split-screen (Figma 26:2). La lógica de auth (server
+  // action → signIn de NextAuth) NO cambia respecto de AIR-55: mismo redirect y
+  // mismo manejo de `error` (cuenta no autorizada ⇒ mensaje claro).
   return (
-    <div className="min-h-screen grid place-items-center bg-[#f5f5f5] p-6">
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-sm border border-gray-100 p-10">
-        <div className="text-center mb-8">
-          <div className="text-2xl font-semibold text-gray-900 mb-1">
-            Aire de Agua
-          </div>
-          <div className="text-sm text-gray-500 font-mono">el Cerebro</div>
+    <div className={`lg-root ${bodoni.variable} ${interLogin.variable}`}>
+      {/* Panel izquierdo · marca (negro) */}
+      <section className="lg-brand">
+        <div className="lg-wordmark">
+          <span className="lg-wm-1">Aire</span>
+          <span className="lg-wm-2">de</span>
+          <span className="lg-wm-3">agua</span>
         </div>
+        <p className="lg-tag">ropa que respira</p>
+      </section>
 
-        <h1 className="text-lg font-medium text-gray-900 mb-2">
-          Acceso restringido
-        </h1>
-        <p className="text-sm text-gray-600 mb-8 leading-relaxed">
-          Este dashboard es para uso interno del equipo de marketing de Aire de
-          Agua. Iniciá sesión con tu cuenta autorizada para continuar.
-        </p>
-
-        {error && (
-          <div className="mb-6 px-4 py-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-800">
-            {error === 'AccessDenied'
-              ? 'Tu cuenta no está autorizada para acceder a este dashboard.'
-              : 'Hubo un problema al iniciar sesión. Intentá de nuevo.'}
+      {/* Panel derecho · acceso (crema) */}
+      <main className="lg-auth">
+        <div className="lg-panel">
+          <div className="lg-mono" aria-hidden="true">
+            <span className="lg-mono-a">A</span>
+            <span className="lg-mono-de">de</span>
+            <span className="lg-mono-a2">a</span>
           </div>
-        )}
 
-        <form
-          action={async () => {
-            'use server'
-            await signIn('google', { redirectTo: callbackUrl || '/' })
-          }}
-        >
-          <button
-            type="submit"
-            className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-lg bg-[#1A3E72] text-white font-medium hover:bg-[#152f5a] transition-colors"
+          <h1 className="lg-title">el Cerebro</h1>
+          <p className="lg-sub">Inteligencia comercial de Aire de Agua</p>
+
+          <hr className="lg-div" />
+
+          <div className="lg-restr">
+            <p className="lg-restr-h">Acceso restringido</p>
+            <p className="lg-restr-copy">
+              Dashboard interno del equipo de marketing. Iniciá sesión con tu
+              cuenta autorizada para continuar.
+            </p>
+          </div>
+
+          {error && (
+            <div className="lg-error" role="alert">
+              {error === 'AccessDenied'
+                ? 'Tu cuenta no está autorizada para acceder a este dashboard.'
+                : 'Hubo un problema al iniciar sesión. Intentá de nuevo.'}
+            </div>
+          )}
+
+          <form
+            className="lg-form"
+            action={async () => {
+              'use server'
+              await signIn('google', { redirectTo: callbackUrl || '/' })
+            }}
           >
-            <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden>
-              <path
-                fill="#fff"
-                d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"
-              />
-              <path
-                fill="#fff"
-                d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.836.86-3.048.86-2.344 0-4.328-1.583-5.036-3.71H.957v2.332A8.997 8.997 0 0 0 9 18z"
-                opacity=".85"
-              />
-              <path
-                fill="#fff"
-                d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z"
-                opacity=".7"
-              />
-              <path
-                fill="#fff"
-                d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z"
-                opacity=".55"
-              />
-            </svg>
-            <span>Continuar con Google</span>
-          </button>
-        </form>
+            <button type="submit" className="lg-google">
+              <span className="lg-g" aria-hidden="true">
+                G
+              </span>
+              <span>Continuar con Google</span>
+            </button>
+          </form>
 
-        <p className="text-xs text-gray-400 text-center mt-8 font-mono">
-          AIR-55 · Fase 1
-        </p>
-      </div>
+          <p className="lg-micro">
+            Solo cuentas autorizadas · sesiones auditadas
+          </p>
+          <p className="lg-foot">AIR-55 · Fase 1</p>
+        </div>
+      </main>
     </div>
   )
 }
