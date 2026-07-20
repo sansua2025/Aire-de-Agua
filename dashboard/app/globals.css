@@ -793,6 +793,66 @@ button:focus-visible, a.side-item:focus-visible, .side-item:focus-visible, .kpi:
 .dq-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .dq-btn.primary:hover:not(:disabled) { background: var(--accent-deep); border-color: var(--accent-deep); }
 .dq-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.dq-btn.ghost { background: transparent; border-color: transparent; color: var(--fg-3); }
+.dq-btn.ghost:hover:not(:disabled) { color: var(--fg); background: var(--surface-2); border-color: var(--border); }
+
+/* ---------- el Cerebro v2 · cola de decisión (AIR-211) ---------- */
+.cq { display: flex; flex-direction: column; }
+.cq-head { padding: 0 0 12px; }
+.cq-subtitle { font-size: 12px; color: var(--fg-3); font-weight: 500; }
+.cq-list { display: flex; flex-direction: column; gap: 12px; }
+.cq-item {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.cq-item-h { display: flex; align-items: center; gap: 8px; }
+.cq-impact {
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em;
+  padding: 2px 7px; border-radius: 5px; white-space: nowrap;
+}
+.cq-impact.impact-alto  { color: var(--danger);  background: var(--danger-tint); }
+.cq-impact.impact-medio { color: var(--warning); background: var(--warning-tint); }
+.cq-dom { font-size: 11px; font-weight: 600; color: var(--fg-3); letter-spacing: 0.02em; white-space: nowrap; }
+.cq-rule { flex: 1; height: 1px; background: var(--border); min-width: 12px; }
+.cq-age { font-size: 11.5px; color: var(--fg-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.cq-title { font-size: 14px; font-weight: 650; color: var(--fg); line-height: 1.35; text-wrap: pretty; }
+.cq-evidence { font-size: 12.5px; color: var(--fg-3); line-height: 1.4; }
+.cq-btns { display: flex; gap: 8px; margin-top: 2px; flex-wrap: wrap; }
+.cq-caption { font-size: 11.5px; color: var(--fg-3); line-height: 1.5; margin-top: 14px; }
+
+/* ---------- Anomalías lateral (AIR-211) ---------- */
+.anom-list { display: flex; flex-direction: column; gap: 10px; }
+.anom-item {
+  border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 5px;
+}
+.anom-item.nivel-critico { background: var(--danger-tint);  border-color: color-mix(in oklab, var(--danger) 22%, transparent); }
+.anom-item.nivel-alerta  { background: var(--warning-tint); border-color: color-mix(in oklab, var(--warning) 22%, transparent); }
+.cq-impact.nivel-critico { color: var(--danger);  background: var(--surface); }
+.cq-impact.nivel-alerta  { color: var(--warning); background: var(--surface); }
+.anom-title { font-size: 13.5px; font-weight: 600; color: var(--fg); line-height: 1.3; text-wrap: pretty; }
+.anom-meta { font-size: 11.5px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.anom-link { font-size: 12.5px; font-weight: 550; color: var(--accent-deep); text-decoration: none; margin-top: 2px; }
+.anom-link:hover { text-decoration: underline; }
+
+/* ---------- Memoria del sistema (AIR-211) ---------- */
+.mem-list { display: flex; flex-direction: column; gap: 11px; }
+.mem-row { display: flex; align-items: baseline; gap: 8px; }
+.mem-label { font-size: 13px; color: var(--fg-2); white-space: nowrap; }
+.mem-lead { flex: 1; height: 1px; border-bottom: 1px dashed var(--border-2); align-self: center; min-width: 12px; }
+.mem-value { font-size: 13px; font-weight: 650; color: var(--fg); white-space: nowrap; }
+
+/* ---------- Cohortes RFM (AIR-211) ---------- */
+.rfm-list { display: flex; flex-direction: column; gap: 12px; }
+.rfm-row { display: flex; flex-direction: column; gap: 6px; }
+.rfm-line { display: flex; align-items: baseline; gap: 10px; }
+.rfm-name { font-size: 13px; font-weight: 600; color: var(--fg); white-space: nowrap; }
+.rfm-desc { flex: 1; font-size: 11.5px; color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: right; }
+.rfm-count { font-size: 13px; font-weight: 650; color: var(--fg); white-space: nowrap; }
+.rfm-track { height: 7px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
+.rfm-fill { display: block; height: 100%; border-radius: 4px; }
 
 /* ---------- KPI meta line ---------- */
 .kpi-meta {
@@ -936,6 +996,77 @@ button:focus-visible, a.side-item:focus-visible, .side-item:focus-visible, .kpi:
 .menu-item.active { background: var(--accent-tint); color: var(--accent-deep); font-weight: 600; }
 .menu-item:disabled { opacity: 0.5; cursor: not-allowed; }
 .menu-item:disabled:hover { background: none; color: var(--fg-2); }
+
+/* =============================================================================
+ * DateRangePicker (AIR-195 · Figma 1:2 → 3:6). Popover con presets + calendario
+ * de rango. Tokens v2 (light+dark automáticos).
+ * ========================================================================== */
+.rp-pop {
+  position: fixed;
+  z-index: 100;
+  width: 292px;
+  max-width: calc(100vw - 24px);
+  padding: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-overlay);
+  font-size: 13px;
+}
+.rp-presets { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 4px 4px; }
+.rp-preset {
+  padding: 6px 10px; border-radius: 8px;
+  background: var(--surface); border: 1px solid var(--border);
+  color: var(--fg-2); font-family: inherit; font-size: 12.5px; font-weight: 500;
+  cursor: pointer; white-space: nowrap;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.rp-preset:hover { background: var(--surface-2); color: var(--fg); border-color: var(--border-2); }
+.rp-preset.active { background: var(--accent-tint); border-color: var(--accent); color: var(--accent-deep); font-weight: 650; }
+
+.rp-divider { height: 1px; background: var(--border); margin: 8px 2px; }
+
+.rp-cal { padding: 0 4px 2px; }
+.rp-cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.rp-cal-title { font-size: 13px; font-weight: 600; color: var(--fg); }
+.rp-nav {
+  width: 28px; height: 28px; display: grid; place-items: center;
+  background: none; border: none; border-radius: 6px; color: var(--fg-2); cursor: pointer;
+}
+.rp-nav:hover { background: var(--surface-2); color: var(--fg); }
+.rp-nav:disabled { opacity: 0.35; cursor: not-allowed; }
+.rp-nav:disabled:hover { background: none; color: var(--fg-2); }
+
+.rp-weekdays {
+  display: grid; grid-template-columns: repeat(7, 1fr);
+  text-align: center; font-size: 10.5px; font-weight: 600; color: var(--fg-3);
+  margin-bottom: 3px;
+}
+.rp-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.rp-day {
+  height: 30px; display: grid; place-items: center;
+  background: none; border: none; border-radius: 6px;
+  color: var(--fg-2); font-family: inherit; font-size: 12px; font-weight: 500;
+  font-variant-numeric: tabular-nums; cursor: pointer;
+}
+.rp-day.empty { visibility: hidden; pointer-events: none; }
+.rp-day:hover:not(:disabled):not(.endpoint) { background: var(--surface-2); color: var(--fg); }
+.rp-day:disabled { opacity: 0.3; cursor: not-allowed; }
+.rp-day.within { background: var(--accent-tint); color: var(--accent-deep); border-radius: 0; }
+.rp-day.endpoint { background: var(--accent); color: var(--on-accent); font-weight: 650; }
+.rp-day.today:not(.endpoint) { box-shadow: inset 0 0 0 1px var(--border-2); }
+.rp-day:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+.rp-cal-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; }
+.rp-cal-summary { font-size: 11.5px; color: var(--fg-3); }
+.rp-apply {
+  padding: 6px 14px; border-radius: 8px;
+  background: var(--accent); border: 1px solid var(--accent); color: var(--on-accent);
+  font-family: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.rp-apply:hover:not(:disabled) { background: var(--accent-deep); border-color: var(--accent-deep); }
+.rp-apply:disabled { opacity: 0.45; cursor: not-allowed; }
 
 /* AI block legacy (overview ai-block + cualquier resumen Claude) */
 .ai-block {
