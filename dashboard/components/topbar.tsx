@@ -16,6 +16,7 @@ const PAGE_META: Record<string, { title: string; week: string }> = {
   '/funnel':     { title: 'Funnel de conversión',  week: 'Amplitude' },
   '/paid':       { title: 'Paid · Meta Ads',       week: 'Campañas · creativos · ROAS real' },
   '/email':      { title: 'Email · Klaviyo',       week: 'Campañas · flows · lista · entregabilidad' },
+  '/pnl':        { title: 'P&L del período',       week: 'Rentabilidad · unit economics' },
   '/ai':         { title: 'el Cerebro',            week: 'Insights · anomalías · cohortes' },
   '/anomalias':  { title: 'Anomalías',             week: 'Salud de datos' },
   '/fuentes':    { title: 'Fuentes de datos',      week: 'Estado de integraciones' },
@@ -57,7 +58,7 @@ export function Topbar({ signOutSlot }: TopbarProps) {
 
   // Las páginas cableadas al filtro muestran el período efectivo en el topbar, no
   // un texto de período fijo (que era engañoso al cambiar de rango).
-  const FILTERED_PAGES = new Set(['/', '/funnel', '/paid', '/producto'])
+  const FILTERED_PAGES = new Set(['/', '/funnel', '/paid', '/producto', '/pnl'])
   const weekLabel = FILTERED_PAGES.has(pathname) ? presetLabel(range) : meta.week
 
   // Refleja el estado pending en el contenedor .page mientras el server component
@@ -78,7 +79,8 @@ export function Topbar({ signOutSlot }: TopbarProps) {
     })
   }
 
-  const channelDisabled = pathname.startsWith('/paid') || pathname.startsWith('/email')
+  const channelDisabled =
+    pathname.startsWith('/paid') || pathname.startsWith('/email') || pathname.startsWith('/pnl')
 
   return (
     <header className="topbar" aria-busy={isPending}>

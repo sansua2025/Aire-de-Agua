@@ -22,14 +22,14 @@ export interface SidebarCounts {
 }
 
 // OPERACIÓN — páginas de datos por dominio (Figma Founder Cockpit v2, node 1:3).
-// P&L es WIP hasta que AIR-200 se implemente en el dashboard.
+// P&L activo desde AIR-200 (mig 129 · analytics.get_pnl_rango).
 const navOperacion: NavItem[] = [
   { href: '/',         icon: 'home',     label: 'Overview' },
   { href: '/producto', icon: 'shopping', label: 'Producto' },
   { href: '/funnel',   icon: 'funnel',   label: 'Funnel' },
   { href: '/paid',     icon: 'target',   label: 'Paid' },
   { href: '/email',    icon: 'mail',     label: 'Email' },
-  { href: '/pnl',      icon: 'dollar',   label: 'P&L',   badge: 'WIP', wip: true },
+  { href: '/pnl',      icon: 'dollar',   label: 'P&L' },
 ]
 
 export function Sidebar({

@@ -1233,3 +1233,86 @@ button:focus-visible, a.side-item:focus-visible, .side-item:focus-visible, .kpi:
   background: var(--surface-3); color: var(--fg-2);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+
+/* =============================================================================
+   P&L del período · Founder Cockpit v2 (AIR-200 · Figma 20:2)
+   Todo con tokens data-theme (dual light/dark). El color de las barras NUNCA es
+   el único canal: cada fila lleva etiqueta + monto con signo (dataviz).
+   ========================================================================== */
+
+/* --- Cascada del período --- */
+.pnl-casc { display: flex; flex-direction: column; }
+.pnl-casc-row {
+  display: grid;
+  grid-template-columns: 150px 1fr 96px;
+  align-items: center;
+  column-gap: 12px; row-gap: 2px;
+  padding: 5px 0;
+}
+.pnl-casc-row--chk {
+  border-top: 1px solid var(--border);
+  margin-top: 4px; padding-top: 9px;
+}
+.pnl-casc-label { font-size: 13px; color: var(--fg); min-width: 0; }
+.pnl-casc-row--chk .pnl-casc-label,
+.pnl-casc-row--chk .pnl-casc-amt { font-weight: 650; }
+.pnl-casc-track {
+  display: block; height: 12px;
+  background: var(--surface-2); border-radius: 4px; overflow: hidden;
+}
+.pnl-casc-bar { display: block; height: 100%; border-radius: 4px; min-width: 2px; }
+.pnl-casc-amt {
+  text-align: right; font-size: 13px; font-weight: 550; color: var(--fg);
+  white-space: nowrap;
+}
+.pnl-casc-amt.pnl-neg { color: var(--danger); }
+.pnl-casc-nota { grid-column: 1 / -1; font-size: 11px; color: var(--fg-3); line-height: 1.4; }
+
+/* --- Unit economics (tiles con fórmula en tooltip) --- */
+.pnl-ue-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.pnl-ue-tile {
+  display: flex; flex-direction: column; gap: 4px;
+  border: 1px solid var(--border); border-radius: var(--r-ctl);
+  background: var(--surface-2); padding: 12px 13px;
+}
+.pnl-ue-label {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 12px; font-weight: 550; color: var(--fg-2);
+}
+.pnl-ue-info {
+  display: inline-grid; place-items: center; color: var(--fg-3);
+  cursor: help; border-radius: 999px;
+}
+.pnl-ue-info:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pnl-ue-value { font-size: 22px; font-weight: 650; letter-spacing: -0.01em; color: var(--fg); }
+.pnl-ue-sub { font-size: 11px; color: var(--fg-3); line-height: 1.4; }
+
+/* --- Gastos operativos por categoría --- */
+.pnl-cat { display: flex; flex-direction: column; gap: 12px; }
+.pnl-cat-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.pnl-cat-name { font-size: 13px; color: var(--fg); }
+.pnl-cat-amt { font-size: 13px; font-weight: 600; color: var(--fg); }
+.pnl-cat-track {
+  display: block; height: 7px; margin-top: 6px;
+  background: var(--surface-2); border-radius: 999px; overflow: hidden;
+}
+.pnl-cat-bar { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+
+/* --- Contribución semanal --- */
+.pnl-wk {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: 8px; height: 168px; padding-top: 16px;
+}
+.pnl-wk-col { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; gap: 4px; min-width: 0; }
+.pnl-wk-val { font-size: 10px; color: var(--fg-3); white-space: nowrap; }
+.pnl-wk-val.pnl-neg { color: var(--danger); }
+.pnl-wk-plot { flex: 1; width: 100%; display: flex; align-items: flex-end; justify-content: center; }
+.pnl-wk-bar { width: 62%; max-width: 34px; border-radius: 4px 4px 0 0; min-height: 2px; }
+.pnl-wk-bar.pos { background: var(--success); }
+.pnl-wk-bar.neg { background: var(--danger); }
+.pnl-wk-bar.missing { background: var(--border-2); opacity: 0.5; }
+.pnl-wk-lbl { font-size: 10.5px; color: var(--fg-3); }
+
+/* --- comunes --- */
+.pnl-caption { font-size: 11.5px; color: var(--fg-3); margin-top: 12px; line-height: 1.5; text-wrap: pretty; }
+.pnl-empty { font-size: 12.5px; color: var(--fg-3); }
