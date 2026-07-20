@@ -1,7 +1,16 @@
 import 'server-only'
 import { unstable_cache } from 'next/cache'
 import { supabase } from '@/lib/supabase/server'
-import type { RpcWtdPacingRow, RpcTarget, RpcTargetsReturn, RpcInventorySummary, RpcEmailReturn, RpcCerebroStats } from '@/types/analytics'
+import type {
+  RpcWtdPacingRow,
+  RpcTarget,
+  RpcTargetsReturn,
+  RpcInventorySummary,
+  RpcEmailReturn,
+  RpcCerebroStats,
+  RpcAnomaliaRow,
+  RpcFuenteDetail,
+} from '@/types/analytics'
 
 /**
  * Capa de queries server-side cacheadas con tags.
@@ -631,4 +640,52 @@ export const getStrategicLearningsCandidatos = unstable_cache(
   },
   ['strategic_learnings_candidatos'],
   { tags: ['insights'], revalidate: CACHE_FALLBACK_SECONDS }
+)
+
+// =============================================================================
+// AIR-212 / AIR-213 (mig 128) — Sistema · Anomalías & Fuentes de datos v2.
+// Wrappers añadidos al final para minimizar conflictos con los PRs en vuelo.
+// Ambas pantallas son ESTADO VIVO (ventana propia, sin filtro global de período)
+// ⇒ los wrappers no reciben args de rango: la ventana la fija la RPC.
+// =============================================================================
+
+/**
+ * AIR-212 · anomalías de los últimos 30 días (corte Bogota) con `nivel` y
+ * `estado` YA derivados en SQL (analytics.get_anomalias, G7). El cliente no
+ * recalcula nivel. Ventana fija de la RPC: se pasa todo NULL. Tag 'insights':
+ * lo invalida el mismo write-path que la cola del Cerebro.
+ */
+export const getAnomaliasDetalle = unstable_cache(
+  async (): Promise<RpcAnomaliaRow[]> => {
+    const { data, error } = await supabase.rpc('get_anomalias', {
+      p_desde: null,
+      p_hasta: null,
+      p_dominio: null,
+      p_nivel: null,
+    })
+    if (error) throw error
+    return (data ?? []) as RpcAnomaliaRow[]
+  },
+  ['rpc_anomalias_detalle'],
+  { tags: ['insights'], revalidate: CACHE_FALLBACK_SECONDS },
+)
+
+/**
+ * AIR-213 · detalle de las 6 fuentes en una sola llamada (frescura + agregados
+ * de sync_log + volúmenes). analytics.get_fuentes_detail devuelve un jsonb[]:
+ * PostgREST lo entrega como el arreglo directo en `data`. Los mensajes de error
+ * de sync_log ya vienen SANEADOS de la RPC. Tags de todos los dominios de
+ * ingestión: cualquier sync refresca el estado sin esperar al fallback.
+ */
+export const getFuentesDetail = unstable_cache(
+  async (): Promise<RpcFuenteDetail[]> => {
+    const { data, error } = await supabase.rpc('get_fuentes_detail')
+    if (error) throw error
+    return (data ?? []) as RpcFuenteDetail[]
+  },
+  ['rpc_fuentes_detail'],
+  {
+    tags: ['daily', 'weekly', 'paid', 'funnel', 'producto', 'email', 'insights'],
+    revalidate: CACHE_FALLBACK_SECONDS,
+  },
 )
