@@ -2,6 +2,7 @@ import { auth, signOut } from '@/auth'
 import { redirect } from 'next/navigation'
 import { Sidebar, type SidebarCounts } from '@/components/sidebar'
 import { Topbar } from '@/components/topbar'
+import { MobileNav } from '@/components/mobile/mobile-nav'
 import { StaleBanner } from '@/components/ui/stale-banner'
 import { computeStaleSources } from '@/lib/data/stale-sources'
 import {
@@ -33,6 +34,7 @@ export default async function DashboardLayout({
   // de la MISMA frescura que el sidebar. Se muestra solo en las rutas dependientes
   // de cada fuente (StaleBanner filtra por pathname).
   const staleSources = computeStaleSources(freshness)
+  const hayStale = freshness != null && freshness.some((f) => f.stale)
 
   // Contadores de nav (AIR-206): pendientes de la cola + anomalías. Aislados por
   // fuente: si una falla, su badge queda en null (se oculta) sin tumbar el shell.
@@ -62,12 +64,20 @@ export default async function DashboardLayout({
     <div className="app">
       <Sidebar freshness={freshness} counts={counts} />
       <div className="main">
-        <Topbar signOutSlot={signOutSlot} />
+        <Topbar signOutSlot={signOutSlot} staleDot={hayStale} />
         <div className="content">
           <StaleBanner sources={staleSources} />
           <div className="page page-fade">{children}</div>
         </div>
       </div>
+      {/* Navegación móvil (<768px): tab bar fija + hoja "Más". El sidebar se oculta
+          por CSS en ese breakpoint. Aditivo: en desktop no renderiza nada visible. */}
+      <MobileNav
+        counts={counts}
+        freshness={freshness}
+        userEmail={session.user?.email}
+        signOutSlot={signOutSlot}
+      />
     </div>
   )
 }

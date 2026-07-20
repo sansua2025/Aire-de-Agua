@@ -5,21 +5,26 @@ import { createPortal } from 'react-dom'
 import { useRouter, usePathname, useSearchParams } from 'next/navigation'
 import { Icon } from './icon'
 import { DateRangePicker } from './date-range-picker'
+import { ThemeToggle } from './theme-toggle'
+import { MobilePeriodSheet } from './mobile/period-sheet'
 import { parseFilters, toSearchParams, presetLabel, isWeeklyOverview, type Filters } from '@/lib/filters'
 
 // week: subtítulo estático SOLO para páginas NO cableadas al filtro global. Las
 // páginas de FILTERED_PAGES muestran el período efectivo (presetLabel), así que
 // su `week` no se usa — no se hardcodea ningún período aquí (AIR-197).
-const PAGE_META: Record<string, { title: string; week: string }> = {
-  '/':           { title: 'Overview',              week: 'Resumen ejecutivo' },
-  '/producto':   { title: 'Producto y Comercial',  week: 'Top SKUs · inventario · descuentos' },
-  '/funnel':     { title: 'Funnel de conversión',  week: 'Amplitude' },
-  '/paid':       { title: 'Paid · Meta Ads',       week: 'Campañas · creativos · ROAS real' },
-  '/email':      { title: 'Email · Klaviyo',       week: 'Campañas · flows · lista · entregabilidad' },
-  '/pnl':        { title: 'P&L del período',       week: 'Rentabilidad · unit economics' },
-  '/ai':         { title: 'el Cerebro',            week: 'Insights · anomalías · cohortes' },
-  '/anomalias':  { title: 'Anomalías',             week: 'Salud de datos' },
-  '/fuentes':    { title: 'Fuentes de datos',      week: 'Estado de integraciones' },
+// `short` = título compacto para el topbar móvil (AIR-218, frames M·*): coincide
+// con la etiqueta de la tab bar ("Hoy", "Paid"…) en vez del título largo desktop.
+// El título de '/' es "Overview" (AIR-219 le añade "semanal" dinámicamente).
+const PAGE_META: Record<string, { title: string; short: string; week: string }> = {
+  '/':           { title: 'Overview',              short: 'Hoy',       week: 'Resumen ejecutivo' },
+  '/producto':   { title: 'Producto y Comercial',  short: 'Producto',  week: 'Top SKUs · inventario · descuentos' },
+  '/funnel':     { title: 'Funnel de conversión',  short: 'Funnel',    week: 'Amplitude' },
+  '/paid':       { title: 'Paid · Meta Ads',       short: 'Paid',      week: 'Campañas · creativos · ROAS real' },
+  '/email':      { title: 'Email · Klaviyo',       short: 'Email',     week: 'Campañas · flows · lista · entregabilidad' },
+  '/pnl':        { title: 'P&L del período',       short: 'P&L',       week: 'Rentabilidad · unit economics' },
+  '/ai':         { title: 'el Cerebro',            short: 'Cerebro',   week: 'Insights · anomalías · cohortes' },
+  '/anomalias':  { title: 'Anomalías',             short: 'Anomalías', week: 'Salud de datos' },
+  '/fuentes':    { title: 'Fuentes de datos',      short: 'Fuentes',   week: 'Estado de integraciones' },
 }
 
 const channelOptions = [
@@ -42,16 +47,18 @@ const compareOptions = [
 
 interface TopbarProps {
   signOutSlot?: ReactNode
+  /** Punto de estado de frescura (verde/ámbar) del topbar móvil (AIR-218). */
+  staleDot?: boolean
 }
 
-export function Topbar({ signOutSlot }: TopbarProps) {
+export function Topbar({ signOutSlot, staleDot }: TopbarProps) {
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
 
   const [isPending, startTransition] = useTransition()
 
-  const meta = PAGE_META[pathname] || { title: '—', week: '' }
+  const meta = PAGE_META[pathname] || { title: '—', short: '—', week: '' }
   // Fuente de verdad = searchParams, parseada con el contrato compartido (AIR-194).
   const filters = parseFilters(searchParams)
   const { range, channel, compare } = filters
@@ -90,98 +97,71 @@ export function Topbar({ signOutSlot }: TopbarProps) {
 
   return (
     <header className="topbar" aria-busy={isPending}>
+      {/* Monograma editorial — solo móvil (el sidebar tiene la marca en desktop). */}
+      <span className="topbar-mono" aria-hidden>A</span>
       <span className="topbar-title">{title}</span>
+      <span className="topbar-title-m">{meta.short}</span>
       {weekLabel && <span className="topbar-week tnum">{weekLabel}</span>}
 
       <span className="topbar-spacer" />
 
-      <DateRangePicker
-        value={range}
-        onChange={(v) => updateParam('range', v)}
-      />
-      <FilterButton
-        icon="filter"
-        label="Canal"
-        value={channel}
-        options={channelOptions}
-        onChange={(v) => updateParam('channel', v)}
-        disabled={channelDisabled}
-        disabledNote="No aplica en esta página"
-      />
-      <FilterButton
-        icon="sliders"
-        label="Comparar"
-        value={compare}
-        options={compareOptions}
-        onChange={(v) => updateParam('compare', v)}
-      />
+      {/* Controles móviles: un solo pill de período (abre la hoja) + punto de frescura. */}
+      <div className="topbar-mobile">
+        <MobilePeriodSheet />
+        <span
+          className="topbar-dot"
+          style={{ background: staleDot ? 'var(--warning)' : 'var(--success)' }}
+          title={staleDot ? 'Alguna fuente atrasada' : 'Datos al día'}
+          aria-hidden
+        />
+      </div>
 
-      <ThemeToggle />
+      {/* Controles desktop: período · canal · comparar · tema · refrescar · export · salir. */}
+      <div className="topbar-desktop">
+        <DateRangePicker
+          value={range}
+          onChange={(v) => updateParam('range', v)}
+        />
+        <FilterButton
+          icon="filter"
+          label="Canal"
+          value={channel}
+          options={channelOptions}
+          onChange={(v) => updateParam('channel', v)}
+          disabled={channelDisabled}
+          disabledNote="No aplica en esta página"
+        />
+        <FilterButton
+          icon="sliders"
+          label="Comparar"
+          value={compare}
+          options={compareOptions}
+          onChange={(v) => updateParam('compare', v)}
+        />
 
-      <button
-        type="button"
-        className="ctl-btn"
-        aria-label="Refrescar"
-        title="Refrescar datos"
-        onClick={() => router.refresh()}
-      >
-        <Icon name="refresh" size={16} />
-      </button>
-      <button
-        type="button"
-        className="ctl-btn no-print"
-        aria-label="Exportar PDF"
-        title="Exportar PDF"
-        onClick={() => window.print()}
-      >
-        <Icon name="download" size={16} />
-      </button>
-      {signOutSlot}
+        <ThemeToggle />
+
+        <button
+          type="button"
+          className="ctl-btn"
+          aria-label="Refrescar"
+          title="Refrescar datos"
+          onClick={() => router.refresh()}
+        >
+          <Icon name="refresh" size={16} />
+        </button>
+        <button
+          type="button"
+          className="ctl-btn no-print"
+          aria-label="Exportar PDF"
+          title="Exportar PDF"
+          onClick={() => window.print()}
+        >
+          <Icon name="download" size={16} />
+        </button>
+        {signOutSlot}
+      </div>
     </header>
-  )
-}
-
-/**
- * ThemeToggle — alterna data-theme y persiste en localStorage. Sol/luna.
- * El script no-flash en layout.tsx fija el tema antes del paint; aquí solo
- * leemos el estado actual post-mount y lo conmutamos.
- */
-function ThemeToggle() {
-  const [theme, setTheme] = useState<'light' | 'dark'>('light')
-  const [mounted, setMounted] = useState(false)
-
-  useEffect(() => {
-    const current = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light'
-    setTheme(current)
-    setMounted(true)
-  }, [])
-
-  const toggle = () => {
-    const next = theme === 'dark' ? 'light' : 'dark'
-    document.documentElement.dataset.theme = next
-    try {
-      localStorage.setItem('theme', next)
-    } catch {
-      /* localStorage no disponible (modo privado) — el toggle sigue funcionando en runtime */
-    }
-    setTheme(next)
-  }
-
-  const isDark = theme === 'dark'
-
-  return (
-    <button
-      type="button"
-      className="ctl-btn"
-      onClick={toggle}
-      aria-label={isDark ? 'Cambiar a tema claro' : 'Cambiar a tema oscuro'}
-      title={isDark ? 'Tema claro' : 'Tema oscuro'}
-    >
-      {/* suppressHydrationWarning: el icono depende del tema leído en cliente */}
-      <span suppressHydrationWarning>
-        <Icon name={mounted && isDark ? 'sun' : 'moon'} size={16} />
-      </span>
-    </button>
   )
 }
 
