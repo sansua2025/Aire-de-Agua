@@ -67,7 +67,7 @@ export function SourceCard({ f }: { f: RpcFuenteDetail }) {
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         <Line>
-          <span style={{ color: 'var(--fg-3)' }}>{f.cadencia}</span> · última sync{' '}
+          <span style={{ color: 'var(--fg-3)' }}>{f.cadencia}</span> · últimos datos{' '}
           <span style={{ color: f.estado === 'ok' ? 'var(--fg)' : est.dot, fontWeight: 550 }}>
             {relativa(f.dias_desde_ultimo)}
           </span>

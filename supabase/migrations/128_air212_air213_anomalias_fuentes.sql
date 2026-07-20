@@ -10,7 +10,7 @@
 -- ┌─ AIR-212 — analytics.get_anomalias(desde,hasta,dominio,nivel) ─────────────┐
 -- │ Deriva en SQL (GAP G7) lo que la vista view_dashboard_anomalias NO trae:   │
 -- │  · nivel (critico/alerta/info): severidad estadística determinista. Si el  │
--- │    z-score viaja en el texto libre ("z=5.03") se usa |z| (umbrales del     │
+-- │    z-score viaja en el texto libre ("z=<n>") se usa |z| (umbrales del      │
 -- │    spec: >=4 critico, >=2.5 alerta); si no, se cae a |delta_pct| (>=50 /   │
 -- │    >=25). El cliente NO calcula nivel — viene de aquí.                     │
 -- │  · z_score: el número parseado (o NULL) expuesto como columna.             │
