@@ -61,6 +61,20 @@ export const DEFAULT_FILTERS: Filters = {
   compare: 'prev_week',
 }
 
+/**
+ * true si el Overview debe presentar el hero de PACING de la semana en curso
+ * (WTD) en vez del hero de RESUMEN del período (AIR-219). Aplica al preset
+ * `week_current` y al rango por default (landing founder-first): en esos casos el
+ * hero de la semana en curso es la lectura correcta. Con cualquier otro rango
+ * (7d↑ explícito, 90d, mes, custom…) el hero se convierte en el resumen del
+ * período seleccionado — así el bloque dominante deja de ignorar el filtro y no
+ * muestra "$0" WTD un lunes temprano. Fuente única compartida por page.tsx
+ * (server) y topbar.tsx (título "Overview [semanal]").
+ */
+export function isWeeklyOverview(range: RangeToken): boolean {
+  return range === 'week_current' || range === DEFAULT_FILTERS.range
+}
+
 // Presets de "N días terminando hoy". `ayer`, `week_current`, `month_current` y
 // `quarter_current` NO son conteos fijos: se resuelven aparte en resolveRange.
 type CountPreset = 'hoy' | '7d' | '14d' | '30d' | '90d'

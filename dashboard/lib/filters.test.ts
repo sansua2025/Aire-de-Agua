@@ -13,6 +13,7 @@ import {
   rangeButtonLabel,
   presetLabel,
   presetShort,
+  isWeeklyOverview,
   DEFAULT_FILTERS,
   type Filters,
 } from './filters'
@@ -250,5 +251,26 @@ describe('describeFilters (subtítulo período efectivo)', () => {
     expect(describeFilters({ range: '30d', channel: 'paid_social', compare: 'prev_week' }, r)).toBe(
       'Últimos 30 días · 19 jun – 18 jul · Paid Social',
     )
+  })
+})
+
+describe('isWeeklyOverview (hero MODAL — AIR-219)', () => {
+  it('true para week_current', () => {
+    expect(isWeeklyOverview('week_current')).toBe(true)
+  })
+
+  it('true para el rango por default (landing founder-first)', () => {
+    expect(isWeeklyOverview(DEFAULT_FILTERS.range)).toBe(true)
+  })
+
+  it('false para rangos de período (90d/30d/mes/trimestre)', () => {
+    expect(isWeeklyOverview('90d')).toBe(false)
+    expect(isWeeklyOverview('30d')).toBe(false)
+    expect(isWeeklyOverview('month_current')).toBe(false)
+    expect(isWeeklyOverview('quarter_current')).toBe(false)
+  })
+
+  it('false para un rango custom', () => {
+    expect(isWeeklyOverview('2026-06-01_2026-06-30')).toBe(false)
   })
 })

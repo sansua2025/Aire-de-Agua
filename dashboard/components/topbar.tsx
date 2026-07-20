@@ -5,13 +5,13 @@ import { createPortal } from 'react-dom'
 import { useRouter, usePathname, useSearchParams } from 'next/navigation'
 import { Icon } from './icon'
 import { DateRangePicker } from './date-range-picker'
-import { parseFilters, toSearchParams, presetLabel, type Filters } from '@/lib/filters'
+import { parseFilters, toSearchParams, presetLabel, isWeeklyOverview, type Filters } from '@/lib/filters'
 
 // week: subtítulo estático SOLO para páginas NO cableadas al filtro global. Las
 // páginas de FILTERED_PAGES muestran el período efectivo (presetLabel), así que
 // su `week` no se usa — no se hardcodea ningún período aquí (AIR-197).
 const PAGE_META: Record<string, { title: string; week: string }> = {
-  '/':           { title: 'Overview semanal',      week: 'Resumen ejecutivo' },
+  '/':           { title: 'Overview',              week: 'Resumen ejecutivo' },
   '/producto':   { title: 'Producto y Comercial',  week: 'Top SKUs · inventario · descuentos' },
   '/funnel':     { title: 'Funnel de conversión',  week: 'Amplitude' },
   '/paid':       { title: 'Paid · Meta Ads',       week: 'Campañas · creativos · ROAS real' },
@@ -61,6 +61,12 @@ export function Topbar({ signOutSlot }: TopbarProps) {
   const FILTERED_PAGES = new Set(['/', '/funnel', '/paid', '/producto', '/pnl'])
   const weekLabel = FILTERED_PAGES.has(pathname) ? presetLabel(range) : meta.week
 
+  // El Overview solo se titula "semanal" cuando el hero es el pacing de la semana
+  // en curso (rango week_current o el default). Con cualquier otro rango el título
+  // pierde "semanal" y el período efectivo lo declara `weekLabel` (AIR-197/219).
+  const title =
+    pathname === '/' && isWeeklyOverview(range) ? 'Overview semanal' : meta.title
+
   // Refleja el estado pending en el contenedor .page mientras el server component
   // re-renderiza (atenúa el contenido viejo en vez de un flash).
   useEffect(() => {
@@ -84,7 +90,7 @@ export function Topbar({ signOutSlot }: TopbarProps) {
 
   return (
     <header className="topbar" aria-busy={isPending}>
-      <span className="topbar-title">{meta.title}</span>
+      <span className="topbar-title">{title}</span>
       {weekLabel && <span className="topbar-week tnum">{weekLabel}</span>}
 
       <span className="topbar-spacer" />
