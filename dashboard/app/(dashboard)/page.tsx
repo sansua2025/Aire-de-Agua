@@ -2,6 +2,7 @@ import { Card, Callout, WidgetState, PeriodBadge } from '@/components/ui'
 import { OverviewKpis, type OverviewKpi } from '@/components/overview/overview-kpis'
 import { OverviewVentasChart, type VentasDatum } from '@/components/overview/overview-charts'
 import { HeroPacing, type DayBar } from '@/components/overview/hero-pacing'
+import { HeroPeriod } from '@/components/overview/hero-period'
 import { DecisionQueue, type DecisionItem } from '@/components/overview/decision-queue'
 import {
   getKpis,
@@ -21,6 +22,8 @@ import {
   describeFilters,
   formatRangeCompact,
   channelLabel,
+  presetLabel,
+  isWeeklyOverview,
 } from '@/lib/filters'
 import { formatCop, formatNumber, formatPct, formatX } from '@/lib/format'
 
@@ -97,6 +100,9 @@ export default async function OverviewPage({ searchParams }: OverviewPageProps) 
   const periodoCompact = formatRangeCompact(range)
   const canalActivo = filters.channel !== 'all'
   const showDeltas = filters.compare !== 'none'
+  // Hero MODAL (AIR-219): pacing WTD para semana en curso / rango por default;
+  // resumen del período para cualquier otro rango. Fuente única en lib/filters.
+  const weeklyHero = isWeeklyOverview(filters.range)
 
   // Ventana de la SEMANA EN CURSO (independiente del preset global) para el hero.
   const wtd = resolveRange('week_current')
@@ -474,18 +480,42 @@ export default async function OverviewPage({ searchParams }: OverviewPageProps) 
 
   return (
     <>
-      {/* ---- 1. Hero pacing WTD (absorbe AIR-198) ---- */}
-      {pacingR.errored ? (
-        <WidgetState state="error" title="No se pudo cargar el pacing de la semana">
-          analytics.get_wtd_pacing no respondió. Es un error real, NO significa $0 en ventas. Reintenta;
-          si persiste, revisa permisos de la RPC o el estado de Supabase.
+      {/* ---- 1. Hero MODAL (AIR-219): pacing WTD (absorbe AIR-198) vs resumen del período ---- */}
+      {weeklyHero ? (
+        pacingR.errored ? (
+          <WidgetState state="error" title="No se pudo cargar el pacing de la semana">
+            analytics.get_wtd_pacing no respondió. Es un error real, NO significa $0 en ventas. Reintenta;
+            si persiste, revisa permisos de la RPC o el estado de Supabase.
+          </WidgetState>
+        ) : pacing ? (
+          <HeroPacing pacing={pacing} dayBars={dayBars} rangoTexto={formatRangeCompact(wtd)} />
+        ) : (
+          <WidgetState state="empty" title="Sin datos de la semana en curso">
+            La RPC corrió y no devolvió filas para esta semana.
+          </WidgetState>
+        )
+      ) : kpiR.errored ? (
+        <WidgetState state="error" title="No se pudo cargar el resumen del período">
+          analytics.get_kpis no respondió. Es un error real: NO significa que las ventas sean $0.
         </WidgetState>
-      ) : pacing ? (
-        <HeroPacing pacing={pacing} dayBars={dayBars} rangoTexto={formatRangeCompact(wtd)} />
       ) : (
-        <WidgetState state="empty" title="Sin datos de la semana en curso">
-          La RPC corrió y no devolvió filas para esta semana.
-        </WidgetState>
+        <HeroPeriod
+          ventas={ventasTotal}
+          ordenes={ordenes}
+          aov={aov}
+          delta={deltaVentas}
+          range={range}
+          periodoLabel={presetLabel(filters.range)}
+          wtd={
+            pacing
+              ? {
+                  semanaIso: pacing.semana_iso,
+                  ventas: parseNumber(pacing.ventas_wtd) ?? 0,
+                  pctMeta: parseNumber(pacing.pct_meta),
+                }
+              : undefined
+          }
+        />
       )}
 
       {canalActivo && (
