@@ -468,12 +468,28 @@ export const getInsightsActivos = unstable_cache(
  * getInsightsActivos como fuente de la cola; la vista sin agrupar sigue
  * existiendo para expandir un grupo (ver getInsightsPorIds).
  *
+ * Accionabilidad (AIR-84): esta fuente COMPARTIDA alimenta el KPI "Esperando
+ * decisión", la CerebroQueue, el badge del sidebar, el top-3 del Overview y el
+ * Plan de acción del Funnel. Todos esperan SOLO ítems que de verdad esperan una
+ * decisión humana. El predicado replica el bucket "cola" del `bucketize` v1:
+ *   - requiere_del_humano IN ('aprobar','decidir_urgente')  → accionable
+ *     (excluye contexto/FYI: informacion, celebrar, null y cualquier otro valor)
+ *   - estado_accion NOT IN ('hecho','descartado')           → no terminal
+ *     (aprobar/rechazar algo ya decidido es incoherente)
+ * La vista CRUDA trae también contexto (~30) y terminal (~7); pintarla directa
+ * sobrecuenta el backlog ~2.3× y ofrece botones Aprobar/Rechazar sobre ítems ya
+ * hechos o meramente informativos. Filtrar aquí reconcilia page + badge + Overview
+ * + Funnel de una sola vez.
+ *
  * Snooze (AIR-211): "Decidir después" marca estado_accion='pospuesto' con
  * snooze_hasta futuro. La vista no excluye snoozed, así que se filtra aquí —
- * en la fuente COMPARTIDA — para que la pantalla del Cerebro, el badge del
- * sidebar y la cola del Overview vean el MISMO conjunto (un item pospuesto
- * desaparece hasta su fecha; al vencer, reaparece). Corte de día America/Bogota.
+ * en la misma fuente COMPARTIDA — para que todos vean el MISMO conjunto (un item
+ * pospuesto desaparece hasta su fecha; al vencer, reaparece; un pospuesto sin
+ * fecha o ya vencido sigue en cola). Corte de día America/Bogota.
  */
+const COLA_RDH_ACCIONABLE = new Set(['aprobar', 'decidir_urgente'])
+const COLA_ESTADO_TERMINAL = new Set(['hecho', 'descartado'])
+
 export const getColaAgrupada = unstable_cache(
   async () => {
     const { data, error } = await supabase
@@ -483,14 +499,19 @@ export const getColaAgrupada = unstable_cache(
     const hoyBogota = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'America/Bogota',
     }).format(new Date())
-    return (data ?? []).filter(
-      (r) =>
-        !(
-          r.estado_accion === 'pospuesto' &&
-          r.snooze_hasta != null &&
-          r.snooze_hasta.slice(0, 10) > hoyBogota
-        ),
-    )
+    return (data ?? []).filter((r) => {
+      // Accionabilidad AIR-84: solo lo que espera decisión real entra a la cola.
+      if (!COLA_RDH_ACCIONABLE.has(r.requiere_del_humano ?? '')) return false
+      if (COLA_ESTADO_TERMINAL.has(r.estado_accion ?? '')) return false
+      // Snooze (AIR-211): el pospuesto-futuro desaparece hasta su fecha.
+      if (
+        r.estado_accion === 'pospuesto' &&
+        r.snooze_hasta != null &&
+        r.snooze_hasta.slice(0, 10) > hoyBogota
+      )
+        return false
+      return true
+    })
   },
   ['cola_agrupada'],
   { tags: ['insights'], revalidate: CACHE_FALLBACK_SECONDS }
