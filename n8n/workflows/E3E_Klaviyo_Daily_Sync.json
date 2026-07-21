@@ -239,7 +239,7 @@
           "batching": {
             "batch": {
               "batchSize": 1,
-              "batchInterval": 1500
+              "batchInterval": 30000
             }
           },
           "response": {

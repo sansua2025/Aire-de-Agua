@@ -107,6 +107,43 @@
       }
     },
     {
+      "id": "b7e14c02-30aa-4d51-9f21-aa0230e14b30",
+      "name": "n8n - Ejecuciones recientes (todas)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        336,
+        -16
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://airedeagua.app.n8n.cloud/api/v1/executions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "limit",
+              "value": "250"
+            },
+            {
+              "name": "includeData",
+              "value": "false"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "n8n API"
+        }
+      }
+    },
+    {
       "id": "9a30c79b-2022-40d1-93b0-e6162e1fd340",
       "name": "Agrupar fallos >=2",
       "type": "n8n-nodes-base.code",
@@ -118,7 +155,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "function sanitize(s) {\n  if (s == null) return '';\n  let t = String(s);\n  t = t.replace(/[\\r\\n\\t]+/g, ' ');\n  t = t.replace(/[`<>{}|\\\\$]/g, '');\n  t = t.replace(/\\b(ignore|disregard|system|assistant|prompt|instruction)\\b/gi, '_');\n  t = t.replace(/\\s+/g, ' ').trim();\n  if (t.length > 140) t = t.slice(0, 140) + String.fromCharCode(8230);\n  return t;\n}\nconst rows = $input.first().json.data || [];\n// (4) OPCIONAL active=false: cruzar contra /workflows (la rama 'n8n - Workflows actuales'),\n// porque 'active' NO viene en el payload de /executions. DESACTIVADO por defecto:\n// el issue lo marca opcional y el filtro de 'manual' ya atrapa Loop-Knowledge\n// Consolidation; activarlo arriesga falsos negativos. Para activarlo, descomentar\n// las dos lineas marcadas con [active=false] mas abajo.\n// const wfList = ($('n8n - Workflows actuales').first().json.data) || [];\n// const activeSet = new Set(wfList.filter(function (w) { return w.active; }).map(function (w) { return w.id; }));\nconst byWf = {};\nfor (const r of rows) {\n  // (1) AIR-225 auto-monitoreo: el Sentinela YA NO se excluye de la deteccion HISTORICA de sus propios fallos.\n  //     El self-report INMEDIATO lo cubre settings.errorWorkflow (Slack en cada ejecucion fallida). Aqui, un fallo\n  //     REPETIDO (>=2 en las ultimas 100 execs) del propio Sentinela SI genera un issue rastreable; el dedupe por\n  //     signal-key evita duplicados y el auto-cierre lo cierra cuando deja de fallar. Sin bucle: el cron es diario y\n  //     /executions solo lista corridas YA terminadas (nunca la actual en curso).\n  if (r.mode !== 'trigger' && r.mode !== 'webhook') continue; // (2) allowlist: solo disparos automaticos (excluye 'manual')\n  if (!(r.data && r.data.resultData && r.data.resultData.error && r.data.resultData.error.message)) continue; // (3) sin-mensaje: requiere error.message real (includeData=true)\n  // if (!activeSet.has(r.workflowId)) continue; // [active=false] descomentar para exigir workflow activo\n  const name = (r.workflowData && r.workflowData.name) || r.workflowId || 'desconocido';\n  if (!byWf[name]) byWf[name] = { count: 0, lastErr: null, lastAt: null };\n  byWf[name].count += 1;\n  const at = r.stoppedAt || r.startedAt || null;\n  if (!byWf[name].lastAt || (at && at > byWf[name].lastAt)) {\n    byWf[name].lastAt = at;\n    byWf[name].lastErr = r.data.resultData.error.message || '';\n  }\n}\nconst out = [];\nfor (const name of Object.keys(byWf)) {\n  const g = byWf[name];\n  if (g.count < 2) continue;\n  const safeName = sanitize(name);\n  const safeErr = sanitize(g.lastErr) || \"sin mensaje\";\n  const signalKey = 'n8n_exec_fail:' + safeName;\n  const titulo = safeName + \" falló \" + g.count + \" veces: \" + safeErr;\n  out.push({ json: {\n    senal: 'n8n_exec_fail',\n    fuente: safeName,\n    signalKey: signalKey,\n    titulo: titulo.slice(0, 200),\n    descripcion: 'Senal automatica (Sentinela v1): el workflow n8n **' + safeName + '** registro ' + g.count + ' ejecuciones con estado error en las ultimas 100 ejecuciones.\\n\\nUltimo error (sanitizado): ' + safeErr + '\\n\\nNivel de autonomia: pr-only (maximo).\\n\\nsignal-key: ' + signalKey,\n  } });\n}\nreturn out;"
+        "jsCode": "function sanitize(s) {\n  if (s == null) return '';\n  let t = String(s);\n  t = t.replace(/[\\r\\n\\t]+/g, ' ');\n  t = t.replace(/[`<>{}|\\\\$]/g, '');\n  t = t.replace(/\\b(ignore|disregard|system|assistant|prompt|instruction)\\b/gi, '_');\n  t = t.replace(/\\s+/g, ' ').trim();\n  if (t.length > 140) t = t.slice(0, 140) + String.fromCharCode(8230);\n  return t;\n}\n// AIR-230 · Recencia/era + plantilla accionable.\n// A#2/A#3: solo cuentan fallos RECIENTES (stoppedAt dentro de N_DIAS), no el acumulado de las ultimas 100.\nconst N_DIAS = 3;\nconst ahora = Date.now();\nconst ventanaMs = N_DIAS * 86400000;\n// Errores (includeData=true) = input directo de este nodo.\nconst rows = $input.first().json.data || [];\n// A#1: todas las ejecuciones (todos los estados, includeData=false) para saber si el workflow YA se recupero.\nconst todas = ($('n8n - Ejecuciones recientes (todas)').first().json.data) || [];\n// Mapa workflowId -> ejecucion automatica mas reciente { at, status }.\nconst ultimaPorWf = {};\nfor (const e of todas) {\n  if (e.mode !== 'trigger' && e.mode !== 'webhook') continue; // solo disparos automaticos\n  const at = e.stoppedAt || e.startedAt || null;\n  if (!at) continue;\n  const prev = ultimaPorWf[e.workflowId];\n  if (!prev || at > prev.at) {\n    let st = e.status;\n    if (!st) st = e.finished ? 'success' : 'unknown';\n    ultimaPorWf[e.workflowId] = { at: at, status: st };\n  }\n}\nconst byWf = {};\nfor (const r of rows) {\n  // (1) AIR-225 auto-monitoreo: el Sentinela NO se auto-excluye de la deteccion historica de sus propios fallos.\n  //     La de-exclusion del self convive con la recencia (A#4): un fallo REPETIDO y RECIENTE del propio Sentinela\n  //     si genera issue; el dedupe por signal-key evita duplicados y el auto-cierre lo cierra al recuperarse.\n  if (r.mode !== 'trigger' && r.mode !== 'webhook') continue; // (2) allowlist: solo disparos automaticos (excluye manual)\n  if (!(r.data && r.data.resultData && r.data.resultData.error && r.data.resultData.error.message)) continue; // (3) requiere error real (includeData=true)\n  const at = r.stoppedAt || r.startedAt || null;\n  if (!at) continue;\n  // A#2 recencia real: descartar fallos fuera de la ventana de N_DIAS.\n  const atMs = Date.parse(at);\n  if (!(atMs > 0) || (ahora - atMs) > ventanaMs) continue;\n  const name = (r.workflowData && r.workflowData.name) || r.workflowId || 'desconocido';\n  if (!byWf[name]) byWf[name] = { count: 0, wfId: r.workflowId || '', lastErr: null, lastAt: null, lastExecId: null, lastNode: null, firstAt: null, isWebhook: false };\n  const g = byWf[name];\n  g.count += 1;\n  if (r.mode === 'webhook') g.isWebhook = true;\n  if (!g.firstAt || at < g.firstAt) g.firstAt = at;\n  if (!g.lastAt || at > g.lastAt) {\n    g.lastAt = at;\n    const err = r.data.resultData.error;\n    // B#6: el mensaje accionable esta en description/messages[0], no en el generico message.\n    g.lastErr = err.description || (err.messages && err.messages[0]) || err.message || '';\n    g.lastNode = (err.node && err.node.name) || '';\n    g.lastExecId = r.id || '';\n    g.wfId = r.workflowId || g.wfId;\n  }\n}\nconst out = [];\nfor (const name of Object.keys(byWf)) {\n  const g = byWf[name];\n  if (g.count < 2) continue; // A#3 umbral por recurrencia RECIENTE (no acumulado historico)\n  // A#1: si la ejecucion automatica mas reciente del workflow es success, ya se recupero -> suprimir la senal.\n  const ult = ultimaPorWf[g.wfId];\n  if (ult && ult.status === 'success') continue;\n  const safeName = sanitize(name);\n  const safeErr = sanitize(g.lastErr) || 'sin mensaje';\n  const safeNode = sanitize(g.lastNode) || 'desconocido';\n  const signalKey = 'n8n_exec_fail:' + safeName;\n  const titulo = (safeName + ' fallo ' + g.count + ' veces: ' + safeErr).slice(0, 200);\n  // B#5: link directo a la ultima ejecucion fallida.\n  const link = (g.wfId && g.lastExecId)\n    ? 'https://airedeagua.app.n8n.cloud/workflow/' + g.wfId + '/executions/' + g.lastExecId\n    : 'https://airedeagua.app.n8n.cloud/home/executions';\n  // B#8: prioridad por severidad. Webhook productivo caido -> 1 (Urgent); >=5 fallos -> 2 (High); resto -> 3 (Medium).\n  let priority = 3;\n  if (g.count >= 5) priority = 2;\n  if (g.isWebhook) priority = 1;\n  const descripcion = 'Señal automática (Sentinela v1): el workflow n8n **' + safeName + '** registró ' + g.count + ' ejecuciones con estado error en los últimos ' + N_DIAS + ' días.\\n\\n' +\n    'Nodo que falló: ' + safeNode + '\\n' +\n    'Último error (saneado): ' + safeErr + '\\n' +\n    'Primer fallo: ' + (g.firstAt || 'n/d') + '\\n' +\n    'Último fallo: ' + (g.lastAt || 'n/d') + '\\n' +\n    'Ejecución: ' + link + '\\n\\n' +\n    'Nivel de autonomía: pr-only (máximo).\\n\\nsignal-key: ' + signalKey;\n  out.push({ json: {\n    senal: 'n8n_exec_fail',\n    fuente: safeName,\n    signalKey: signalKey,\n    titulo: titulo,\n    descripcion: descripcion,\n    priority: priority,\n  } });\n}\nreturn out;"
       }
     },
     {
@@ -269,7 +306,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// Label IDs (team AIR). NUNCA usar agent-ready (c89c500f-...) en señales de Sentinela: es pr-only.\nconst LBL_NEEDS_REFINEMENT = '197fb5ae-dff3-45de-b2ae-1533069d1d39';\nconst LBL_SENSORS = 'd30a9e60-b290-4fd4-bacc-c9c87d66bf18';\n// AIR-225: provenance. TODA señal de Sentinela nace con el label 'sentinela'.\n// Es el candado del auto-cierre: solo issues con este label (+ marcador signal-key) son elegibles para cerrarse.\nconst LBL_SENTINELA = '519560f6-81b5-4f06-b5b8-29c50813bb09';\n// Labels por tipo de señal (sentinela SIEMPRE presente):\n//   n8n_exec_fail / drift -> [sentinela, needs-refinement]\n//   sync_gap              -> [sentinela, Sensors, needs-refinement] (jamás agent-ready)\nfunction labelsFor(senal) {\n  if (senal === 'sync_gap') return [LBL_SENTINELA, LBL_SENSORS, LBL_NEEDS_REFINEMENT];\n  return [LBL_SENTINELA, LBL_NEEDS_REFINEMENT];\n}\nconst ctx = $(\"Linear - Contexto (label + abiertos)\").first().json;\nconst gql = (ctx && ctx.data) || {};\nconst abiertos = (gql.issues && gql.issues.nodes) || [];\nconst keysAbiertos = new Set();\nfor (const i of abiertos) {\n  const m = String(i.description || '').match(/signal-key:\\s*([^\\n\\r]+)/);\n  if (m && m[1]) keysAbiertos.add(m[1].trim());\n}\nconst candidatos = $input.all().map(function (i) { return i.json; });\nconst vistos = new Set();\nconst out = [];\nfor (const c of candidatos) {\n  const t = String(c.titulo || '').trim();\n  if (!t) continue;\n  const sk = String(c.signalKey || '').trim();\n  if (!sk) continue;\n  if (keysAbiertos.has(sk)) continue;\n  if (vistos.has(sk)) continue;\n  vistos.add(sk);\n  const senal = c.senal || '';\n  out.push({ json: {\n    titulo: t,\n    descripcion: c.descripcion || '',\n    senal: senal,\n    fuente: c.fuente || '',\n    signalKey: sk,\n    labelIds: labelsFor(senal),\n  } });\n}\nreturn out;"
+        "jsCode": "// Label IDs (team AIR). NUNCA usar agent-ready (c89c500f-...) en señales de Sentinela: es pr-only.\nconst LBL_NEEDS_REFINEMENT = '197fb5ae-dff3-45de-b2ae-1533069d1d39';\nconst LBL_SENSORS = 'd30a9e60-b290-4fd4-bacc-c9c87d66bf18';\n// AIR-225: provenance. TODA señal de Sentinela nace con el label 'sentinela'.\n// Es el candado del auto-cierre: solo issues con este label (+ marcador signal-key) son elegibles para cerrarse.\nconst LBL_SENTINELA = '519560f6-81b5-4f06-b5b8-29c50813bb09';\n// Labels por tipo de señal (sentinela SIEMPRE presente):\n//   n8n_exec_fail / drift -> [sentinela, needs-refinement]\n//   sync_gap              -> [sentinela, Sensors, needs-refinement] (jamás agent-ready)\nfunction labelsFor(senal) {\n  if (senal === 'sync_gap') return [LBL_SENTINELA, LBL_SENSORS, LBL_NEEDS_REFINEMENT];\n  return [LBL_SENTINELA, LBL_NEEDS_REFINEMENT];\n}\nconst ctx = $(\"Linear - Contexto (label + abiertos)\").first().json;\nconst gql = (ctx && ctx.data) || {};\nconst abiertos = (gql.issues && gql.issues.nodes) || [];\nconst keysAbiertos = new Set();\nfor (const i of abiertos) {\n  const m = String(i.description || '').match(/signal-key:\\s*([^\\n\\r]+)/);\n  if (m && m[1]) keysAbiertos.add(m[1].trim());\n}\nconst candidatos = $input.all().map(function (i) { return i.json; });\nconst vistos = new Set();\nconst out = [];\nfor (const c of candidatos) {\n  const t = String(c.titulo || '').trim();\n  if (!t) continue;\n  const sk = String(c.signalKey || '').trim();\n  if (!sk) continue;\n  if (keysAbiertos.has(sk)) continue;\n  if (vistos.has(sk)) continue;\n  vistos.add(sk);\n  const senal = c.senal || '';\n  // AIR-230 B: threading de priority hasta el IssueCreateInput. exec_fail lo trae (1/2/3);\n  // sync_gap/drift no lo setean -> 3 (Medium) por defecto (nunca None).\n  const priority = (typeof c.priority === 'number' && c.priority >= 1 && c.priority <= 4) ? c.priority : 3;\n  out.push({ json: {\n    titulo: t,\n    descripcion: c.descripcion || '',\n    senal: senal,\n    fuente: c.fuente || '',\n    signalKey: sk,\n    labelIds: labelsFor(senal),\n    priority: priority,\n  } });\n}\nreturn out;"
       }
     },
     {
@@ -331,7 +368,7 @@
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ query: \"mutation Crear($input: IssueCreateInput!) { issueCreate(input: $input) { success issue { id identifier url } } }\", variables: { input: Object.assign({ teamId: \"5d10e240-7669-454b-b0d6-a90370c01db2\", title: $json.titulo, description: $json.descripcion }, Array.isArray($json.labelIds) && $json.labelIds.length ? { labelIds: $json.labelIds } : {}) } }) }}",
+        "jsonBody": "={{ JSON.stringify({ query: \"mutation Crear($input: IssueCreateInput!) { issueCreate(input: $input) { success issue { id identifier url } } }\", variables: { input: Object.assign({ teamId: \"5d10e240-7669-454b-b0d6-a90370c01db2\", title: $json.titulo, description: $json.descripcion }, Array.isArray($json.labelIds) && $json.labelIds.length ? { labelIds: $json.labelIds } : {}, (typeof $json.priority === 'number' ? { priority: $json.priority } : {})) } }) }}",
         "options": {}
       },
       "credentials": {
@@ -439,11 +476,6 @@
       "main": [
         [
           {
-            "node": "n8n - Ejecuciones fallidas",
-            "type": "main",
-            "index": 0
-          },
-          {
             "node": "Supabase - sync_log 7d",
             "type": "main",
             "index": 0
@@ -457,6 +489,11 @@
             "node": "Recolectar para cierre",
             "type": "main",
             "index": 1
+          },
+          {
+            "node": "n8n - Ejecuciones recientes (todas)",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
@@ -493,51 +530,6 @@
           },
           {
             "node": "Recolectar para cierre",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Recolectar para cierre": {
-      "main": [
-        [
-          {
-            "node": "Calcular issues a cerrar",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Calcular issues a cerrar": {
-      "main": [
-        [
-          {
-            "node": "Loop cerrar issues",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Loop cerrar issues": {
-      "main": [
-        [],
-        [
-          {
-            "node": "Linear - Cerrar issue",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Linear - Cerrar issue": {
-      "main": [
-        [
-          {
-            "node": "Loop cerrar issues",
             "type": "main",
             "index": 0
           }
@@ -638,6 +630,62 @@
         [
           {
             "node": "Linear - Contexto (label + abiertos)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recolectar para cierre": {
+      "main": [
+        [
+          {
+            "node": "Calcular issues a cerrar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calcular issues a cerrar": {
+      "main": [
+        [
+          {
+            "node": "Loop cerrar issues",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop cerrar issues": {
+      "main": [
+        null,
+        [
+          {
+            "node": "Linear - Cerrar issue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Linear - Cerrar issue": {
+      "main": [
+        [
+          {
+            "node": "Loop cerrar issues",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "n8n - Ejecuciones recientes (todas)": {
+      "main": [
+        [
+          {
+            "node": "n8n - Ejecuciones fallidas",
             "type": "main",
             "index": 0
           }
