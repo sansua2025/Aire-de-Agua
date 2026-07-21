@@ -43,3 +43,17 @@
 - **evals tests**: `reconcile.test.ts` SKIP sin `SUPABASE_SERVICE_ROLE_KEY` (env-guard pasa si `EVALS_REQUIRED!=1`). GATE asserta `results.length===TASKS.length` → cada task nuevo NECESITA su `it()` que llame `record()`. `skill-static.test.ts` corre siempre (no DB): exige `analytics.<rpc>(` exactamente 1 vez c/u en SKILL.md + `toContain('revenue_atribuido')` (mantener mención al describir v_paid_performance_diario) + columnas reales (total_linea/ordered_at/America/Bogota/estado_pago/titulo). Un Prettier hook reformatea reconcile.test.ts entero (`'`→`"`) al editar — diff grande pero inocuo; tsc+vitest validan.
 - Verificación builder sin BD: `npm install` (node_modules no viene) + `npm run typecheck` (tsc limpio) + `npx vitest run evals/cerebro/skill-static.test.ts evals/cerebro/reconcile.test.ts` + `jq empty tasks.json` + `bash scripts/agent/check-data-rules.sh --file <archivos>`. Lint rompe en cloud (`eslint-config-next` ausente) — ignorar.
 - ADR en `docs/adr/ADR-NNN-*.md` (último ADR-002). ADR-001 §3 dejó "Fase 3b" = este fix por-adset.
+
+## n8n "slim" de payload Shopify → RPC — verificar contrato completo (AIR-43)
+Cuando un nodo Code recorta el payload de Shopify a un whitelist de campos antes de mandarlo a un RPC
+(`backfill_orders` y similares), el whitelist puede quedar desincronizado del contrato real del RPC
+**sin error visible**: el campo simplemente no llega, el RPC hace fallback silencioso (`COALESCE`) y la
+columna queda NULL/vacía sin lanzar excepción en n8n ni en Postgres. Caso real: el slim de
+`E2_Backfill_Historico_Shopify` mandaba `payment_gateway` (deprecado por Shopify) pero no
+`payment_gateway_names` (array, fuente que `backfill_orders` prioriza vía
+`COALESCE(ord->'payment_gateway_names'->>0, ord->>'payment_gateway')`) → `metodo_pago` NULL en 96,6% de
+las filas. Al editar un slim de payload: leer el `COALESCE`/mapeo de campos del RPC destino y confirmar
+que CADA campo que lee está en el whitelist, no solo los "obvios" — especial atención a pares
+campo-nuevo/campo-deprecado de la API de origen. 1ª vez que se ve este patrón — si vuelve a repetirse,
+candidato a check estático en `check-data-rules.sh` (diff de campos usados en RPC `->>`/`COALESCE` vs.
+whitelist del nodo Code que lo alimenta).
