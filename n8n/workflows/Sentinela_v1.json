@@ -3,7 +3,7 @@
   "createdAt": "2026-06-12T01:11:02.422Z",
   "id": "Aul2pyDbdIECaBhY",
   "name": "Sentinela v1",
-  "description": "AIR-99 · Cada 6h convierte 3 senales (n8n exec fallidas, sync_log sin filas hoy, drift n8n/repo) en issues de Linear team AIR con label needs-refinement y dedupe por signal-key estable.",
+  "description": "AIR-99/AIR-225 · Cron diario 9am COT: convierte 3 senales (n8n exec fallidas, sync_log sin filas hoy, drift n8n/repo) en issues de Linear team AIR con labels needs-refinement + sentinela y dedupe por signal-key estable. Auto-cierra (Done) los issues cuya senal ya no esta activa, solo si llevan el label sentinela Y el marcador signal-key. errorWorkflow global cableado para alertar fallos del propio Sentinela.",
   "active": false,
   "isArchived": false,
   "nodes": [
@@ -55,7 +55,7 @@
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ query: \"query Sentinela($teamId: String!) { issues(filter: { team: { id: { eq: $teamId } }, state: { type: { nin: [\\\"completed\\\", \\\"canceled\\\"] } } }, first: 250) { nodes { id identifier title description } } }\", variables: { teamId: \"5d10e240-7669-454b-b0d6-a90370c01db2\" } }) }}",
+        "jsonBody": "={{ JSON.stringify({ query: \"query Sentinela($teamId: ID!) { issues(filter: { team: { id: { eq: $teamId } }, state: { type: { nin: [\\\"completed\\\", \\\"canceled\\\"] } } }, first: 250) { nodes { id identifier title description labels { nodes { id name } } } } }\", variables: { teamId: \"5d10e240-7669-454b-b0d6-a90370c01db2\" } }) }}",
         "options": {}
       },
       "credentials": {
@@ -118,7 +118,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "function sanitize(s) {\n  if (s == null) return '';\n  let t = String(s);\n  t = t.replace(/[\\r\\n\\t]+/g, ' ');\n  t = t.replace(/[`<>{}|\\\\$]/g, '');\n  t = t.replace(/\\b(ignore|disregard|system|assistant|prompt|instruction)\\b/gi, '_');\n  t = t.replace(/\\s+/g, ' ').trim();\n  if (t.length > 140) t = t.slice(0, 140) + String.fromCharCode(8230);\n  return t;\n}\nconst rows = $input.first().json.data || [];\n// (4) OPCIONAL active=false: cruzar contra /workflows (la rama 'n8n - Workflows actuales'),\n// porque 'active' NO viene en el payload de /executions. DESACTIVADO por defecto:\n// el issue lo marca opcional y el filtro de 'manual' ya atrapa Loop-Knowledge\n// Consolidation; activarlo arriesga falsos negativos. Para activarlo, descomentar\n// las dos lineas marcadas con [active=false] mas abajo.\n// const wfList = ($('n8n - Workflows actuales').first().json.data) || [];\n// const activeSet = new Set(wfList.filter(function (w) { return w.active; }).map(function (w) { return w.id; }));\nconst byWf = {};\nfor (const r of rows) {\n  if (r.workflowId === 'Aul2pyDbdIECaBhY') continue; // (1) self: no reportarse a si mismo\n  if (r.mode !== 'trigger' && r.mode !== 'webhook') continue; // (2) allowlist: solo disparos automaticos (excluye 'manual')\n  if (!(r.data && r.data.resultData && r.data.resultData.error && r.data.resultData.error.message)) continue; // (3) sin-mensaje: requiere error.message real (includeData=true)\n  // if (!activeSet.has(r.workflowId)) continue; // [active=false] descomentar para exigir workflow activo\n  const name = (r.workflowData && r.workflowData.name) || r.workflowId || 'desconocido';\n  if (!byWf[name]) byWf[name] = { count: 0, lastErr: null, lastAt: null };\n  byWf[name].count += 1;\n  const at = r.stoppedAt || r.startedAt || null;\n  if (!byWf[name].lastAt || (at && at > byWf[name].lastAt)) {\n    byWf[name].lastAt = at;\n    byWf[name].lastErr = r.data.resultData.error.message || '';\n  }\n}\nconst out = [];\nfor (const name of Object.keys(byWf)) {\n  const g = byWf[name];\n  if (g.count < 2) continue;\n  const safeName = sanitize(name);\n  const safeErr = sanitize(g.lastErr) || \"sin mensaje\";\n  const signalKey = 'n8n_exec_fail:' + safeName;\n  const titulo = safeName + \" falló \" + g.count + \" veces: \" + safeErr;\n  out.push({ json: {\n    senal: 'n8n_exec_fail',\n    fuente: safeName,\n    signalKey: signalKey,\n    titulo: titulo.slice(0, 200),\n    descripcion: 'Senal automatica (Sentinela v1): el workflow n8n **' + safeName + '** registro ' + g.count + ' ejecuciones con estado error en las ultimas 100 ejecuciones.\\n\\nUltimo error (sanitizado): ' + safeErr + '\\n\\nNivel de autonomia: pr-only (maximo).\\n\\nsignal-key: ' + signalKey,\n  } });\n}\nreturn out;"
+        "jsCode": "function sanitize(s) {\n  if (s == null) return '';\n  let t = String(s);\n  t = t.replace(/[\\r\\n\\t]+/g, ' ');\n  t = t.replace(/[`<>{}|\\\\$]/g, '');\n  t = t.replace(/\\b(ignore|disregard|system|assistant|prompt|instruction)\\b/gi, '_');\n  t = t.replace(/\\s+/g, ' ').trim();\n  if (t.length > 140) t = t.slice(0, 140) + String.fromCharCode(8230);\n  return t;\n}\nconst rows = $input.first().json.data || [];\n// (4) OPCIONAL active=false: cruzar contra /workflows (la rama 'n8n - Workflows actuales'),\n// porque 'active' NO viene en el payload de /executions. DESACTIVADO por defecto:\n// el issue lo marca opcional y el filtro de 'manual' ya atrapa Loop-Knowledge\n// Consolidation; activarlo arriesga falsos negativos. Para activarlo, descomentar\n// las dos lineas marcadas con [active=false] mas abajo.\n// const wfList = ($('n8n - Workflows actuales').first().json.data) || [];\n// const activeSet = new Set(wfList.filter(function (w) { return w.active; }).map(function (w) { return w.id; }));\nconst byWf = {};\nfor (const r of rows) {\n  // (1) AIR-225 auto-monitoreo: el Sentinela YA NO se excluye de la deteccion HISTORICA de sus propios fallos.\n  //     El self-report INMEDIATO lo cubre settings.errorWorkflow (Slack en cada ejecucion fallida). Aqui, un fallo\n  //     REPETIDO (>=2 en las ultimas 100 execs) del propio Sentinela SI genera un issue rastreable; el dedupe por\n  //     signal-key evita duplicados y el auto-cierre lo cierra cuando deja de fallar. Sin bucle: el cron es diario y\n  //     /executions solo lista corridas YA terminadas (nunca la actual en curso).\n  if (r.mode !== 'trigger' && r.mode !== 'webhook') continue; // (2) allowlist: solo disparos automaticos (excluye 'manual')\n  if (!(r.data && r.data.resultData && r.data.resultData.error && r.data.resultData.error.message)) continue; // (3) sin-mensaje: requiere error.message real (includeData=true)\n  // if (!activeSet.has(r.workflowId)) continue; // [active=false] descomentar para exigir workflow activo\n  const name = (r.workflowData && r.workflowData.name) || r.workflowId || 'desconocido';\n  if (!byWf[name]) byWf[name] = { count: 0, lastErr: null, lastAt: null };\n  byWf[name].count += 1;\n  const at = r.stoppedAt || r.startedAt || null;\n  if (!byWf[name].lastAt || (at && at > byWf[name].lastAt)) {\n    byWf[name].lastAt = at;\n    byWf[name].lastErr = r.data.resultData.error.message || '';\n  }\n}\nconst out = [];\nfor (const name of Object.keys(byWf)) {\n  const g = byWf[name];\n  if (g.count < 2) continue;\n  const safeName = sanitize(name);\n  const safeErr = sanitize(g.lastErr) || \"sin mensaje\";\n  const signalKey = 'n8n_exec_fail:' + safeName;\n  const titulo = safeName + \" falló \" + g.count + \" veces: \" + safeErr;\n  out.push({ json: {\n    senal: 'n8n_exec_fail',\n    fuente: safeName,\n    signalKey: signalKey,\n    titulo: titulo.slice(0, 200),\n    descripcion: 'Senal automatica (Sentinela v1): el workflow n8n **' + safeName + '** registro ' + g.count + ' ejecuciones con estado error en las ultimas 100 ejecuciones.\\n\\nUltimo error (sanitizado): ' + safeErr + '\\n\\nNivel de autonomia: pr-only (maximo).\\n\\nsignal-key: ' + signalKey,\n  } });\n}\nreturn out;"
       }
     },
     {
@@ -269,7 +269,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// Label IDs (team AIR). NUNCA usar agent-ready (c89c500f-...) en señales de Sentinela: es pr-only.\nconst LBL_NEEDS_REFINEMENT = '197fb5ae-dff3-45de-b2ae-1533069d1d39';\nconst LBL_SENSORS = 'd30a9e60-b290-4fd4-bacc-c9c87d66bf18';\n// Labels por tipo de señal:\n//   n8n_exec_fail / drift -> [needs-refinement]\n//   sync_gap              -> [Sensors, needs-refinement] (jamás agent-ready)\nfunction labelsFor(senal) {\n  if (senal === 'sync_gap') return [LBL_SENSORS, LBL_NEEDS_REFINEMENT];\n  return [LBL_NEEDS_REFINEMENT];\n}\nconst ctx = $(\"Linear - Contexto (label + abiertos)\").first().json;\nconst gql = (ctx && ctx.data) || {};\nconst abiertos = (gql.issues && gql.issues.nodes) || [];\nconst keysAbiertos = new Set();\nfor (const i of abiertos) {\n  const m = String(i.description || '').match(/signal-key:\\s*([^\\n\\r]+)/);\n  if (m && m[1]) keysAbiertos.add(m[1].trim());\n}\nconst candidatos = $input.all().map(function (i) { return i.json; });\nconst vistos = new Set();\nconst out = [];\nfor (const c of candidatos) {\n  const t = String(c.titulo || '').trim();\n  if (!t) continue;\n  const sk = String(c.signalKey || '').trim();\n  if (!sk) continue;\n  if (keysAbiertos.has(sk)) continue;\n  if (vistos.has(sk)) continue;\n  vistos.add(sk);\n  const senal = c.senal || '';\n  out.push({ json: {\n    titulo: t,\n    descripcion: c.descripcion || '',\n    senal: senal,\n    fuente: c.fuente || '',\n    signalKey: sk,\n    labelIds: labelsFor(senal),\n  } });\n}\nreturn out;"
+        "jsCode": "// Label IDs (team AIR). NUNCA usar agent-ready (c89c500f-...) en señales de Sentinela: es pr-only.\nconst LBL_NEEDS_REFINEMENT = '197fb5ae-dff3-45de-b2ae-1533069d1d39';\nconst LBL_SENSORS = 'd30a9e60-b290-4fd4-bacc-c9c87d66bf18';\n// AIR-225: provenance. TODA señal de Sentinela nace con el label 'sentinela'.\n// Es el candado del auto-cierre: solo issues con este label (+ marcador signal-key) son elegibles para cerrarse.\nconst LBL_SENTINELA = '519560f6-81b5-4f06-b5b8-29c50813bb09';\n// Labels por tipo de señal (sentinela SIEMPRE presente):\n//   n8n_exec_fail / drift -> [sentinela, needs-refinement]\n//   sync_gap              -> [sentinela, Sensors, needs-refinement] (jamás agent-ready)\nfunction labelsFor(senal) {\n  if (senal === 'sync_gap') return [LBL_SENTINELA, LBL_SENSORS, LBL_NEEDS_REFINEMENT];\n  return [LBL_SENTINELA, LBL_NEEDS_REFINEMENT];\n}\nconst ctx = $(\"Linear - Contexto (label + abiertos)\").first().json;\nconst gql = (ctx && ctx.data) || {};\nconst abiertos = (gql.issues && gql.issues.nodes) || [];\nconst keysAbiertos = new Set();\nfor (const i of abiertos) {\n  const m = String(i.description || '').match(/signal-key:\\s*([^\\n\\r]+)/);\n  if (m && m[1]) keysAbiertos.add(m[1].trim());\n}\nconst candidatos = $input.all().map(function (i) { return i.json; });\nconst vistos = new Set();\nconst out = [];\nfor (const c of candidatos) {\n  const t = String(c.titulo || '').trim();\n  if (!t) continue;\n  const sk = String(c.signalKey || '').trim();\n  if (!sk) continue;\n  if (keysAbiertos.has(sk)) continue;\n  if (vistos.has(sk)) continue;\n  vistos.add(sk);\n  const senal = c.senal || '';\n  out.push({ json: {\n    titulo: t,\n    descripcion: c.descripcion || '',\n    senal: senal,\n    fuente: c.fuente || '',\n    signalKey: sk,\n    labelIds: labelsFor(senal),\n  } });\n}\nreturn out;"
       }
     },
     {
@@ -353,6 +353,85 @@
       "parameters": {
         "batchSize": 1
       }
+    },
+    {
+      "id": "a1c50e2f-0b7e-4d21-9f3a-2b6d7e0a1c11",
+      "name": "Recolectar para cierre",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1120,
+        384
+      ],
+      "parameters": {
+        "mode": "append",
+        "numberInputs": 2
+      }
+    },
+    {
+      "id": "b2d61f30-1c8f-4e32-a04b-3c7e8f1b2d22",
+      "name": "Calcular issues a cerrar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        384
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "function sanitize(s) {\n  if (s == null) return '';\n  let t = String(s).replace(/[\\r\\n\\t]+/g, ' ').replace(/[`<>{}|\\\\$]/g, '');\n  return t.replace(/\\s+/g, ' ').trim().slice(0, 120);\n}\n// AIR-225 auto-cierre (absorbe AIR-121). Candados de seguridad DUROS: se cierra un issue SOLO si\n// (1) su cuerpo trae el marcador signal-key, (2) lleva el label sentinela, y (3) su senal ya NO esta\n// viva en esta corrida (exitosa). NUNCA se toca un issue humano. El texto externo (description) solo se\n// REGEX-matchea para extraer la clave; jamas se interpreta como instruccion. sanitize() se preserva por\n// invariante anti prompt-injection.\nconst SENTINELA_LABEL_ID = '519560f6-81b5-4f06-b5b8-29c50813bb09';\nconst SENTINELA_LABEL_NAME = 'sentinela';\n// $input = merge [senales vivas de \"Unir candidatos\"  +  item de contexto de \"Linear - Contexto\"].\n// El item de contexto garantiza >=1 item de entrada => este nodo SIEMPRE corre (incluso con 0 senales\n// vivas: en ese caso se cierran todas las senales resueltas). Corre despues del merge => tras todas las\n// ramas de deteccion, por lo que el set de vivos esta completo.\nconst items = $input.all().map(function (i) { return i.json; });\nconst vivos = new Set();\nlet ctxItem = null;\nfor (const it of items) {\n  if (it && it.signalKey) vivos.add(String(it.signalKey).trim());\n  if (it && it.data && it.data.issues) ctxItem = it;\n}\nlet abiertos = [];\nif (ctxItem && ctxItem.data && ctxItem.data.issues && ctxItem.data.issues.nodes) {\n  abiertos = ctxItem.data.issues.nodes;\n} else {\n  const ctx = $(\"Linear - Contexto (label + abiertos)\").first().json;\n  abiertos = (ctx && ctx.data && ctx.data.issues && ctx.data.issues.nodes) || [];\n}\nconst out = [];\nfor (const issue of abiertos) {\n  const m = String(issue.description || '').match(/signal-key:\\s*([^\\n\\r]+)/);\n  if (!m || !m[1]) continue;              // CANDADO 1: marcador signal-key\n  const sk = m[1].trim();\n  if (!sk) continue;\n  const labs = (issue.labels && issue.labels.nodes) || [];\n  const esSentinela = labs.some(function (l) { return l && (l.id === SENTINELA_LABEL_ID || l.name === SENTINELA_LABEL_NAME); });\n  if (!esSentinela) continue;             // CANDADO 2: label sentinela (jamas issues humanos)\n  if (vivos.has(sk)) continue;            // CANDADO 3: la senal sigue viva => no cerrar\n  out.push({ json: { issueId: String(issue.id || ''), identifier: sanitize(issue.identifier), signalKey: sanitize(sk) } });\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "c3e72041-2d90-4f43-b15c-4d8f9a2c3e33",
+      "name": "Loop cerrar issues",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1568,
+        384
+      ],
+      "parameters": {
+        "batchSize": 1
+      }
+    },
+    {
+      "id": "d4f83152-3ea1-4054-c26d-5e9a0b3d4f44",
+      "name": "Linear - Cerrar issue",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1792,
+        384
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.linear.app/graphql",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: \"mutation Cerrar($id: String!, $stateId: String!) { issueUpdate(id: $id, input: { stateId: $stateId }) { success issue { identifier state { name } } } }\", variables: { id: $json.issueId, stateId: \"866f64ca-f698-485e-b633-9e4f94acd719\" } }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Linear AdeA"
+        }
+      }
     }
   ],
   "connections": {
@@ -373,6 +452,11 @@
             "node": "n8n - Workflows actuales",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Recolectar para cierre",
+            "type": "main",
+            "index": 1
           }
         ]
       ]
@@ -404,6 +488,56 @@
         [
           {
             "node": "Dedupe vs Linear",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Recolectar para cierre",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recolectar para cierre": {
+      "main": [
+        [
+          {
+            "node": "Calcular issues a cerrar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calcular issues a cerrar": {
+      "main": [
+        [
+          {
+            "node": "Loop cerrar issues",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop cerrar issues": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Linear - Cerrar issue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Linear - Cerrar issue": {
+      "main": [
+        [
+          {
+            "node": "Loop cerrar issues",
             "type": "main",
             "index": 0
           }
@@ -513,7 +647,8 @@
   },
   "settings": {
     "executionOrder": "v1",
-    "availableInMCP": true
+    "availableInMCP": true,
+    "errorWorkflow": "PV9L4Y58E3JLvflt"
   },
   "staticData": null,
   "meta": {
