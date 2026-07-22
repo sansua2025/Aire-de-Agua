@@ -13,8 +13,11 @@
 --
 -- Qué construye esta migración (en orden):
 --   1. Tabla public.insight_resolution_rules (config-as-data) + RLS.
---      La fila de regla ES un vector de ejecución de SQL → escritura sólo por
---      rol privilegiado (service_role); NUNCA anon/authenticated/dashboard_reader.
+--      La tabla NO guarda SQL ejecutable: sólo declara qué insight_key tiene
+--      auto-resolución activa (allowlist). La CONDICIÓN de contradicción vive en
+--      el cuerpo del RPC, en un dispatcher whitelisted por insight_key (patrón
+--      analytics.eval_recompute, mig 086) — cero SQL dinámico. Aun así la config
+--      gobierna comportamiento del cerebro → escritura sólo service_role.
 --   2. ALTER public.ai_analysis_log: amplía el CHECK de `tipo` para admitir
 --      'contradiction_check' (aditivo). Sin esto el INSERT de auditoría del RPC
 --      abortaría la transacción.
@@ -34,15 +37,15 @@
 
 
 -- ─────────────────────────────────────────────────────────────────────────
--- 1. Tabla public.insight_resolution_rules (config-as-data)
+-- 1. Tabla public.insight_resolution_rules (allowlist config-as-data)
 -- ─────────────────────────────────────────────────────────────────────────
--- condicion_sql: un SELECT que retorna true cuando la CONDICIÓN del insight YA
--- NO se cumple (i.e. el insight quedó contradicho por datos frescos). Es texto
--- ejecutable → tratado como secreto/privilegiado (ver RLS abajo).
+-- La tabla NO contiene SQL ejecutable. Cada fila declara que un `insight_key`
+-- tiene auto-resolución activa; la lógica de contradicción está whitelisted en
+-- el cuerpo del RPC (dispatcher por insight_key). `descripcion` es SÓLO texto
+-- documental (además se usa en la nota de resolución) — nunca se ejecuta.
 CREATE TABLE IF NOT EXISTS public.insight_resolution_rules (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   insight_key   text NOT NULL,
-  condicion_sql text NOT NULL,
   descripcion   text NOT NULL,
   activo        boolean NOT NULL DEFAULT true,
   created_at    timestamptz NOT NULL DEFAULT now(),
@@ -55,13 +58,13 @@ CREATE TRIGGER trg_insight_resolution_rules_updated_at
   BEFORE UPDATE ON public.insight_resolution_rules
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
--- RLS (CLAUDE.md regla 12): la fila contiene SQL ejecutable → patrón brand_config
--- endurecido. anon/public revocados; NO se otorga a authenticated ni se crea
--- policy para lectura pública. Sólo service_role (n8n) escribe/lee. El RPC es
--- SECURITY DEFINER y lee vía su owner (bypassa RLS); service_role tiene BYPASSRLS.
--- Supabase concede ALL por default a anon/authenticated en tablas nuevas de public;
--- se revoca a los TRES (anon, authenticated, public) para que ni el grant de tabla exista
--- (defensa en profundidad además de RLS). Sólo service_role escribe/lee.
+-- RLS (CLAUDE.md regla 12): la fila gobierna comportamiento del cerebro (qué
+-- insights se auto-resuelven) → escritura sólo por rol privilegiado. anon/public
+-- revocados; NO se otorga a authenticated ni se crea policy de lectura pública.
+-- El RPC es SECURITY DEFINER y lee vía su owner (bypassa RLS); service_role tiene
+-- BYPASSRLS. Supabase concede ALL por default a anon/authenticated en tablas
+-- nuevas de public; se revoca a los TRES (anon, authenticated, public) para que
+-- ni el grant de tabla exista (defensa en profundidad además de RLS).
 ALTER TABLE public.insight_resolution_rules ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.insight_resolution_rules FROM anon, authenticated, public;
 GRANT SELECT, INSERT, UPDATE ON public.insight_resolution_rules TO service_role;
@@ -70,12 +73,17 @@ CREATE INDEX IF NOT EXISTS idx_insight_resolution_rules_activo
   ON public.insight_resolution_rules (activo) WHERE activo = true;
 
 COMMENT ON TABLE public.insight_resolution_rules IS
-  'AIR-234 (Loop v3 F0-a): reglas config-as-data de auto-resolución de insights por '
-  'contradicción. condicion_sql = SELECT que retorna true cuando el insight ya NO aplica. '
-  'Texto ejecutable → escritura sólo service_role; RLS ON, anon/public revocados.';
-COMMENT ON COLUMN public.insight_resolution_rules.condicion_sql IS
-  'SELECT (sentencia única, sin ; interno) que retorna boolean. true ⇒ el insight_key '
-  'quedó contradicho y se marca vigente=false. Validado en runtime por el RPC.';
+  'AIR-234 (Loop v3 F0-a): allowlist de auto-resolución de insights por '
+  'contradicción. NO contiene SQL ejecutable: cada fila declara qué insight_key '
+  'está activo; la condición vive whitelisted en el cuerpo del RPC (dispatcher). '
+  'Config del cerebro → escritura sólo service_role; RLS ON, anon/public revocados.';
+COMMENT ON COLUMN public.insight_resolution_rules.insight_key IS
+  'Clave del insight con auto-resolución activa. Debe estar reconocida por el '
+  'dispatcher de analytics.resolve_contradicted_insights(); si no lo está, la '
+  'regla se salta (no aborta el run) y queda observable en reglas_rechazadas.';
+COMMENT ON COLUMN public.insight_resolution_rules.descripcion IS
+  'Texto documental de la condición. SÓLO documentación + se anexa a la nota de '
+  'resolución; NUNCA se ejecuta como SQL.';
 
 
 -- ─────────────────────────────────────────────────────────────────────────
@@ -98,21 +106,21 @@ ALTER TABLE public.ai_analysis_log ADD CONSTRAINT ai_analysis_log_tipo_check
 -- 3. RPC analytics.resolve_contradicted_insights()
 -- ─────────────────────────────────────────────────────────────────────────
 -- SECURITY DEFINER + search_path fijo (mismo patrón que analytics.upsert_insight).
--- Endurecimiento de la ejecución de condicion_sql:
---   - Tras btrim debe empezar por SELECT (case-insensitive).
---   - Rechaza ';' interno (fuerza sentencia única; evita chaining SELECT 1; UPDATE...).
---   - La condición se ejecuta como escalar `SELECT (<cond>)::boolean` dentro de un
---     sub-bloque BEGIN/EXCEPTION: si falla o no es un booleano escalar, esa regla se
---     SALTA (marcada 'rechazada'), sin abortar el resto del run.
--- Nota sobre SET TRANSACTION READ ONLY: no se aplica a nivel de transacción porque
---   la MISMA transacción debe ejecutar el UPDATE de resolución. La garantía anti-
---   efecto-colateral proviene de (a) un único SELECT sin ';' interno (un SELECT sobre
---   tablas no muta estado) y (b) RLS que restringe la AUTORÍA de reglas a service_role
---   (rol privilegiado que de todos modos ya tiene acceso pleno a la BD). Ver report AIR-234.
--- Resolución: si la condición es true, marca las filas vigentes de ese insight_key con
---   vigente=false, estado_accion='descartado' y APPEND a accion_notas una nota que
---   CONTIENE el token literal 'auto-resuelto' (contrato con AIR-235). Sólo muta esas 3
---   columnas + updated_at. SIN DELETE. Idempotente (2ª corrida → filas_afectadas=0).
+--
+-- SEGURIDAD (AIR-234, fix del bloqueante SEC del PR #157): NO hay SQL dinámico.
+-- La condición de contradicción de cada insight_key NO viene de la tabla; se
+-- evalúa en un DISPATCHER WHITELISTED (CASE sobre insight_key) cuyas ramas son
+-- consultas fijas y revisadas — mismo precedente que analytics.eval_recompute
+-- (mig 086). No existe `EXECUTE` de texto almacenado, por lo que una fila de la
+-- tabla no puede ejecutar funciones ni mutar estado en contexto definer.
+--   - Un insight_key con regla activa pero NO reconocido por el dispatcher se
+--     SALTA (motivo 'insight_key_no_reconocido' en reglas_rechazadas), sin abortar
+--     el resto del run.
+-- Resolución: si la condición del dispatcher es true, marca las filas vigentes de
+--   ese insight_key con vigente=false, estado_accion='descartado' y APPEND a
+--   accion_notas una nota que CONTIENE el token literal 'auto-resuelto' (contrato
+--   con AIR-235). Sólo muta esas 3 columnas + updated_at. SIN DELETE. Idempotente
+--   (2ª corrida → filas_afectadas=0).
 CREATE OR REPLACE FUNCTION analytics.resolve_contradicted_insights()
   RETURNS jsonb
   LANGUAGE plpgsql
@@ -121,8 +129,6 @@ CREATE OR REPLACE FUNCTION analytics.resolve_contradicted_insights()
 AS $fn$
 DECLARE
   r             record;
-  v_cond        text;
-  v_cond_body   text;
   v_contra      boolean;
   v_rows        int;
   v_total       int := 0;
@@ -131,37 +137,36 @@ DECLARE
   v_nota        text;
 BEGIN
   FOR r IN
-    SELECT id, insight_key, condicion_sql, descripcion
+    SELECT id, insight_key, descripcion
     FROM public.insight_resolution_rules
     WHERE activo = true
     ORDER BY created_at, id
   LOOP
-    v_cond := btrim(r.condicion_sql);
+    v_contra := NULL;
 
-    -- Guard 1: debe empezar por SELECT (case-insensitive), seguido de espacio o '('.
-    IF lower(v_cond) !~ '^select[\s(]' THEN
-      v_rechazadas := v_rechazadas || jsonb_build_object(
-        'insight_key', r.insight_key, 'motivo', 'no_empieza_por_select');
-      CONTINUE;
-    END IF;
+    -- Dispatcher whitelisted por insight_key (SIN SQL dinámico). Cada rama es una
+    -- consulta fija y revisada. Un insight_key no reconocido cae en ELSE y se salta.
+    CASE r.insight_key
+      WHEN 'klaviyo_canal_apagado' THEN
+        -- Contradicción: Klaviyo está activo si el último snapshot reporta
+        -- emails_enviados > 0.
+        SELECT coalesce(
+                 (SELECT emails_enviados FROM public.weekly_snapshot
+                  ORDER BY semana_inicio DESC LIMIT 1), 0) > 0
+          INTO v_contra;
 
-    -- Guard 2: sin ';' interno (permite a lo sumo ';' finales). Fuerza sentencia única.
-    v_cond_body := rtrim(v_cond, '; ');
-    IF position(';' IN v_cond_body) > 0 THEN
-      v_rechazadas := v_rechazadas || jsonb_build_object(
-        'insight_key', r.insight_key, 'motivo', 'semicolon_interno');
-      CONTINUE;
-    END IF;
+      -- Ramas eval-only (namespace __eval_air234_*): condiciones estáticas para el
+      -- selftest determinista. Inertes en prod: no existen reglas con estos keys.
+      WHEN '__eval_air234_resuelve' THEN
+        v_contra := true;
+      WHEN '__eval_air234_intacto' THEN
+        v_contra := false;
 
-    -- Evaluación aislada: escalar booleano en sub-bloque. Cualquier error (sintaxis,
-    -- >1 fila, no-booleano) SALTA la regla sin abortar el run.
-    BEGIN
-      EXECUTE 'SELECT (' || v_cond_body || ')::boolean' INTO v_contra;
-    EXCEPTION WHEN OTHERS THEN
-      v_rechazadas := v_rechazadas || jsonb_build_object(
-        'insight_key', r.insight_key, 'motivo', 'error_ejecucion');
-      CONTINUE;
-    END;
+      ELSE
+        v_rechazadas := v_rechazadas || jsonb_build_object(
+          'insight_key', r.insight_key, 'motivo', 'insight_key_no_reconocido');
+        CONTINUE;
+    END CASE;
 
     IF v_contra IS TRUE THEN
       v_nota := 'auto-resuelto por contradicción: ' || r.descripcion;
@@ -205,20 +210,21 @@ REVOKE ALL ON FUNCTION analytics.resolve_contradicted_insights() FROM PUBLIC, an
 GRANT EXECUTE ON FUNCTION analytics.resolve_contradicted_insights() TO service_role;
 
 COMMENT ON FUNCTION analytics.resolve_contradicted_insights() IS
-  'AIR-234 (Loop v3 F0-a): itera insight_resolution_rules activas; si condicion_sql '
-  '(SELECT único, validado: empieza por SELECT, sin ; interno) retorna true, marca las '
-  'filas vigentes de ese insight_key con vigente=false + estado_accion=descartado + nota '
-  '"auto-resuelto..." (append-only, sin DELETE). Idempotente. Log tipo=contradiction_check.';
+  'AIR-234 (Loop v3 F0-a): itera insight_resolution_rules activas; evalúa la '
+  'contradicción en un dispatcher WHITELISTED por insight_key (sin SQL dinámico, '
+  'patrón mig 086). Si la condición es true marca las filas vigentes de ese key con '
+  'vigente=false + estado_accion=descartado + nota "auto-resuelto..." (append-only, '
+  'sin DELETE). Keys no reconocidos se saltan. Idempotente. Log tipo=contradiction_check.';
 
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- 4. Regla seed: klaviyo_canal_apagado
 -- ─────────────────────────────────────────────────────────────────────────
--- Contradicción: Klaviyo está activo si el último snapshot reporta emails_enviados>0.
-INSERT INTO public.insight_resolution_rules (insight_key, condicion_sql, descripcion)
+-- Activa la auto-resolución del key. La condición (emails_enviados>0 en el último
+-- snapshot) vive en el dispatcher del RPC; aquí sólo se declara el key + doc.
+INSERT INTO public.insight_resolution_rules (insight_key, descripcion)
 VALUES (
   'klaviyo_canal_apagado',
-  'select coalesce((select emails_enviados from weekly_snapshot order by semana_inicio desc limit 1), 0) > 0',
   'Klaviyo activo: emails_enviados > 0 en el último snapshot'
 );
 
@@ -245,8 +251,9 @@ UPDATE public.insights
 -- Ejercita el RPC REAL con fixtures dentro de una subtransacción que SIEMPRE se
 -- revierte (RAISE dentro de BEGIN/EXCEPTION) → cero residuo en la BD (ni siquiera
 -- un DELETE: las filas nunca se comprometen). Devuelve un jsonb con el veredicto.
--- Cubre: (a) un key de prueba que se resuelve (regla true), (b) un key que queda
--- intacto (regla false), (c) una regla con condicion NO-SELECT que debe SALTARSE.
+-- Cubre: (a) un key reconocido cuyo dispatcher retorna true → se resuelve, (b) un
+-- key reconocido cuyo dispatcher retorna false → queda intacto, (c) una regla con
+-- insight_key NO reconocido por el dispatcher → debe SALTARSE (su insight intacto).
 -- Modelado sobre el precedente analytics.eval_recompute (mig 086) como helper de eval.
 CREATE OR REPLACE FUNCTION analytics.resolve_contradicted_insights_selftest()
   RETURNS jsonb
@@ -257,10 +264,10 @@ AS $fn$
 DECLARE
   v_key_res      text := '__eval_air234_resuelve';
   v_key_intact   text := '__eval_air234_intacto';
-  v_key_bad      text := '__eval_air234_badsql';
+  v_key_norule   text := '__eval_air234_norule';
   v_res_id       uuid;
   v_intact_id    uuid;
-  v_bad_id       uuid;
+  v_norule_id    uuid;
   v_run          jsonb;
   v_run2         jsonb;
   v_verdict      jsonb := '{}'::jsonb;
@@ -268,7 +275,7 @@ DECLARE
   v_res_estado   text;
   v_res_notas    text;
   v_intact_vig   boolean;
-  v_bad_vig      boolean;
+  v_norule_vig   boolean;
   v_intact_before jsonb;
   v_intact_after  jsonb;
 BEGIN
@@ -288,16 +295,17 @@ BEGIN
 
     INSERT INTO public.insights (dominio, tipo, titulo, descripcion, insight_key,
                                  vigente, estado_accion, accion_notas, score_confianza)
-    VALUES ('general','patron','AIR234 eval badsql','fixture', v_key_bad,
+    VALUES ('general','patron','AIR234 eval norule','fixture', v_key_norule,
             true,'pendiente', NULL, 0.9)
-    RETURNING id INTO v_bad_id;
+    RETURNING id INTO v_norule_id;
 
-    -- Fixtures: 3 reglas activas.
-    INSERT INTO public.insight_resolution_rules (insight_key, condicion_sql, descripcion, activo)
+    -- Fixtures: 3 reglas activas. Dos con insight_key reconocido por el dispatcher
+    -- (ramas eval: true/false), una con insight_key NO reconocido (debe saltarse).
+    INSERT INTO public.insight_resolution_rules (insight_key, descripcion, activo)
     VALUES
-      (v_key_res,    'select true',                          'eval: siempre contradice', true),
-      (v_key_intact, 'select false',                         'eval: nunca contradice',   true),
-      (v_key_bad,    'update public.insights set vigente=false', 'eval: NO es select',    true);
+      (v_key_res,    'eval: dispatcher retorna true',   true),
+      (v_key_intact, 'eval: dispatcher retorna false',  true),
+      (v_key_norule, 'eval: insight_key no reconocido', true);
 
     -- Snapshot del row intacto ANTES de correr el RPC.
     SELECT to_jsonb(i.*) INTO v_intact_before FROM public.insights i WHERE i.id = v_intact_id;
@@ -312,18 +320,18 @@ BEGIN
       INTO v_res_vig, v_res_estado, v_res_notas
       FROM public.insights WHERE id = v_res_id;
     SELECT vigente INTO v_intact_vig FROM public.insights WHERE id = v_intact_id;
-    SELECT vigente INTO v_bad_vig    FROM public.insights WHERE id = v_bad_id;
+    SELECT vigente INTO v_norule_vig FROM public.insights WHERE id = v_norule_id;
     SELECT to_jsonb(i.*) INTO v_intact_after FROM public.insights i WHERE i.id = v_intact_id;
 
     v_verdict := jsonb_build_object(
-      'resuelto_vigente_false',       (v_res_vig IS FALSE),
-      'resuelto_estado_descartado',   (v_res_estado = 'descartado'),
-      'resuelto_nota_tiene_token',    (v_res_notas ILIKE '%auto-resuelto%'),
-      'resuelto_conserva_nota_previa',(v_res_notas ILIKE '%nota previa%'),
-      'intacto_sigue_vigente',        (v_intact_vig IS TRUE),
-      'intacto_sin_mutacion',         (v_intact_before = v_intact_after),
-      'badsql_saltado_intacto',       (v_bad_vig IS TRUE),
-      'idempotente_segunda_cero',     ((v_run2->>'filas_afectadas')::int = 0),
+      'resuelto_vigente_false',        (v_res_vig IS FALSE),
+      'resuelto_estado_descartado',    (v_res_estado = 'descartado'),
+      'resuelto_nota_tiene_token',     (v_res_notas ILIKE '%auto-resuelto%'),
+      'resuelto_conserva_nota_previa', (v_res_notas ILIKE '%nota previa%'),
+      'intacto_sigue_vigente',         (v_intact_vig IS TRUE),
+      'intacto_sin_mutacion',          (v_intact_before = v_intact_after),
+      'no_reconocido_saltado_intacto', (v_norule_vig IS TRUE),
+      'idempotente_segunda_cero',      ((v_run2->>'filas_afectadas')::int = 0),
       'run', v_run
     );
 
@@ -343,7 +351,7 @@ BEGIN
       COALESCE((v_verdict->>'resuelto_conserva_nota_previa')::boolean, false) AND
       COALESCE((v_verdict->>'intacto_sigue_vigente')::boolean, false) AND
       COALESCE((v_verdict->>'intacto_sin_mutacion')::boolean, false) AND
-      COALESCE((v_verdict->>'badsql_saltado_intacto')::boolean, false) AND
+      COALESCE((v_verdict->>'no_reconocido_saltado_intacto')::boolean, false) AND
       COALESCE((v_verdict->>'idempotente_segunda_cero')::boolean, false)
     )
   );
@@ -356,9 +364,9 @@ GRANT EXECUTE ON FUNCTION analytics.resolve_contradicted_insights_selftest() TO 
 
 COMMENT ON FUNCTION analytics.resolve_contradicted_insights_selftest() IS
   'AIR-234: eval determinista del RPC resolve_contradicted_insights(). Inserta fixtures '
-  '(key que se resuelve + key intacto + regla no-SELECT) en una subtransacción que SIEMPRE '
-  'se revierte (cero residuo, sin DELETE) y devuelve jsonb con .ok=true si todos los '
-  'invariantes se cumplen. Consumido por dashboard/evals/cerebro/resolve-contradiction.test.ts.';
+  '(key que se resuelve + key intacto + regla con insight_key no reconocido) en una '
+  'subtransacción que SIEMPRE se revierte (cero residuo, sin DELETE) y devuelve jsonb con '
+  '.ok=true si todos los invariantes se cumplen. Consumido por dashboard/evals/cerebro/resolve-contradiction.test.ts.';
 
 
 -- ============================================================================

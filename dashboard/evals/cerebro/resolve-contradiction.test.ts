@@ -13,9 +13,10 @@ import { evalsEnabled, callRpc } from "./client";
  *   - key de prueba con regla que lo contradice → vigente=false + estado
  *     'descartado' + nota con token 'auto-resuelto', conservando la nota previa
  *     (append-only, historia intacta).
- *   - key cuya regla retorna false → queda intacto byte a byte (sin mutación).
- *   - regla con condicion_sql que NO empieza por SELECT → se salta (su insight
- *     queda intacto).
+ *   - key cuya condición (dispatcher whitelisted) retorna false → queda intacto
+ *     byte a byte (sin mutación).
+ *   - regla con insight_key NO reconocido por el dispatcher → se salta (su insight
+ *     queda intacto), sin abortar el run.
  *   - idempotencia: la 2ª corrida del RPC afecta 0 filas.
  *
  * Sin SUPABASE_SERVICE_ROLE_KEY la suite hace SKIP (no rompe en local sin
@@ -35,7 +36,7 @@ type Verdict = {
   resuelto_conserva_nota_previa: boolean;
   intacto_sigue_vigente: boolean;
   intacto_sin_mutacion: boolean;
-  badsql_saltado_intacto: boolean;
+  no_reconocido_saltado_intacto: boolean;
   idempotente_segunda_cero: boolean;
   run: { filas_afectadas: number };
 };
@@ -78,8 +79,8 @@ describeDb("Eval AIR-234 — auto-resolución por contradicción", () => {
     expect(v.intacto_sin_mutacion, JSON.stringify(v)).toBe(true);
   });
 
-  it("condicion_sql no-SELECT → regla saltada, su insight intacto", () => {
-    expect(v.badsql_saltado_intacto, JSON.stringify(v)).toBe(true);
+  it("insight_key no reconocido por el dispatcher → regla saltada, su insight intacto", () => {
+    expect(v.no_reconocido_saltado_intacto, JSON.stringify(v)).toBe(true);
   });
 
   it("idempotente → 2ª corrida afecta 0 filas", () => {
