@@ -27,6 +27,14 @@
 - n8n: referenciar el id de orden desde el nodo Sanitize (`$('Sanitize Order Data').item.json.id`),
   NO desde la respuesta del HTTP upsert (evita ambiguedad array-vs-item de PostgREST). Patron correcto.
 
+- AIR-234 (PR #157) — SQL dinamico en SECURITY DEFINER = vector de injection. Un RPC que hacia
+  `EXECUTE 'SELECT ('||condicion_sql||')::boolean'` con condicion_sql leido de una tabla config
+  era evadible pese a guards (`^select` + rechazo de `;`): `select evil_writes()` / smuggling
+  multi-columna -> ejecucion arbitraria como owner. FIX correcto = DISPATCHER WHITELISTED por key
+  (CASE con consultas fijas, cero EXECUTE de texto almacenado; patron analytics.eval_recompute
+  mig 086). La tabla pasa a ser allowlist (solo declara el key + doc, nunca SQL ejecutable).
+  Al revisar RPCs del cerebro: cualquier EXECUTE de texto que venga de tabla/param = BLOQUEANTE.
+
 ## Patrones de error a vigilar (graduar a regla si se repiten >=2)
 - (1x) Idempotencia de ejecutor n8n basada en `$json.length` sobre respuesta HTTP de PostgREST:
   comportamiento de array-vs-item del nodo HTTP no esta verificado en el repo; preferir Code node
