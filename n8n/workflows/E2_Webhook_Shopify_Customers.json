@@ -79,7 +79,10 @@
           "id": "PLACEHOLDER",
           "name": "Header Auth Supabase"
         }
-      }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     },
     {
       "parameters": {
