@@ -45,7 +45,7 @@
 -- documental (además se usa en la nota de resolución) — nunca se ejecuta.
 CREATE TABLE IF NOT EXISTS public.insight_resolution_rules (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  insight_key   text NOT NULL,
+  insight_key   text NOT NULL UNIQUE,
   descripcion   text NOT NULL,
   activo        boolean NOT NULL DEFAULT true,
   created_at    timestamptz NOT NULL DEFAULT now(),
@@ -155,13 +155,6 @@ BEGIN
                   ORDER BY semana_inicio DESC LIMIT 1), 0) > 0
           INTO v_contra;
 
-      -- Ramas eval-only (namespace __eval_air234_*): condiciones estáticas para el
-      -- selftest determinista. Inertes en prod: no existen reglas con estos keys.
-      WHEN '__eval_air234_resuelve' THEN
-        v_contra := true;
-      WHEN '__eval_air234_intacto' THEN
-        v_contra := false;
-
       ELSE
         v_rechazadas := v_rechazadas || jsonb_build_object(
           'insight_key', r.insight_key, 'motivo', 'insight_key_no_reconocido');
@@ -226,7 +219,8 @@ INSERT INTO public.insight_resolution_rules (insight_key, descripcion)
 VALUES (
   'klaviyo_canal_apagado',
   'Klaviyo activo: emails_enviados > 0 en el último snapshot'
-);
+)
+ON CONFLICT (insight_key) DO NOTHING;
 
 
 -- ─────────────────────────────────────────────────────────────────────────
@@ -251,9 +245,11 @@ UPDATE public.insights
 -- Ejercita el RPC REAL con fixtures dentro de una subtransacción que SIEMPRE se
 -- revierte (RAISE dentro de BEGIN/EXCEPTION) → cero residuo en la BD (ni siquiera
 -- un DELETE: las filas nunca se comprometen). Devuelve un jsonb con el veredicto.
--- Cubre: (a) un key reconocido cuyo dispatcher retorna true → se resuelve, (b) un
--- key reconocido cuyo dispatcher retorna false → queda intacto, (c) una regla con
--- insight_key NO reconocido por el dispatcher → debe SALTARSE (su insight intacto).
+-- NO usa ramas sintéticas en el dispatcher: ejercita el BRANCH REAL
+-- 'klaviyo_canal_apagado' con fixtures controlados. Cubre: (a) el key real cuya
+-- condición se fuerza a true sembrando un weekly_snapshot con emails_enviados>0 →
+-- se resuelve; (b) una regla con insight_key NO whitelisted → cae en ELSE, se
+-- SALTA (queda en reglas_rechazadas) y su insight queda intacto byte a byte.
 -- Modelado sobre el precedente analytics.eval_recompute (mig 086) como helper de eval.
 CREATE OR REPLACE FUNCTION analytics.resolve_contradicted_insights_selftest()
   RETURNS jsonb
@@ -262,11 +258,9 @@ CREATE OR REPLACE FUNCTION analytics.resolve_contradicted_insights_selftest()
   SET search_path TO 'public', 'analytics'
 AS $fn$
 DECLARE
-  v_key_res      text := '__eval_air234_resuelve';
-  v_key_intact   text := '__eval_air234_intacto';
-  v_key_norule   text := '__eval_air234_norule';
+  v_key_res      text := 'klaviyo_canal_apagado';   -- BRANCH REAL del dispatcher
+  v_key_norule   text := '__eval_air234_norule';    -- NO whitelisted → ELSE (se salta)
   v_res_id       uuid;
-  v_intact_id    uuid;
   v_norule_id    uuid;
   v_run          jsonb;
   v_run2         jsonb;
@@ -274,41 +268,41 @@ DECLARE
   v_res_vig      boolean;
   v_res_estado   text;
   v_res_notas    text;
-  v_intact_vig   boolean;
   v_norule_vig   boolean;
-  v_intact_before jsonb;
-  v_intact_after  jsonb;
+  v_norule_before jsonb;
+  v_norule_after  jsonb;
+  v_norule_rechazada boolean;
 BEGIN
   BEGIN
-    -- Fixtures: 3 insights (dominio/tipo válidos según CHECK de public.insights).
+    -- Fuerza la condición del branch real: siembra un weekly_snapshot con fecha
+    -- muy futura (garantiza ser el "último" por semana_inicio DESC) y
+    -- emails_enviados>0 → el dispatcher de 'klaviyo_canal_apagado' retorna true.
+    INSERT INTO public.weekly_snapshot (semana_inicio, semana_fin, emails_enviados)
+    VALUES (DATE '2999-01-04', DATE '2999-01-10', 42);
+
+    -- Fixtures: 2 insights (dominio/tipo válidos según CHECK de public.insights).
+    -- (a) insight vigente del key REAL: el dispatcher lo contradice → se resuelve.
     INSERT INTO public.insights (dominio, tipo, titulo, descripcion, insight_key,
                                  vigente, estado_accion, accion_notas, score_confianza)
     VALUES ('general','patron','AIR234 eval resuelve','fixture', v_key_res,
             true,'pendiente','nota previa', 0.9)
     RETURNING id INTO v_res_id;
 
-    INSERT INTO public.insights (dominio, tipo, titulo, descripcion, insight_key,
-                                 vigente, estado_accion, accion_notas, score_confianza)
-    VALUES ('general','patron','AIR234 eval intacto','fixture', v_key_intact,
-            true,'pendiente', NULL, 0.9)
-    RETURNING id INTO v_intact_id;
-
+    -- (b) insight vigente con insight_key NO reconocido por el dispatcher.
     INSERT INTO public.insights (dominio, tipo, titulo, descripcion, insight_key,
                                  vigente, estado_accion, accion_notas, score_confianza)
     VALUES ('general','patron','AIR234 eval norule','fixture', v_key_norule,
             true,'pendiente', NULL, 0.9)
     RETURNING id INTO v_norule_id;
 
-    -- Fixtures: 3 reglas activas. Dos con insight_key reconocido por el dispatcher
-    -- (ramas eval: true/false), una con insight_key NO reconocido (debe saltarse).
+    -- Regla activa SOLO para el key NO reconocido (la regla del key real ya existe
+    -- como seed prod; UNIQUE(insight_key) impide/haría redundante re-sembrarla).
+    -- Su insight_key cae en ELSE → debe saltarse (queda en reglas_rechazadas).
     INSERT INTO public.insight_resolution_rules (insight_key, descripcion, activo)
-    VALUES
-      (v_key_res,    'eval: dispatcher retorna true',   true),
-      (v_key_intact, 'eval: dispatcher retorna false',  true),
-      (v_key_norule, 'eval: insight_key no reconocido', true);
+    VALUES (v_key_norule, 'eval: insight_key no reconocido', true);
 
-    -- Snapshot del row intacto ANTES de correr el RPC.
-    SELECT to_jsonb(i.*) INTO v_intact_before FROM public.insights i WHERE i.id = v_intact_id;
+    -- Snapshot del row no-reconocido ANTES de correr el RPC.
+    SELECT to_jsonb(i.*) INTO v_norule_before FROM public.insights i WHERE i.id = v_norule_id;
 
     -- Correr el RPC REAL (procesa también las reglas prod; todo se revierte).
     v_run := analytics.resolve_contradicted_insights();
@@ -319,18 +313,24 @@ BEGIN
     SELECT vigente, estado_accion, accion_notas
       INTO v_res_vig, v_res_estado, v_res_notas
       FROM public.insights WHERE id = v_res_id;
-    SELECT vigente INTO v_intact_vig FROM public.insights WHERE id = v_intact_id;
     SELECT vigente INTO v_norule_vig FROM public.insights WHERE id = v_norule_id;
-    SELECT to_jsonb(i.*) INTO v_intact_after FROM public.insights i WHERE i.id = v_intact_id;
+    SELECT to_jsonb(i.*) INTO v_norule_after FROM public.insights i WHERE i.id = v_norule_id;
+
+    -- ¿La regla no reconocida quedó registrada como saltada en reglas_rechazadas?
+    SELECT EXISTS (
+      SELECT 1 FROM jsonb_array_elements(v_run->'reglas_rechazadas') e
+      WHERE e->>'insight_key' = v_key_norule
+        AND e->>'motivo' = 'insight_key_no_reconocido'
+    ) INTO v_norule_rechazada;
 
     v_verdict := jsonb_build_object(
       'resuelto_vigente_false',        (v_res_vig IS FALSE),
       'resuelto_estado_descartado',    (v_res_estado = 'descartado'),
       'resuelto_nota_tiene_token',     (v_res_notas ILIKE '%auto-resuelto%'),
       'resuelto_conserva_nota_previa', (v_res_notas ILIKE '%nota previa%'),
-      'intacto_sigue_vigente',         (v_intact_vig IS TRUE),
-      'intacto_sin_mutacion',          (v_intact_before = v_intact_after),
-      'no_reconocido_saltado_intacto', (v_norule_vig IS TRUE),
+      'intacto_sigue_vigente',         (v_norule_vig IS TRUE),
+      'intacto_sin_mutacion',          (v_norule_before = v_norule_after),
+      'no_reconocido_saltado_intacto', (v_norule_rechazada AND v_norule_vig IS TRUE),
       'idempotente_segunda_cero',      ((v_run2->>'filas_afectadas')::int = 0),
       'run', v_run
     );
@@ -363,8 +363,9 @@ REVOKE ALL ON FUNCTION analytics.resolve_contradicted_insights_selftest() FROM P
 GRANT EXECUTE ON FUNCTION analytics.resolve_contradicted_insights_selftest() TO service_role;
 
 COMMENT ON FUNCTION analytics.resolve_contradicted_insights_selftest() IS
-  'AIR-234: eval determinista del RPC resolve_contradicted_insights(). Inserta fixtures '
-  '(key que se resuelve + key intacto + regla con insight_key no reconocido) en una '
+  'AIR-234: eval determinista del RPC resolve_contradicted_insights(). Ejercita el branch '
+  'REAL klaviyo_canal_apagado (snapshot fixture con emails_enviados>0 → se resuelve) + una '
+  'regla con insight_key no reconocido (cae en ELSE → se salta, insight intacto), en una '
   'subtransacción que SIEMPRE se revierte (cero residuo, sin DELETE) y devuelve jsonb con '
   '.ok=true si todos los invariantes se cumplen. Consumido por dashboard/evals/cerebro/resolve-contradiction.test.ts.';
 
