@@ -58,10 +58,24 @@ campo-nuevo/campo-deprecado de la API de origen. 1ª vez que se ve este patrón 
 candidato a check estático en `check-data-rules.sh` (diff de campos usados en RPC `->>`/`COALESCE` vs.
 whitelist del nodo Code que lo alimenta).
 
+## AIR-235 (Loop v3 F0-b) — get_memoria_activa v2 (mig 131) — patrones
+- **`CREATE OR REPLACE FUNCTION` BORRA el `SET search_path` fijado por un `ALTER FUNCTION` previo.**
+  Si una migración anterior (AIR-93, mig 061 en este caso) fijó el search_path vía
+  `ALTER FUNCTION ... SET search_path`, en vez de declararlo en el `CREATE` original, un
+  `CREATE OR REPLACE FUNCTION` posterior lo resetea silenciosamente → reaparece el advisor
+  `function_search_path_mutable`. Hay que RE-DECLARAR `SET search_path TO '...'` (mismo valor que
+  el proconfig real de PROD, verificado antes) dentro del propio `CREATE OR REPLACE`, no asumir que
+  sobrevive. Aplicado correcto en mig 131.
+- **Contrato de un RPC consumido por n8n: un campo puede salir del RANKING sin salir del OUTPUT.**
+  Al reescribir `get_memoria_activa`, `score_confianza` dejó de ordenar (ahora manda recencia) pero
+  se preservó en el jsonb porque `Build Prompt`/`Render Email HTML` lo leen. Al tocar la lógica de
+  selección/orden de un RPC ya consumido, grep de los campos del jsonb en los consumidores (n8n,
+  dashboard) ANTES de quitar uno — "ya no se usa para X" no implica "ya no se usa para Y".
+
 ## AIR-234 (Loop v3 F0-a) — auto-resolución por contradicción (mig 130)
 - **Preview branch replay ROTO en este proyecto**: `create_branch` deja el branch en `MIGRATIONS_FAILED` (tanto el `main` viejo como uno nuevo). El replay del historial se detiene temprano → snapshot ~abril (57 migr, SIN schema `analytics`, sin `insights.estado_accion`/`insight_key`, sin `set_updated_at`). El `preview_project_status` sí es ACTIVE_HEALTHY → la BD es consultable. `create_branch` NO trae datos (`with_data:false`) → schema-only.
 - **Patrón de test con branch stale**: aplicar una migración de *scaffolding* (NO deliverable) que recrea el delta PROD-fiel que tu migración necesita (verifica los valores reales con `execute_sql` read-only sobre PROD ANTES), luego `apply_migration` de la migración real encima. Todo off-PROD (AIR-162 respetado).
 - **`ai_analysis_log.estado`** CHECK admite `running/completed/error/ok/abortado/skip_duplicado` → usar `'completed'` (inglés), NO `'completado'`. El `tipo` CHECK viene de 070_air67; ampliar aditivo (DROP+ADD con TODO el ARRAY vigente + el nuevo valor).
 - **Grants default de Supabase**: tablas nuevas en `public` reciben ALL para `anon` Y `authenticated`. `REVOKE ... FROM anon, public` NO cubre `authenticated` → revocar los TRES (`anon, authenticated, public`) para blindar una tabla sensible (RLS ON + sin policy + grant solo service_role). service_role tiene BYPASSRLS → los RPC SECURITY DEFINER leen sin policy.
 - **Eval SQL self-contained (rollback subtransacción)**: helper `analytics.*_selftest()` que inserta fixtures + corre el RPC real dentro de `BEGIN ... RAISE EXCEPTION 'ROLLBACK' ... EXCEPTION WHEN OTHERS THEN (si SQLERRM no es el rollback intencional → RAISE)`. Las variables plpgsql (veredicto jsonb) SOBREVIVEN al rollback; los writes se revierten → CERO residuo, sin DELETE (respeta "nunca DELETE insights"). Corre seguro contra PROD en CI. El vitest en `dashboard/evals/cerebro/*.test.ts` solo llama al RPC y asserta `.ok` (patrón describeDb skip). Fixtures de insights: `dominio` ∈ CHECK (usa 'general'), `tipo` ∈ CHECK (usa 'patron').
-- **RPC config-as-data que ejecuta SQL** (`insight_resolution_rules.condicion_sql`): guardas en runtime — `btrim` + `lower(x) ~ '^select[\s(]'` + rechazar `;` interno (`position(';' in rtrim(x,'; ')) > 0`) + `EXECUTE 'SELECT ('||body||')::boolean'` en sub-bloque BEGIN/EXCEPTION (regla mala se SALTA, no aborta). NO poner CHECK restrictivo en la columna (el eval necesita insertar una regla mala para probar el guard). Token literal `'auto-resuelto'` en la nota = contrato con AIR-235, no cambiar.
+- **[CORREGIDO — el diseño de abajo fue ELIMINADO por seguridad, mismo PR]** El primer diseño de esta migración guardaba `condicion_sql` (texto) en `insight_resolution_rules` y lo corría vía `EXECUTE 'SELECT ('||condicion_sql||')::boolean'`, con guards en runtime (`^select`, rechazo de `;`). Security-review lo bloqueó: evadible (`select evil_writes()`, smuggling multi-columna) → ejecución arbitraria como owner del SECURITY DEFINER. **Diseño final (el que quedó en PROD)**: la tabla YA NO tiene `condicion_sql` — es solo una allowlist (`insight_key` + `descripcion` documental, nunca ejecutable). La condición vive en un **DISPATCHER WHITELISTED** dentro del cuerpo del RPC (`CASE r.insight_key WHEN 'klaviyo_canal_apagado' THEN <query fija> ... ELSE <se salta> END`), mismo patrón que `analytics.eval_recompute` (mig 086). Cero `EXECUTE` de texto almacenado. Regla general: **cualquier `EXECUTE` de una columna de tabla en una función `SECURITY DEFINER` es BLOQUEANTE**, sin importar cuántos guards de runtime tenga — usar dispatcher whitelisted en su lugar. Token literal `'auto-resuelto'` en la nota sigue siendo el contrato con AIR-235, no cambiar.

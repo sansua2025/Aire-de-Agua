@@ -27,10 +27,23 @@
 - n8n: referenciar el id de orden desde el nodo Sanitize (`$('Sanitize Order Data').item.json.id`),
   NO desde la respuesta del HTTP upsert (evita ambiguedad array-vs-item de PostgREST). Patron correcto.
 
+- AIR-234 (PR #157) — SQL dinamico en SECURITY DEFINER = vector de injection. Un RPC que hacia
+  `EXECUTE 'SELECT ('||condicion_sql||')::boolean'` con condicion_sql leido de una tabla config
+  era evadible pese a guards (`^select` + rechazo de `;`): `select evil_writes()` / smuggling
+  multi-columna -> ejecucion arbitraria como owner. FIX correcto = DISPATCHER WHITELISTED por key
+  (CASE con consultas fijas, cero EXECUTE de texto almacenado; patron analytics.eval_recompute
+  mig 086). La tabla pasa a ser allowlist (solo declara el key + doc, nunca SQL ejecutable).
+  Al revisar RPCs del cerebro: cualquier EXECUTE de texto que venga de tabla/param = BLOQUEANTE.
+
 ## Patrones de error a vigilar (graduar a regla si se repiten >=2)
 - (1x) Idempotencia de ejecutor n8n basada en `$json.length` sobre respuesta HTTP de PostgREST:
   comportamiento de array-vs-item del nodo HTTP no esta verificado en el repo; preferir Code node
   con `$input.all().length`.
+- (1x) AIR-234 — EXECUTE de SQL-texto-almacenado en función SECURITY DEFINER (ver nota arriba).
+  Cazado por security-reviewer, no por verify/CI. Si vuelve a aparecer una 2ª vez en cualquier RPC,
+  graduar a check determinista en `check-data-rules.sh`: detectar `EXECUTE` sobre una expresión que
+  referencie una columna de tabla (no un literal) dentro de una función `SECURITY DEFINER` bajo
+  `supabase/migrations/`.
 
 ---
 
@@ -58,6 +71,17 @@ Consecuencia operativa:
 - El ORQUESTADOR debe ejecutar él mismo las operaciones MCP: probar migraciones en Supabase,
   `validate_workflow` de n8n, consultar prod para confirmar contratos.
 - No asumir que builder o verify validan en prod vía MCP.
+
+## Falso positivo de "agente huérfano" — NO relanzar por output pequeño solo (Fase 0 AIR-233)
+Un builder largo (~21 min) fue declarado muerto porque su output-file medía 123 bytes; se relanzó un
+segundo builder sobre el MISMO worktree/rama → race real (detenida a tiempo, sin daño). El tamaño del
+output-file NO es señal de vida/muerte: un builder puede estar corriendo migraciones/evals largos sin
+haber escrito aún su reporte final. Antes de asumir que un builder murió y relanzar:
+1. Verificar actividad real del worktree (`git status`, `git log -1 --format=%cd` sobre esa rama) —
+   commits o cambios recientes = sigue vivo, aunque el output-file esté vacío/chico.
+2. Dar margen a builders largos (migraciones+evals+preview branch pueden tomar >20 min legítimamente).
+3. NUNCA lanzar un segundo builder sobre el mismo worktree/rama sin confirmar que el primero terminó
+   o está realmente muerto (proceso no existe) — la race sobre el mismo working tree corrompe estado.
 
 ## Supabase sin plan Pro → branching deshabilitado (restricción conocida del entorno)
 `create_branch` devuelve `PaymentRequired` en el proyecto `vnctmzsgemefgbtjctlo`.
