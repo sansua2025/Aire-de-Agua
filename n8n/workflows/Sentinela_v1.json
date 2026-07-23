@@ -169,7 +169,7 @@
       ],
       "parameters": {
         "mode": "append",
-        "numberInputs": 3
+        "numberInputs": 4
       }
     },
     {
@@ -306,7 +306,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// Label IDs (team AIR). NUNCA usar agent-ready (c89c500f-...) en señales de Sentinela: es pr-only.\nconst LBL_NEEDS_REFINEMENT = '197fb5ae-dff3-45de-b2ae-1533069d1d39';\nconst LBL_SENSORS = 'd30a9e60-b290-4fd4-bacc-c9c87d66bf18';\n// AIR-225: provenance. TODA señal de Sentinela nace con el label 'sentinela'.\n// Es el candado del auto-cierre: solo issues con este label (+ marcador signal-key) son elegibles para cerrarse.\nconst LBL_SENTINELA = '519560f6-81b5-4f06-b5b8-29c50813bb09';\n// Labels por tipo de señal (sentinela SIEMPRE presente):\n//   n8n_exec_fail / drift -> [sentinela, needs-refinement]\n//   sync_gap              -> [sentinela, Sensors, needs-refinement] (jamás agent-ready)\nfunction labelsFor(senal) {\n  if (senal === 'sync_gap') return [LBL_SENTINELA, LBL_SENSORS, LBL_NEEDS_REFINEMENT];\n  return [LBL_SENTINELA, LBL_NEEDS_REFINEMENT];\n}\nconst ctx = $(\"Linear - Contexto (label + abiertos)\").first().json;\nconst gql = (ctx && ctx.data) || {};\nconst abiertos = (gql.issues && gql.issues.nodes) || [];\nconst keysAbiertos = new Set();\nfor (const i of abiertos) {\n  const m = String(i.description || '').match(/signal-key:\\s*([^\\n\\r]+)/);\n  if (m && m[1]) keysAbiertos.add(m[1].trim());\n}\nconst candidatos = $input.all().map(function (i) { return i.json; });\nconst vistos = new Set();\nconst out = [];\nfor (const c of candidatos) {\n  const t = String(c.titulo || '').trim();\n  if (!t) continue;\n  const sk = String(c.signalKey || '').trim();\n  if (!sk) continue;\n  if (keysAbiertos.has(sk)) continue;\n  if (vistos.has(sk)) continue;\n  vistos.add(sk);\n  const senal = c.senal || '';\n  // AIR-230 B: threading de priority hasta el IssueCreateInput. exec_fail lo trae (1/2/3);\n  // sync_gap/drift no lo setean -> 3 (Medium) por defecto (nunca None).\n  const priority = (typeof c.priority === 'number' && c.priority >= 1 && c.priority <= 4) ? c.priority : 3;\n  out.push({ json: {\n    titulo: t,\n    descripcion: c.descripcion || '',\n    senal: senal,\n    fuente: c.fuente || '',\n    signalKey: sk,\n    labelIds: labelsFor(senal),\n    priority: priority,\n  } });\n}\nreturn out;"
+        "jsCode": "// Label IDs (team AIR). NUNCA usar agent-ready (c89c500f-...) en señales de Sentinela: es pr-only.\nconst LBL_NEEDS_REFINEMENT = '197fb5ae-dff3-45de-b2ae-1533069d1d39';\nconst LBL_SENSORS = 'd30a9e60-b290-4fd4-bacc-c9c87d66bf18';\n// AIR-225: provenance. TODA señal de Sentinela nace con el label 'sentinela'.\n// Es el candado del auto-cierre: solo issues con este label (+ marcador signal-key) son elegibles para cerrarse.\nconst LBL_SENTINELA = '519560f6-81b5-4f06-b5b8-29c50813bb09';\n// AIR-248: human-gate. draft_unpublished se arregla con un publish_workflow humano (no codigo) -> jamas agent-ready ni needs-refinement.\nconst LBL_HUMAN_GATE = '5ecc352a-e16d-4768-935f-133ae389a9dd';\n// Labels por tipo de señal (sentinela SIEMPRE presente):\n//   n8n_exec_fail / drift -> [sentinela, needs-refinement]\n//   sync_gap              -> [sentinela, Sensors, needs-refinement] (jamás agent-ready)\n//   draft_unpublished     -> [sentinela, human-gate] (paso humano; ni agent-ready ni needs-refinement)\nfunction labelsFor(senal) {\n  if (senal === 'sync_gap') return [LBL_SENTINELA, LBL_SENSORS, LBL_NEEDS_REFINEMENT];\n  if (senal === 'draft_unpublished') return [LBL_SENTINELA, LBL_HUMAN_GATE];\n  return [LBL_SENTINELA, LBL_NEEDS_REFINEMENT];\n}\nconst ctx = $(\"Linear - Contexto (label + abiertos)\").first().json;\nconst gql = (ctx && ctx.data) || {};\nconst abiertos = (gql.issues && gql.issues.nodes) || [];\nconst keysAbiertos = new Set();\nfor (const i of abiertos) {\n  const m = String(i.description || '').match(/signal-key:\\s*([^\\n\\r]+)/);\n  if (m && m[1]) keysAbiertos.add(m[1].trim());\n}\nconst candidatos = $input.all().map(function (i) { return i.json; });\nconst vistos = new Set();\nconst out = [];\nfor (const c of candidatos) {\n  const t = String(c.titulo || '').trim();\n  if (!t) continue;\n  const sk = String(c.signalKey || '').trim();\n  if (!sk) continue;\n  if (keysAbiertos.has(sk)) continue;\n  if (vistos.has(sk)) continue;\n  vistos.add(sk);\n  const senal = c.senal || '';\n  // AIR-230 B: threading de priority hasta el IssueCreateInput. exec_fail lo trae (1/2/3);\n  // sync_gap/drift/draft_unpublished no lo setean -> 3 (Medium) por defecto (nunca None).\n  const priority = (typeof c.priority === 'number' && c.priority >= 1 && c.priority <= 4) ? c.priority : 3;\n  out.push({ json: {\n    titulo: t,\n    descripcion: c.descripcion || '',\n    senal: senal,\n    fuente: c.fuente || '',\n    signalKey: sk,\n    labelIds: labelsFor(senal),\n    priority: priority,\n  } });\n}\nreturn out;"
       }
     },
     {
@@ -469,6 +469,19 @@
           "name": "Linear AdeA"
         }
       }
+    },
+    {
+      "parameters": {
+        "jsCode": "function sanitize(s) {\n  if (s == null) return '';\n  let t = String(s).replace(/[\\r\\n\\t]+/g, ' ').replace(/[`<>{}|\\\\$]/g, '');\n  return t.replace(/\\s+/g, ' ').trim().slice(0, 120);\n}\n// AIR-248 · Senal draft_unpublished: workflows con draft sin publicar.\n// n8n EJECUTA activeVersion.nodes (lo PUBLICADO), no el draft. Un fix mergeado que quedo solo en\n// draft (versionId != activeVersionId) NO esta vivo en produccion hasta hacer publish (paso humano).\n// Reusa la salida YA fetchada por 'n8n - Workflows actuales' (GET /api/v1/workflows trae versionId Y activeVersionId).\nconst list = ($('n8n - Workflows actuales').first().json.data) || [];\nconst out = [];\nfor (const w of list) {\n  // Filtro anti-falso-positivo OBLIGATORIO: solo workflows ACTIVOS con activeVersionId presente y draft != publicado.\n  // Los ~29 workflows inactivos traen activeVersionId:null -> nunca publicados / no aplica -> se excluyen aqui.\n  if (!(w.active === true && w.activeVersionId && w.versionId !== w.activeVersionId)) continue;\n  const wfId = String(w.id || '');\n  const safe = sanitize(w.name) || wfId || 'desconocido';\n  // signalKey por ID del workflow (estable ante renames), NO por nombre.\n  const signalKey = 'draft_unpublished:' + wfId;\n  const titulo = ('Workflow ' + safe + ' tiene un draft sin publicar').slice(0, 200);\n  const descripcion = 'Senal automatica (Sentinela v1): el workflow n8n **' + safe + '** (id ' + wfId + ') tiene un draft sin publicar. ' +\n    'n8n ejecuta la version ACTIVA (activeVersion.nodes), no el draft: un fix ya guardado en el draft NO esta vivo en produccion hasta publicar.\\n\\n' +\n    'versionId (draft): ' + sanitize(w.versionId) + '\\n' +\n    'activeVersionId (vivo): ' + sanitize(w.activeVersionId) + '\\n\\n' +\n    'Fix (paso HUMANO): publish_workflow ' + wfId + ' -- publicar el draft para que la version activa quede igual al draft. No es codigo; requiere accion humana (por eso el label human-gate, no agent-ready).\\n\\n' +\n    'Nivel de autonomia: pr-only (maximo).\\n\\nsignal-key: ' + signalKey;\n  out.push({ json: {\n    senal: 'draft_unpublished',\n    fuente: safe,\n    signalKey: signalKey,\n    titulo: titulo,\n    descripcion: descripcion,\n  } });\n}\nreturn out;"
+      },
+      "id": "af248001-0248-4a48-b248-draftunpub248",
+      "name": "Draft sin publicar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        576
+      ]
     }
   ],
   "connections": {
@@ -563,6 +576,11 @@
         [
           {
             "node": "Drift n8n vs repo",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Draft sin publicar",
             "type": "main",
             "index": 0
           }
@@ -691,6 +709,17 @@
           }
         ]
       ]
+    },
+    "Draft sin publicar": {
+      "main": [
+        [
+          {
+            "node": "Unir candidatos",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
     }
   },
   "settings": {
@@ -705,7 +734,7 @@
   },
   "nodeGroups": [],
   "pinData": null,
-  "versionId": "6b5c83c9-aaf0-467d-8587-5f880461273f",
+  "versionId": "53be5c30-f3a9-494e-a6c7-e924f5a11a3f",
   "activeVersionId": null,
   "versionCounter": 1,
   "triggerCount": 0,
