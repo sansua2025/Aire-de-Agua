@@ -236,12 +236,6 @@
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ data: { type: \"campaign-values-report\", attributes: { statistics: [\"recipients\",\"delivered\",\"opens_unique\",\"clicks_unique\",\"conversions\",\"unsubscribes\",\"bounced\"], conversion_metric_id: \"ThumxF\", timeframe: { key: \"last_365_days\" }, filter: \"and(equals(send_channel,\\\"email\\\"),equals(campaign_id,\\\"\" + $json.campaign_id + \"\\\"))\" } } }) }}",
         "options": {
-          "batching": {
-            "batch": {
-              "batchSize": 1,
-              "batchInterval": 30000
-            }
-          },
           "response": {
             "response": {
               "responseFormat": "json"
@@ -254,7 +248,10 @@
           "id": "PLACEHOLDER",
           "name": "Klaviyo API"
         }
-      }
+      },
+      "retryOnFail": true,
+      "maxTries": 4,
+      "waitBetweenTries": 5000
     },
     {
       "id": "44b0f775-8c6b-43b1-8f87-1fb043431911",
@@ -318,6 +315,22 @@
           "id": "PLACEHOLDER",
           "name": "Header Auth Supabase"
         }
+      }
+    },
+    {
+      "id": "66729d0a-22ab-4e16-b3ab-585584b8fee1",
+      "name": "Wait",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1680,
+        400
+      ],
+      "webhookId": "ee4591dd-8c72-4019-837f-4db55b66f43c",
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 30,
+        "unit": "seconds"
       }
     },
     {
@@ -747,6 +760,17 @@
       ]
     },
     "Upsert Campaign": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
       "main": [
         [
           {
