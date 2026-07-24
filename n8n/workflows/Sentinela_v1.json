@@ -169,7 +169,7 @@
       ],
       "parameters": {
         "mode": "append",
-        "numberInputs": 4
+        "numberInputs": 5
       }
     },
     {
@@ -306,7 +306,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// Label IDs (team AIR). NUNCA usar agent-ready (c89c500f-...) en señales de Sentinela: es pr-only.\nconst LBL_NEEDS_REFINEMENT = '197fb5ae-dff3-45de-b2ae-1533069d1d39';\nconst LBL_SENSORS = 'd30a9e60-b290-4fd4-bacc-c9c87d66bf18';\n// AIR-225: provenance. TODA señal de Sentinela nace con el label 'sentinela'.\n// Es el candado del auto-cierre: solo issues con este label (+ marcador signal-key) son elegibles para cerrarse.\nconst LBL_SENTINELA = '519560f6-81b5-4f06-b5b8-29c50813bb09';\n// AIR-248: human-gate. draft_unpublished se arregla con un publish_workflow humano (no codigo) -> jamas agent-ready ni needs-refinement.\nconst LBL_HUMAN_GATE = '5ecc352a-e16d-4768-935f-133ae389a9dd';\n// Labels por tipo de señal (sentinela SIEMPRE presente):\n//   n8n_exec_fail / drift -> [sentinela, needs-refinement]\n//   sync_gap              -> [sentinela, Sensors, needs-refinement] (jamás agent-ready)\n//   draft_unpublished     -> [sentinela, human-gate] (paso humano; ni agent-ready ni needs-refinement)\nfunction labelsFor(senal) {\n  if (senal === 'sync_gap') return [LBL_SENTINELA, LBL_SENSORS, LBL_NEEDS_REFINEMENT];\n  if (senal === 'draft_unpublished') return [LBL_SENTINELA, LBL_HUMAN_GATE];\n  return [LBL_SENTINELA, LBL_NEEDS_REFINEMENT];\n}\nconst ctx = $(\"Linear - Contexto (label + abiertos)\").first().json;\nconst gql = (ctx && ctx.data) || {};\nconst abiertos = (gql.issues && gql.issues.nodes) || [];\nconst keysAbiertos = new Set();\nfor (const i of abiertos) {\n  const m = String(i.description || '').match(/signal-key:\\s*([^\\n\\r]+)/);\n  if (m && m[1]) keysAbiertos.add(m[1].trim());\n}\nconst candidatos = $input.all().map(function (i) { return i.json; });\nconst vistos = new Set();\nconst out = [];\nfor (const c of candidatos) {\n  const t = String(c.titulo || '').trim();\n  if (!t) continue;\n  const sk = String(c.signalKey || '').trim();\n  if (!sk) continue;\n  if (keysAbiertos.has(sk)) continue;\n  if (vistos.has(sk)) continue;\n  vistos.add(sk);\n  const senal = c.senal || '';\n  // AIR-230 B: threading de priority hasta el IssueCreateInput. exec_fail lo trae (1/2/3);\n  // sync_gap/drift/draft_unpublished no lo setean -> 3 (Medium) por defecto (nunca None).\n  const priority = (typeof c.priority === 'number' && c.priority >= 1 && c.priority <= 4) ? c.priority : 3;\n  out.push({ json: {\n    titulo: t,\n    descripcion: c.descripcion || '',\n    senal: senal,\n    fuente: c.fuente || '',\n    signalKey: sk,\n    labelIds: labelsFor(senal),\n    priority: priority,\n  } });\n}\nreturn out;"
+        "jsCode": "// Label IDs (team AIR). NUNCA usar agent-ready (c89c500f-...) en señales de Sentinela: es pr-only.\nconst LBL_NEEDS_REFINEMENT = '197fb5ae-dff3-45de-b2ae-1533069d1d39';\nconst LBL_SENSORS = 'd30a9e60-b290-4fd4-bacc-c9c87d66bf18';\n// AIR-225: provenance. TODA señal de Sentinela nace con el label 'sentinela'.\n// Es el candado del auto-cierre: solo issues con este label (+ marcador signal-key) son elegibles para cerrarse.\nconst LBL_SENTINELA = '519560f6-81b5-4f06-b5b8-29c50813bb09';\n// AIR-248: human-gate. draft_unpublished se arregla con un publish_workflow humano (no codigo) -> jamas agent-ready ni needs-refinement.\nconst LBL_HUMAN_GATE = '5ecc352a-e16d-4768-935f-133ae389a9dd';\n// Labels por tipo de señal (sentinela SIEMPRE presente):\n//   n8n_exec_fail / drift -> [sentinela, needs-refinement]\n//   sync_gap / loop_process_gap -> [sentinela, Sensors, needs-refinement] (jamás agent-ready)\n//   draft_unpublished     -> [sentinela, human-gate] (paso humano; ni agent-ready ni needs-refinement)\nfunction labelsFor(senal) {\n  if (senal === 'sync_gap') return [LBL_SENTINELA, LBL_SENSORS, LBL_NEEDS_REFINEMENT];\n  if (senal === 'loop_process_gap') return [LBL_SENTINELA, LBL_SENSORS, LBL_NEEDS_REFINEMENT];\n  if (senal === 'draft_unpublished') return [LBL_SENTINELA, LBL_HUMAN_GATE];\n  return [LBL_SENTINELA, LBL_NEEDS_REFINEMENT];\n}\nconst ctx = $(\"Linear - Contexto (label + abiertos)\").first().json;\nconst gql = (ctx && ctx.data) || {};\nconst abiertos = (gql.issues && gql.issues.nodes) || [];\nconst keysAbiertos = new Set();\nfor (const i of abiertos) {\n  const m = String(i.description || '').match(/signal-key:\\s*([^\\n\\r]+)/);\n  if (m && m[1]) keysAbiertos.add(m[1].trim());\n}\nconst candidatos = $input.all().map(function (i) { return i.json; });\nconst vistos = new Set();\nconst out = [];\nfor (const c of candidatos) {\n  const t = String(c.titulo || '').trim();\n  if (!t) continue;\n  const sk = String(c.signalKey || '').trim();\n  if (!sk) continue;\n  if (keysAbiertos.has(sk)) continue;\n  if (vistos.has(sk)) continue;\n  vistos.add(sk);\n  const senal = c.senal || '';\n  // AIR-230 B: threading de priority hasta el IssueCreateInput. exec_fail lo trae (1/2/3);\n  // sync_gap/drift/draft_unpublished no lo setean -> 3 (Medium) por defecto (nunca None).\n  const priority = (typeof c.priority === 'number' && c.priority >= 1 && c.priority <= 4) ? c.priority : 3;\n  out.push({ json: {\n    titulo: t,\n    descripcion: c.descripcion || '',\n    senal: senal,\n    fuente: c.fuente || '',\n    signalKey: sk,\n    labelIds: labelsFor(senal),\n    priority: priority,\n  } });\n}\nreturn out;"
       }
     },
     {
@@ -482,6 +482,80 @@
         672,
         576
       ]
+    },
+    {
+      "id": "aa237001-0237-4a37-b237-loophttpaa237",
+      "name": "Supabase - ai_analysis_log loops",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        448,
+        768
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/ai_analysis_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "select",
+              "value": "tipo,created_at,estado"
+            },
+            {
+              "name": "tipo",
+              "value": "in.(insights_decay,knowledge_consolidation)"
+            },
+            {
+              "name": "estado",
+              "value": "in.(completed,ok,success)"
+            },
+            {
+              "name": "order",
+              "value": "created_at.desc"
+            },
+            {
+              "name": "limit",
+              "value": "500"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Supabase AdeA"
+        }
+      }
+    },
+    {
+      "id": "bb237001-0237-4b37-c237-loopcodebb237",
+      "name": "Procesos loop estancados",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        768
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "function sanitize(s) {\n  if (s == null) return '';\n  let t = String(s).replace(/[\\r\\n\\t]+/g, ' ').replace(/[`<>{}|\\\\$]/g, '');\n  t = t.replace(/signal-key\\s*:/gi, 'signal-key_');\n  return t.replace(/\\s+/g, ' ').trim().slice(0, 120);\n}\n// AIR-237 - Senal loop_process_gap: un proceso de loop dejo de registrar corridas EXITOSAS en\n// public.ai_analysis_log mas alla de su cadencia esperada (el caso raiz de AIR-237 fue una corrida\n// que quedo logueada pero FALLO; contar solo exitos evita que un run fallido resetee el reloj).\n// EXPECTED es una ALLOWLIST hardcodeada: NO se itera sobre las filas devueltas sino sobre esta lista,\n// para que el edge \"el proceso NUNCA corrio\" (MAX(created_at)=null) tambien dispare la senal.\n// Umbral POR TIPO (confirmado con el owner), no un umbral fijo:\n//   insights_decay          -> corre SEMANAL; 8d  = 7d de cadencia + 1d de gracia.\n//   knowledge_consolidation -> corre MENSUAL (AIR-246); 35d = ~30d de cadencia + gracia. Un umbral\n//     fijo de 8d aqui daria falsos positivos ~3 de cada 4 semanas (spam), de ahi el mapa por tipo.\nconst EXPECTED = [\n  { tipo: 'insights_decay',          umbral_dias: 8  },   // semanal + gracia\n  { tipo: 'knowledge_consolidation', umbral_dias: 35 },   // mensual + gracia (AIR-246)\n];\n// estado exitoso segun el constraint ai_analysis_log_estado_check (running/completed/error/ok/\n// abortado/skip_duplicado). El HTTP ya filtra a in.(completed,ok,success); aqui se refuerza.\nconst OK = new Set(['completed', 'ok', 'success']);\nconst rows = $input.all().map(function (i) { return i.json; });\n// MAX(created_at) por tipo, SOLO filas exitosas.\nconst maxPorTipo = {};\nfor (const r of rows) {\n  if (!r || !OK.has(String(r.estado || '').toLowerCase())) continue;\n  const tipo = String(r.tipo || '');\n  const atMs = r.created_at ? Date.parse(r.created_at) : NaN;\n  if (!(atMs > 0)) continue;\n  if (!(tipo in maxPorTipo) || atMs > maxPorTipo[tipo]) maxPorTipo[tipo] = atMs;\n}\nconst ahora = Date.now();\nconst out = [];\nfor (const exp of EXPECTED) {\n  const tipo = exp.tipo;                 // enum de la allowlist -> seguro, NO forjable\n  const umbral = exp.umbral_dias;\n  const ultimoMs = (tipo in maxPorTipo) ? maxPorTipo[tipo] : null;\n  let dias = null;\n  if (ultimoMs != null) {\n    dias = Math.floor((ahora - ultimoMs) / 86400000);\n    if (dias <= umbral) continue;        // dentro de cadencia esperada -> no hay gap\n  }\n  // signalKey / marcador signal-key: se construye SOLO desde <tipo> (enum del check), jamas desde\n  // texto crudo de la fila (resumen/error_mensaje) -> no forjable via prompt injection.\n  const signalKey = 'loop_process_gap:' + tipo;\n  const ultimaTxt = ultimoMs != null ? new Date(ultimoMs).toISOString() : 'nunca';\n  const diasTxt = dias != null ? String(dias) : 'infinito (sin corrida exitosa registrada)';\n  const titulo = ('Proceso loop ' + tipo + ' no se registra hace ' + diasTxt + ' dias (umbral ' + umbral + 'd)').slice(0, 200);\n  const descripcion = 'Senal automatica (Sentinela v1): el proceso de loop **' + tipo + '** no registra una corrida EXITOSA en public.ai_analysis_log ' +\n    (ultimoMs != null\n      ? ('desde hace ' + dias + ' dias (ultima exitosa: ' + ultimaTxt + ')')\n      : 'NUNCA (no hay ninguna corrida exitosa registrada)') + '. ' +\n    'Umbral esperado para este tipo: ' + umbral + ' dias (cadencia + gracia). ' +\n    'Solo se cuentan corridas con estado exitoso (completed/ok/success): un run que quedo logueado pero FALLO no resetea el reloj (caso raiz AIR-237).\\n\\n' +\n    'Nivel de autonomia: pr-only (maximo).\\n\\nsignal-key: ' + signalKey;\n  out.push({ json: {\n    senal: 'loop_process_gap',\n    fuente: tipo,\n    signalKey: signalKey,\n    titulo: titulo,\n    descripcion: descripcion,\n  } });\n}\nreturn out;"
+      }
     }
   ],
   "connections": {
@@ -505,6 +579,11 @@
           },
           {
             "node": "n8n - Ejecuciones recientes (todas)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Supabase - ai_analysis_log loops",
             "type": "main",
             "index": 0
           }
@@ -717,6 +796,28 @@
             "node": "Unir candidatos",
             "type": "main",
             "index": 3
+          }
+        ]
+      ]
+    },
+    "Supabase - ai_analysis_log loops": {
+      "main": [
+        [
+          {
+            "node": "Procesos loop estancados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Procesos loop estancados": {
+      "main": [
+        [
+          {
+            "node": "Unir candidatos",
+            "type": "main",
+            "index": 4
           }
         ]
       ]
