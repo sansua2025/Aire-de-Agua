@@ -79,13 +79,7 @@
       "position": [
         560,
         368
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "PLACEHOLDER",
-          "name": "Header Auth Supabase"
-        }
-      }
+      ]
     },
     {
       "parameters": {
@@ -148,13 +142,7 @@
       "position": [
         1008,
         208
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "PLACEHOLDER",
-          "name": "Header Auth Supabase"
-        }
-      }
+      ]
     },
     {
       "parameters": {
@@ -183,13 +171,7 @@
       "position": [
         1232,
         208
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "PLACEHOLDER",
-          "name": "Header Auth Supabase"
-        }
-      }
+      ]
     },
     {
       "parameters": {
@@ -218,13 +200,7 @@
       "position": [
         1440,
         208
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "PLACEHOLDER",
-          "name": "Header Auth Supabase"
-        }
-      }
+      ]
     },
     {
       "parameters": {
@@ -253,13 +229,7 @@
       "position": [
         1664,
         208
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "PLACEHOLDER",
-          "name": "Header Auth Supabase"
-        }
-      }
+      ]
     },
     {
       "parameters": {
@@ -288,17 +258,11 @@
       "position": [
         1888,
         208
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "PLACEHOLDER",
-          "name": "Header Auth Supabase"
-        }
-      }
+      ]
     },
     {
       "parameters": {
-        "jsCode": "const week = $('Set Week Config').first().json;\nconst snapshot = $('RPC compute_weekly_snapshot').first().json;\nconst anomalias = $('RPC detect_anomalies').first().json;\nconst memoria = $('RPC get_memoria_activa').first().json;\n\nfunction sanitize(s, maxLen) {\n  if (s == null) return null;\n  maxLen = maxLen || 200;\n  const str = String(s).replace(/[\\x00-\\x1F\\x7F]/g, ' ').replace(/<[^>]*>/g, '');\n  return str.length > maxLen ? str.slice(0, maxLen) + '...' : str;\n}\n\nfunction sanitizeInsight(ins) {\n  return {\n    dominio: sanitize(ins.dominio, 30),\n    tipo: sanitize(ins.tipo, 30),\n    titulo: sanitize(ins.titulo, 200),\n    descripcion: sanitize(ins.descripcion, 500),\n    score_confianza: ins.score_confianza,\n    veces_confirmado: ins.veces_confirmado,\n    accion_sugerida: sanitize(ins.accion_sugerida, 300)\n  };\n}\n\nconst memoriaSanitized = {\n  insights: ((memoria && memoria.insights) || []).map(sanitizeInsight),\n  creative_learnings: ((memoria && memoria.creative_learnings) || []).map(function(l) {\n    return {\n      elemento: sanitize(l.elemento, 30),\n      valor: sanitize(l.valor, 100),\n      canal: l.canal,\n      indice_rendimiento: l.indice_rendimiento,\n      score_confianza: l.score_confianza,\n      muestra_anuncios: l.muestra_anuncios\n    };\n  }),\n  snapshot_previo: (memoria && memoria.snapshot_previo) || null\n};\n\n// AIR-119: copia profunda del snapshot saneando SOLO campos de texto libre (anti prompt-injection).\n// Numericos (gasto, roas_real, roas_meta, meta_funnel.*, etc.) quedan INTACTOS.\nconst snapshotSanitized = JSON.parse(JSON.stringify(snapshot || {}));\n((snapshotSanitized && snapshotSanitized.top_ads) || []).forEach(function(a) {\n  if (a == null) return;\n  if (a.ad_name != null) a.ad_name = sanitize(a.ad_name, 80);\n  if (a.campaign_name != null) a.campaign_name = sanitize(a.campaign_name, 80);\n  if (a.adset_name != null) a.adset_name = sanitize(a.adset_name, 80);\n  if (a.objetivo != null) a.objetivo = sanitize(a.objetivo, 60);\n  if (a.audiencia != null) a.audiencia = sanitize(a.audiencia, 60);\n});\n((snapshotSanitized && snapshotSanitized.top_productos) || []).forEach(function(p) {\n  if (p == null) return;\n  if (p.producto_titulo != null) p.producto_titulo = sanitize(p.producto_titulo, 120);\n});\n((snapshotSanitized && snapshotSanitized.mix_canal_web) || []).forEach(function(m) {\n  if (m == null) return;\n  if (m.canal_tipo != null) m.canal_tipo = sanitize(m.canal_tipo, 30);\n});\n\nconst brandCfg = $('RPC get_brand_config').first().json;\nconst systemPrompt = brandCfg.persona_system;\n\nconst schema = JSON.stringify({\n  resumen_ai: 'string 3 oraciones',\n  insights: [{\n    dominio: 'ventas|paid|web|cliente|producto|general',\n    tipo: 'patron|oportunidad|riesgo|anomalia|logro',\n    insight_key: 'slug snake_case estable de la CONDICION, sin semana/fecha/valores; reutiliza el mismo si ya se detecto antes. Ej: klaviyo_canal_apagado, cvr_web_critico, roas_real_paid',\n    requiere_del_humano: 'decidir_urgente|informacion|celebrar|nada. Triage conservador: decidir_urgente solo si es accionable y de alto impacto; logro relevante=celebrar; por defecto informacion. NUNCA aprobar.',\n    titulo: 'string',\n    descripcion: 'string',\n    metrica_clave: 'string',\n    valor_observado: 'number',\n    valor_referencia: 'number|null',\n    delta_pct: 'number|null',\n    score_confianza: '0-1',\n    accion_sugerida: 'string',\n    signo_predicho: 'sube|baja|null - si se toma la accion_sugerida, deberia la metrica_clave subir o bajar? null si no aplica'\n  }],\n  audience_actions: [{\n    segmento: 'VIP|Recurrente|Nuevo|Riesgo|Dormant',\n    accion_klaviyo: 'string',\n    accion_meta: 'string',\n    copy_angle: 'string'\n  }],\n  top_canal: 'string',\n  top_ad_id: 'string|null'\n}, null, 2);\n\nconst userPrompt = 'Semana: ' + week.week_start + ' a ' + week.week_end + '\\n\\n<data>\\n## SNAPSHOT (incluye roas_real, meta_funnel, top_ads, mix_canal_web, top_productos):\\n' + JSON.stringify(snapshotSanitized, null, 2) + '\\n\\n## ANOMALIAS:\\n' + JSON.stringify(anomalias, null, 2) + '\\n\\n## MEMORIA:\\n' + JSON.stringify(memoriaSanitized, null, 2) + '\\n</data>\\n\\nGenera el analisis en este JSON exacto:\\n' + schema;\n\nreturn [{ json: { system_prompt: systemPrompt, user_prompt: userPrompt, week_start: week.week_start, week_end: week.week_end, start_time: Date.now() } }];"
+        "jsCode": "const week = $('Set Week Config').first().json;\nconst snapshot = $('RPC compute_weekly_snapshot').first().json;\nconst anomalias = $('RPC detect_anomalies').first().json;\nconst memoria = $('RPC get_memoria_activa').first().json;\n\nfunction sanitize(s, maxLen) {\n  if (s == null) return null;\n  maxLen = maxLen || 200;\n  const str = String(s).replace(/[\\x00-\\x1F\\x7F]/g, ' ').replace(/<[^>]*>/g, '');\n  return str.length > maxLen ? str.slice(0, maxLen) + '...' : str;\n}\n\nfunction sanitizeInsight(ins) {\n  return {\n    dominio: sanitize(ins.dominio, 30),\n    tipo: sanitize(ins.tipo, 30),\n    titulo: sanitize(ins.titulo, 200),\n    descripcion: sanitize(ins.descripcion, 500),\n    score_confianza: ins.score_confianza,\n    veces_confirmado: ins.veces_confirmado,\n    accion_sugerida: sanitize(ins.accion_sugerida, 300)\n  };\n}\n\nfunction sanitizeResuelta(r) {\n  return {\n    insight_key: sanitize(r.insight_key, 60),\n    titulo: sanitize(r.titulo, 200),\n    nota_resolucion: sanitize(r.nota_resolucion, 300),\n    fecha: r.fecha\n  };\n}\n\nconst ultimoSnapshotRaw = (memoria && memoria.ultimo_snapshot) || null;\nconst ultimoSnapshotSanitized = ultimoSnapshotRaw ? Object.assign({}, ultimoSnapshotRaw, { resumen: sanitize(ultimoSnapshotRaw.resumen, 600) }) : null;\n\nconst memoriaSanitized = {\n  insights: ((memoria && memoria.insights) || []).map(sanitizeInsight),\n  creative_learnings: ((memoria && memoria.creative_learnings) || []).map(function(l) {\n    return {\n      elemento: sanitize(l.elemento, 30),\n      valor: sanitize(l.valor, 100),\n      canal: l.canal,\n      indice_rendimiento: l.indice_rendimiento,\n      score_confianza: l.score_confianza,\n      muestra_anuncios: l.muestra_anuncios\n    };\n  }),\n  ultimo_snapshot: ultimoSnapshotSanitized,\n  condiciones_resueltas: ((memoria && memoria.condiciones_resueltas) || []).map(sanitizeResuelta)\n};\n\nconst snapshotSanitized = JSON.parse(JSON.stringify(snapshot || {}));\n((snapshotSanitized && snapshotSanitized.top_ads) || []).forEach(function(a) {\n  if (a == null) return;\n  if (a.ad_name != null) a.ad_name = sanitize(a.ad_name, 80);\n  if (a.campaign_name != null) a.campaign_name = sanitize(a.campaign_name, 80);\n  if (a.adset_name != null) a.adset_name = sanitize(a.adset_name, 80);\n  if (a.objetivo != null) a.objetivo = sanitize(a.objetivo, 60);\n  if (a.audiencia != null) a.audiencia = sanitize(a.audiencia, 60);\n});\n((snapshotSanitized && snapshotSanitized.top_productos) || []).forEach(function(p) {\n  if (p == null) return;\n  if (p.producto_titulo != null) p.producto_titulo = sanitize(p.producto_titulo, 120);\n});\n((snapshotSanitized && snapshotSanitized.mix_canal_web) || []).forEach(function(m) {\n  if (m == null) return;\n  if (m.canal_tipo != null) m.canal_tipo = sanitize(m.canal_tipo, 30);\n});\n\nconst brandCfg = $('RPC get_brand_config').first().json;\nconst systemPrompt = brandCfg.persona_system;\n\nconst schema = JSON.stringify({\n  resumen_ai: 'string 3 oraciones',\n  insights: [{\n    dominio: 'ventas|paid|web|cliente|producto|general',\n    tipo: 'patron|oportunidad|riesgo|anomalia|logro',\n    insight_key: 'slug snake_case estable de la CONDICION, sin semana/fecha/valores; reutiliza el mismo si ya se detecto antes. Ej: klaviyo_canal_apagado, cvr_web_critico, roas_real_paid',\n    requiere_del_humano: 'decidir_urgente|informacion|celebrar|nada. Triage conservador: decidir_urgente solo si es accionable y de alto impacto; logro relevante=celebrar; por defecto informacion. NUNCA aprobar.',\n    titulo: 'string',\n    descripcion: 'string',\n    metrica_clave: 'string',\n    valor_observado: 'number',\n    valor_referencia: 'number|null',\n    delta_pct: 'number|null',\n    score_confianza: '0-1',\n    accion_sugerida: 'string',\n    signo_predicho: 'sube|baja|null - si se toma la accion_sugerida, deberia la metrica_clave subir o bajar? null si no aplica'\n  }],\n  audience_actions: [{\n    segmento: 'VIP|Recurrente|Nuevo|Riesgo|Dormant',\n    accion_klaviyo: 'string',\n    accion_meta: 'string',\n    copy_angle: 'string'\n  }],\n  top_canal: 'string',\n  top_ad_id: 'string|null'\n}, null, 2);\n\nconst instruccionResueltas = memoriaSanitized.condiciones_resueltas.length > 0\n  ? '\\n\\nIMPORTANTE: las condiciones listadas en MEMORIA.condiciones_resueltas ya NO aplican esta semana (fueron auto-resueltas por contradiccion contra datos frescos). NO las repitas como insight nuevo bajo ningun motivo, ni con el mismo insight_key ni con uno distinto. Si sigue siendo relevante mencionarlas, hazlo como una frase breve dentro de resumen_ai, nunca como insight con requiere_del_humano alto.'\n  : '';\n\nconst userPrompt = 'Semana: ' + week.week_start + ' a ' + week.week_end + '\\n\\n<data>\\n## SNAPSHOT (incluye roas_real, meta_funnel, top_ads, mix_canal_web, top_productos):\\n' + JSON.stringify(snapshotSanitized, null, 2) + '\\n\\n## ANOMALIAS:\\n' + JSON.stringify(anomalias, null, 2) + '\\n\\n## MEMORIA:\\n' + JSON.stringify(memoriaSanitized, null, 2) + '\\n</data>' + instruccionResueltas + '\\n\\nGenera el analisis en este JSON exacto:\\n' + schema;\n\nreturn [{ json: { system_prompt: systemPrompt, user_prompt: userPrompt, week_start: week.week_start, week_end: week.week_end, start_time: Date.now() } }];"
       },
       "id": "cd185aa9-fc2b-4958-9059-2317d3a830dc",
       "name": "Build Prompt (sanitized)",
@@ -342,17 +306,7 @@
       "position": [
         2320,
         208
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "PLACEHOLDER",
-          "name": "Tavily Auth"
-        },
-        "anthropicApi": {
-          "id": "PLACEHOLDER",
-          "name": "Anthropic account"
-        }
-      }
+      ]
     },
     {
       "parameters": {
@@ -426,13 +380,7 @@
       "position": [
         2992,
         80
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "PLACEHOLDER",
-          "name": "Header Auth Supabase"
-        }
-      }
+      ]
     },
     {
       "parameters": {
@@ -465,13 +413,7 @@
       "position": [
         2992,
         320
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "PLACEHOLDER",
-          "name": "Header Auth Supabase"
-        }
-      }
+      ]
     },
     {
       "parameters": {
@@ -504,13 +446,7 @@
         3424,
         320
       ],
-      "webhookId": "51d11be4-be99-40fe-a068-8e76c6801f9e",
-      "credentials": {
-        "gmailOAuth2": {
-          "id": "PLACEHOLDER",
-          "name": "Gmail account"
-        }
-      }
+      "webhookId": "51d11be4-be99-40fe-a068-8e76c6801f9e"
     },
     {
       "parameters": {
@@ -543,13 +479,7 @@
       "position": [
         3648,
         320
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "PLACEHOLDER",
-          "name": "Header Auth Supabase"
-        }
-      }
+      ]
     },
     {
       "parameters": {
@@ -582,13 +512,7 @@
       "position": [
         1008,
         544
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "PLACEHOLDER",
-          "name": "Header Auth Supabase"
-        }
-      }
+      ]
     },
     {
       "parameters": {
@@ -617,12 +541,64 @@
       "position": [
         2000,
         360
+      ]
+    },
+    {
+      "id": "7639fd6d-9387-4e1a-932b-86e8426187c0",
+      "name": "RPC resolve_contradicted_insights",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1745,
+        60
       ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "PLACEHOLDER",
-          "name": "Header Auth Supabase"
-        }
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "jsonBody": "{}",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "sendHeaders": true,
+        "specifyBody": "json",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/rpc/analytics_resolve_contradicted_insights"
+      }
+    },
+    {
+      "id": "7dd53dd3-f1f1-483c-834e-a2f102e7db35",
+      "name": "RPC decay_stale_insights",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1745,
+        356
+      ],
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "jsonBody": "{}",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "sendHeaders": true,
+        "specifyBody": "json",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/rpc/analytics_decay_stale_insights"
       }
     }
   ],
@@ -705,17 +681,6 @@
         [
           {
             "node": "RPC recompute_audience_segments",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "RPC recompute_audience_segments": {
-      "main": [
-        [
-          {
-            "node": "RPC get_memoria_activa",
             "type": "main",
             "index": 0
           }
@@ -827,10 +792,47 @@
           }
         ]
       ]
+    },
+    "RPC recompute_audience_segments": {
+      "main": [
+        [
+          {
+            "node": "RPC resolve_contradicted_insights",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RPC resolve_contradicted_insights": {
+      "main": [
+        [
+          {
+            "node": "RPC decay_stale_insights",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RPC decay_stale_insights": {
+      "main": [
+        [
+          {
+            "node": "RPC get_memoria_activa",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
     "executionOrder": "v1",
+    "availableInMCP": true,
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
     "errorWorkflow": "PV9L4Y58E3JLvflt"
   }
 }
