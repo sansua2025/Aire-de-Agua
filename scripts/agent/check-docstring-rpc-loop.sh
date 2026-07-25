@@ -102,12 +102,22 @@ for f in ${FILES[@]+"${FILES[@]}"}; do
       # Ignorar decimales que claramente no son deltas de score (umbral cosine 0.15 del
       # docstring de 028 es un FACTOR de crecimiento → sí cuenta; pero 0.05 umbral |delta|
       # también es válido). No filtramos por valor: comparamos presencia, no semántica.
+      # AIR-257: un decimal SOLO cuenta como delta a verificar si va precedido por un
+      # OPERADOR DE AJUSTE inmediato: +, -, +=, -= (suma/resta al score) o * (factor
+      # multiplicativo documentado, p.ej. "(1 - actual) * 0.15"). Un decimal SUELTO sin
+      # operador es cita/dato narrativo — "score 1.01" del learning Klaviyo (AIR-242),
+      # "score_estabilidad=1.01", "= 0.90", "(n=42)" — y NO se verifica contra el cuerpo.
+      # Antes, el caso `sign=''` (factor) capturaba de más el decimal suelto → falso
+      # positivo que forzaba reformular el comentario narrativo.
       sign=''
       case "$tok" in
         *'-='*|*'- '*|*'-'[0-9]*) sign='-' ;;
         *'+='*|*'+ '*|*'+'[0-9]*) sign='+' ;;
-        *) sign='' ;;  # sin operador: factor (p.ej. "* 0.15")
+        *'*'*)                    sign='*' ;;  # factor multiplicativo (p.ej. "* 0.15")
+        *) sign='' ;;  # sin operador de ajuste: cita narrativa → NO es un delta
       esac
+      # Decimal narrativo sin operador de ajuste: no verificable como delta. Se ignora.
+      [ -z "$sign" ] && continue
 
       # Etiqueta legible: busca una palabra clave de contexto en la línea.
       etiqueta=$(echo "$line" | grep -oiE 'refutado|confirmado|sin[_ ]cambio|contradice|coincide|premia|crece|satura' | head -1 | tr 'A-Z' 'a-z')
@@ -122,7 +132,7 @@ for f in ${FILES[@]+"${FILES[@]}"}; do
       case "$sign" in
         '-') grep -qE "[-][[:space:]]*${num//./\\.}([^0-9]|$)" <<<"$body" && found=1 ;;
         '+') grep -qE "[+][[:space:]]*${num//./\\.}([^0-9]|$)" <<<"$body" && found=1 ;;
-        *)   grep -qE "${num//./\\.}([^0-9]|$)" <<<"$body" && found=1 ;;
+        '*') grep -qE "${num//./\\.}([^0-9]|$)" <<<"$body" && found=1 ;;  # factor: presencia del número
       esac
 
       if [ "$found" -eq 0 ]; then

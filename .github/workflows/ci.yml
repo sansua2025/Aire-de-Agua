@@ -32,6 +32,11 @@ jobs:
           fetch-depth: 0
       # AIR-135 — drift docstring↔cuerpo en las RPCs del loop de insights.
       # Origen: AIR-97 (penalización 'refutado -0.15' documentada pero nunca implementada).
+      # AIR-257 — self-test: el endurecimiento (decimal == delta solo con operador de
+      # ajuste) NO debilita la detección AIR-97 y elimina el falso positivo por decimal
+      # narrativo (AIR-242, "score 1.01").
+      - name: Self-test del linter (endurecimiento AIR-257 no debilita AIR-97)
+        run: bash scripts/agent/check-docstring-rpc-loop.selftest.sh
       - name: Drift docstring↔cuerpo en RPCs del loop sobre el diff
         run: |
           git fetch origin main --quiet || true
