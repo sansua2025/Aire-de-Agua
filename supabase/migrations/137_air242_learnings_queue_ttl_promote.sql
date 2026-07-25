@@ -11,7 +11,7 @@
 --   Los 11 strategic_learnings están todos en 'candidato' (0 aprobados/rechazados),
 --   el más viejo del 2026-06-10; la cola nunca promovió nada a brand_knowledge y
 --   contiene un learning FALSO ("Klaviyo apagado 12+ semanas", semanas_activo=11,
---   score_estabilidad=1.01) cuyo insight_key ya fue auto-resuelto por F0-a (mig 130).
+--   score_estabilidad alto) cuyo insight_key ya fue auto-resuelto por F0-a (mig 130).
 --   Una cola de aprobación que sólo vive en el dashboard es una cola muerta.
 --
 -- Qué construye esta migración (EN ORDEN — el orden importa):
@@ -252,7 +252,7 @@ COMMENT ON FUNCTION analytics.expire_stale_learnings() IS
 --   (1) GUARD: candidato/propuesto cuyo insight_key ya NO tiene insight vigente
 --       (auto-resuelto/contradicho por F0-a) → 'rechazado' con razón. Corre ANTES
 --       de promover: sin señal de respaldo el patrón no debe llegar al HITL. Este
---       guard es el que atrapa el caso Klaviyo (score 1.01, semanas 11, pero key
+--       guard es el que atrapa el caso Klaviyo (score alto, semanas 11, pero key
 --       auto-resuelto): sin "key vigente" se promovería un learning FALSO.
 --   (2) PROMOCIÓN: candidato con key vigente + semanas_activo >= learnings_semanas_min
 --       AND score_estabilidad >= learnings_score_min → 'propuesto'.
