@@ -73,6 +73,29 @@ No se pueden probar migraciones en preview branch.
 Mitigación: verificación estática comparando `pg_get_functiondef` en prod contra el SQL de la
 migración + tests sintéticos incluidos en el PR para correr al aplicar (humano aplica y verifica).
 
+## AIR-242 (mig 137) — preview branch MIGRATIONS_FAILED → scaffold PROD-fiel manual (patrón validado)
+`create_branch` SÍ funciona ahora (confirm_cost → create_branch), pero el replay de migraciones
+falla (status MIGRATIONS_FAILED, igual que air-234/air-235 e incluso `main`). El branch queda con
+`preview_project_status=ACTIVE_HEALTHY` pero schema PARCIAL a un estado muy temprano: p.ej. `insights`
+sin `insight_key`/`requiere_del_humano`/`estado_accion`, `ai_analysis_log` con el CHECK de tipo viejo
+(6 valores), y SIN `strategic_learnings`/`brand_config`/schema `analytics`. Patrón que funcionó:
+1) `execute_sql` en el branch para scaffold PROD-fiel de SOLO lo que toca la migración (CREATE SCHEMA
+analytics; ALTER TABLE ADD COLUMN IF NOT EXISTS las columnas nuevas de insights; recrear brand_config
++ fila con umbrales reales; recrear strategic_learnings con su CHECK/índice/GENERATED/consolidar de
+mig 058; ampliar el CHECK de ai_analysis_log.tipo). Omitir FKs irrelevantes (brand_knowledge) reduce
+fricción sin perder fidelidad de lo que se valida. 2) `apply_migration` de la mig nueva encima.
+3) Correr selftest + queries de AC. 4) `delete_branch` al terminar. Actualiza la lección vieja
+("branching deshabilitado PaymentRequired") — YA NO es PaymentRequired; es MIGRATIONS_FAILED + scaffold.
+
+## Índice único parcial + ON CONFLICT: cambio PAREADO obligatorio (AIR-242)
+Al ampliar/estrechar el predicado de un índice único parcial, el `ON CONFLICT (col) WHERE <pred>` de
+CUALQUIER upsert que lo infiera DEBE re-sincronizarse con el NUEVO predicado en la MISMA migración
+(Postgres infiere el índice por `predicate_implied_by`; si no coincide, el UPSERT aborta en runtime,
+no en apply). Verificación real: forzar un UPSERT (INSERT que cae en conflicto → DO UPDATE) con
+fixtures, no basta con que la función compile ni con 0 filas (el ON CONFLICT solo se ejercita cuando
+el INSERT realmente corre). En 137: recrear `uq_strategic_learnings_active_key` (añade 'expirado' a la
+exclusión) obligó `CREATE OR REPLACE consolidar_strategic_learnings()` con el mismo WHERE.
+
 ## Candidato a graduación — drift docstring/cuerpo en RPCs (AIR-97, relacionar con AIR-127)
 La migración 033 documentaba penalización `refutado -0.15` que el cuerpo de la RPC NUNCA implementó.
 Esto lo encontró AIR-97 comparando el header-comment contra la lógica SQL.
