@@ -47,6 +47,19 @@
 
 ---
 
+# Verify — memoria
+
+## verify NUNCA debe mutar archivos vía Bash (AIR-242, incidente sin daño persistente)
+`disallowedTools` de verify.md bloquea Write/Edit/NotebookEdit/apply_migration/execute_sql, pero Bash
+sigue disponible y puede escribir igual (`sed -i`, `tee`, `>`, `dd`). En AIR-242 verify usó `sed` sobre
+el SQL/comentarios de la migración 137 durante su corrida: viola "nunca editar el SQL de una migración"
+(CLAUDE.md) y el rol read-only de verify (correr checks y reportar, no arreglar). Sin daño (working tree
+limpio al terminar) pero boundary crossing real. Recomendación (NO aplicada — toca `.claude/agents/*`,
+requiere aprobación humana): prohibición explícita en `verify.md` de escribir/editar por CUALQUIER vía
+en Bash, y evaluar hook PreToolUse que bloquee patrones de escritura (`sed -i`,`>`,`tee`) en su Bash.
+
+---
+
 # Issue-analyst — memoria
 
 ## Verificar antes de construir (AIR-71, AIR-119)
@@ -73,53 +86,62 @@ Consecuencia operativa:
 - No asumir que builder o verify validan en prod vía MCP.
 
 ## Falso positivo de "agente huérfano" — NO relanzar por output pequeño solo (Fase 0 AIR-233)
-Un builder largo (~21 min) fue declarado muerto porque su output-file medía 123 bytes; se relanzó un
-segundo builder sobre el MISMO worktree/rama → race real (detenida a tiempo, sin daño). El tamaño del
-output-file NO es señal de vida/muerte: un builder puede estar corriendo migraciones/evals largos sin
-haber escrito aún su reporte final. Antes de asumir que un builder murió y relanzar:
-1. Verificar actividad real del worktree (`git status`, `git log -1 --format=%cd` sobre esa rama) —
-   commits o cambios recientes = sigue vivo, aunque el output-file esté vacío/chico.
-2. Dar margen a builders largos (migraciones+evals+preview branch pueden tomar >20 min legítimamente).
-3. NUNCA lanzar un segundo builder sobre el mismo worktree/rama sin confirmar que el primero terminó
-   o está realmente muerto (proceso no existe) — la race sobre el mismo working tree corrompe estado.
+Un builder largo (~21 min) fue declarado muerto por output-file de 123 bytes; se relanzó un 2º builder
+sobre el MISMO worktree/rama → race real (detenida a tiempo, sin daño). El tamaño del output-file NO es
+señal de vida/muerte (migraciones/evals largos tardan en escribir el reporte final). Antes de relanzar:
+verificar actividad real del worktree (`git status`, `git log -1 --format=%cd`) y dar margen (>20 min es
+legítimo); NUNCA lanzar un 2º builder sobre el mismo worktree/rama sin confirmar que el primero murió.
 
-## Supabase sin plan Pro → branching deshabilitado (restricción conocida del entorno)
-`create_branch` devuelve `PaymentRequired` en el proyecto `vnctmzsgemefgbtjctlo`.
-No se pueden probar migraciones en preview branch.
-Mitigación: verificación estática comparando `pg_get_functiondef` en prod contra el SQL de la
-migración + tests sintéticos incluidos en el PR para correr al aplicar (humano aplica y verifica).
+## Preview branch: `create_branch` YA funciona, pero MIGRATIONS_FAILED → scaffold PROD-fiel (AIR-242, actualiza lección "PaymentRequired" vieja)
+`create_branch` ya no da `PaymentRequired`; el replay de migraciones sí falla (MIGRATIONS_FAILED, igual
+que air-234/air-235 e incluso `main`), dejando el branch `ACTIVE_HEALTHY` con schema PARCIAL/temprano
+(p.ej. `insights` sin `insight_key`/`estado_accion`, sin `strategic_learnings`/`brand_config`/`analytics`).
+Patrón que funcionó en 137: 1) `execute_sql` en el branch para scaffold PROD-fiel de SOLO lo que toca la
+migración (columnas nuevas, tablas/funciones de migraciones previas relevantes, omitiendo FKs
+irrelevantes). 2) `apply_migration` de la migración nueva encima. 3) Selftest + queries de AC.
+4) `delete_branch` al terminar.
 
-## Candidato a graduación — drift docstring/cuerpo en RPCs (AIR-97, relacionar con AIR-127)
-La migración 033 documentaba penalización `refutado -0.15` que el cuerpo de la RPC NUNCA implementó.
-Esto lo encontró AIR-97 comparando el header-comment contra la lógica SQL.
-Candidato a check en `check-data-rules.sh`: verificar que los comentarios-cabecera de las RPCs del
-loop de insights son consistentes con la lógica del cuerpo (al menos detectar penalizaciones/bonus
-declarados pero ausentes). No implementar aún; proponer en AIR-127.
+## Checklist — aplicar a PROD ANTES de esperar verde en `evals` (AIR-241, AIR-242 — 2ª vez, graduado)
+El job CI `evals` corre selftest RPCs contra PROD real; se pone ROJO (PGRST202 / schema cache stale)
+si la migración que los define aún no está aplicada a PROD. Confirmado 2 veces (AIR-241 PR #168,
+AIR-242 PR #169: gap real de ~35min entre los demás checks y `evals` en el mismo run, por el apply
+intermedio). Para todo issue del Cerebro que añada selftest RPCs:
+1. `apply_migration` a PROD + `NOTIFY pgrst, 'reload schema'` ANTES de esperar el resultado de `evals`.
+2. Si `evals` ya corrió en rojo por PGRST202 antes del apply, usar `rerun_failed_jobs` DESPUÉS de aplicar
+   — no interpretar ese rojo como bug de la migración.
+
+## Índice único parcial + ON CONFLICT: cambio PAREADO obligatorio (AIR-242)
+Al ampliar/estrechar el predicado de un índice único parcial, el `ON CONFLICT (col) WHERE <pred>` de
+CUALQUIER upsert que lo infiera DEBE re-sincronizarse con el NUEVO predicado en la MISMA migración
+(Postgres infiere el índice por `predicate_implied_by`; si no coincide, el UPSERT aborta en runtime,
+no en apply). Verificación real: forzar un UPSERT (INSERT que cae en conflicto → DO UPDATE) con
+fixtures, no basta con que la función compile ni con 0 filas (el ON CONFLICT solo se ejercita cuando
+el INSERT realmente corre). En 137: recrear `uq_strategic_learnings_active_key` (añade 'expirado' a la
+exclusión) obligó `CREATE OR REPLACE consolidar_strategic_learnings()` con el mismo WHERE.
+
+## check-docstring-rpc-loop.sh — falso positivo con decimales narrativos (AIR-242, mig 137)
+(Ya graduado AIR-97/127/135 → `scripts/agent/check-docstring-rpc-loop.sh`, CI `docstring-rpc-loop`; no
+repetir el análisis manual, el check ya compara docstring↔cuerpo.) El check extrae CUALQUIER decimal
+cerca de `score`/`actual`/`delta` en el docstring-cabecera y exige que aparezca en el cuerpo como delta
+de `score_confianza`. Un valor narrativo histórico ("score 1.013" describiendo el learning falso de
+Klaviyo — dato de negocio, no un delta que la RPC implementa) lo disparó como FAIL falso. Fix real:
+reformular el comentario para no usar literales `N.NN` narrativos en el docstring-cabecera de RPCs del
+loop; preferir cualitativos ("score alto", "por encima del umbral"). 1ª vez que se ve este falso
+positivo — si se repite, candidato a endurecer el check (ignorar decimales sin operador `+`/`-`/`=`
+inmediato); proponer como issue agent-ready, no tocar el script desde memoria/retro.
 
 ---
 
 # Retro sesión nocturna 2026-06-16
 
 ## Entorno remoto — restricciones adicionales confirmadas
-- `gh` CLI NO está disponible en Claude Code on web. `merge-gate.sh` no puede correr desde subagentes.
-  Operaciones GitHub van por MCP `mcp__github__*` (solo disponible en orquestador).
-- Lo anterior refuerza el patrón ya conocido: orquestador ejecuta toda validación runtime;
-  subagentes solo escriben archivos.
+`gh` CLI NO disponible en Claude Code on web; operaciones GitHub van por MCP `mcp__github__*` (solo
+garantizado en orquestador — refuerza la lección de MCP arriba).
 
-## n8n JSON dual-grafo — bug real (AIR-79)
-Los workflows exportados con versión publicada contienen DOS copias del grafo:
-`nodes` (draft) y `activeVersion.nodes` (lo que n8n ejecuta en producción).
-Editar manualmente solo `nodes` deja `activeVersion` divergente.
-En AIR-79 esto reintrodujo snapshot CRUDO en `<data>`, perdiendo la defensa anti-injection (AIR-119)
-en la versión ejecutada, aunque el draft parecía correcto.
-Regla: al editar un nodo n8n a mano, actualizar AMBAS copias y verificar que `jsCode` sea
-byte-idéntico en `nodes[i]` y `activeVersion.nodes[i]`. Candidato a check en CI (issue abierto).
-
-## Firma de `buscar_brand_knowledge` — parámetro es VECTOR, no texto
-`buscar_brand_knowledge(query_embedding vector(1536), limite int, filtro_categoria text)`
-Recibe un embedding precomputado (vector de 1536 dims), NO `query_text`.
-Generar el embedding con `text-embedding-3-small` antes de llamar la RPC.
-Cualquier doc o issue que pase `query_text` directamente está equivocado (afecta AIR-70 y derivados).
+Nota de poda: la lección "n8n dual-grafo `nodes`/`activeVersion.nodes`" (AIR-79) YA está graduada — ver
+CLAUDE.md § "Paridad nodes ↔ activeVersion.nodes (AIR-140)" + check `check-n8n-graph-parity.sh`
+(CI `n8n-graph-parity`); no repetir aquí. La firma de `buscar_brand_knowledge` (vector, no texto) vive
+solo en `MEMORY.md` (raíz) para no duplicar.
 
 ## `insights` de Supabase es solo para negocio/datos — no proceso
 `get_memoria_activa(null,...)` ignora el filtro de dominio y devuelve los top-10 `vigente`
