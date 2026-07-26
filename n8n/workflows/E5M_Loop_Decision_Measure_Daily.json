@@ -1,0 +1,140 @@
+{
+  "id": "E5MLoopDecMeasure01",
+  "name": "Loop - Decision Measure Daily",
+  "active": false,
+  "description": "AIR-133 (Loop v3 F2-c) · Cron diario 8am COT (0 13 * * * UTC), alineado con el Loop Closer. POST al wrapper RPC analytics_measure_pending_decisions (mide las decisiones vencidas y sin medir: valor_resultado + resultado_evaluacion) → nodo de log con los conteos. El RPC YA audita en ai_analysis_log (tipo=loop_closer), por eso el log final NO re-inserta en la tabla (evita filas duplicadas). Export de respaldo; se publica/activa manualmente en n8n.",
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "PV9L4Y58E3JLvflt"
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 13 * * *"
+            }
+          ]
+        }
+      },
+      "id": "a1c0d2e4-0001-4a00-8000-000000000001",
+      "name": "Cron Daily 8am COT",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        128,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://vnctmzsgemefgbtjctlo.supabase.co/rest/v1/rpc/analytics_measure_pending_decisions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({}) }}",
+        "options": {}
+      },
+      "id": "a1c0d2e4-0002-4a00-8000-000000000002",
+      "name": "RPC measure_pending_decisions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        352,
+        368
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "Header Auth Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b2d1e3f5-0001-4b00-8000-000000000001",
+              "name": "corrida",
+              "value": "={{ $json.corrida }}",
+              "type": "string"
+            },
+            {
+              "id": "b2d1e3f5-0002-4b00-8000-000000000002",
+              "name": "candidatas",
+              "value": "={{ $json.candidatas }}",
+              "type": "number"
+            },
+            {
+              "id": "b2d1e3f5-0003-4b00-8000-000000000003",
+              "name": "medidas",
+              "value": "={{ $json.medidas }}",
+              "type": "number"
+            },
+            {
+              "id": "b2d1e3f5-0004-4b00-8000-000000000004",
+              "name": "sin_computar",
+              "value": "={{ $json.sin_computar }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1c0d2e4-0003-4a00-8000-000000000003",
+      "name": "Log medicion",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        576,
+        368
+      ]
+    }
+  ],
+  "connections": {
+    "Cron Daily 8am COT": {
+      "main": [
+        [
+          {
+            "node": "RPC measure_pending_decisions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RPC measure_pending_decisions": {
+      "main": [
+        [
+          {
+            "node": "Log medicion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "tags": [],
+  "meta": {
+    "aiBuilderAssisted": true
+  }
+}
