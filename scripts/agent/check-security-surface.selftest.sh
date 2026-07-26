@@ -302,6 +302,46 @@ run "$TMP/n2_control_exact_sig.sql" | grep -q "S1:" \
   || ok "N2-control PASA: firma allowlisted exacta (date,date,text) sigue exenta"
 
 # ============================================================
+# AIR-232 (Parte A, 3ª ronda): N3 — escape-strings E'...'/e'...' con \' .
+#   El normalizador manejaba '' pero NO el \' de las cadenas escape: E'\'/*' cerraba el
+#   string en \' y el /* comía SECURITY DEFINER/cuerpo/REVOKE hasta EOF -> 0 fail.
+# ============================================================
+
+# N3a — DEFAULT E'\'/*' : el \' NO cierra la escape-string; /* no arranca comentario.
+# Sin REVOKE FROM PUBLIC -> S1 FALLA.
+cat > "$TMP/n3a_escape_slash_star.sql" <<'SQL'
+CREATE OR REPLACE FUNCTION public.evil_n3a(p text DEFAULT E'\'/*')
+RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$ SELECT 1 $$;
+GRANT EXECUTE ON FUNCTION public.evil_n3a(text) TO PUBLIC;
+SQL
+OUT="$(run "$TMP/n3a_escape_slash_star.sql")"
+echo "$OUT" | grep -q "S1:.*public.evil_n3a" \
+  && ok "N3a FALLA: E'\\'/*' con \\' no cierra la escape-string (escape-aware)" \
+  || bad "N3a DEBERÍA fallar: \\' dentro de E'...' cierra el string y /* evade"
+
+# N3b — variante con e'\'--' (minúscula + comentario de línea).
+cat > "$TMP/n3b_escape_dashdash.sql" <<'SQL'
+CREATE OR REPLACE FUNCTION public.evil_n3b(p text DEFAULT e'\'--')
+RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$ SELECT 1 $$;
+GRANT EXECUTE ON FUNCTION public.evil_n3b(text) TO PUBLIC;
+SQL
+OUT="$(run "$TMP/n3b_escape_dashdash.sql")"
+echo "$OUT" | grep -q "S1:.*public.evil_n3b" \
+  && ok "N3b FALLA: e'\\'--' con \\' no cierra la escape-string (escape-aware)" \
+  || bad "N3b DEBERÍA fallar: \\' dentro de e'...' cierra el string y -- evade"
+
+# N3-control — una escape-string E'...' LEGÍTIMA y sana (con REVOKE FROM PUBLIC +
+# search_path) PASA sin FAIL. Asegura que el fix no rompe escape-strings válidas.
+cat > "$TMP/n3_control_sane_escape.sql" <<'SQL'
+CREATE OR REPLACE FUNCTION public.sano_n3(p text DEFAULT E'linea1\nlinea2')
+RETURNS int LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$ SELECT 1; $$;
+REVOKE EXECUTE ON FUNCTION public.sano_n3(text) FROM PUBLIC, anon, authenticated;
+SQL
+run "$TMP/n3_control_sane_escape.sql" | grep -qE "FAIL" \
+  && bad "N3-control no debía producir FAIL (escape-string legítima + caso sano)" \
+  || ok "N3-control PASA: escape-string E'...' sana sin FAIL"
+
+# ============================================================
 # Regresión: migraciones reales 142 / 143 NO deben enrojecer.
 # ============================================================
 REPO="$(cd "$DIR/../.." && pwd)"

@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 # Superficie de seguridad de migraciones — guardarraíl CI determinista (AIR-232 Parte A).
 #
+# GATE BEST-EFFORT / DEFENSA EN PROFUNDIDAD. Este check es un linter de TEXTO sobre el diff
+# de migraciones: atrapa las clases comunes de regresión (SECDEF sin REVOKE FROM PUBLIC,
+# tabla public sin RLS, vista sin security_invoker, SECDEF sin search_path) en el PR, de
+# forma barata. NO es un parser SQL hermético y NO debe tratarse como garantía: casos
+# sintácticos exóticos (escape-strings raras, unicode U&'...', etc.) pueden evadirlo. La
+# GARANTÍA real y no-evadible es la Parte B (AIR-261): get_advisors(security) contra el
+# catálogo aplicado de Postgres, inmune a trucos de texto.
+#
 # Gradúa a check las 3 lecciones vivas de la auditoría de seguridad (AIR-231/AIR-203/AIR-87):
 # lo que se repite en review de seguridad pasa a ser gate determinista, no prompt.
 # Se dispara SOLO sobre las líneas AÑADIDAS de supabase/migrations/*.sql (una migración
@@ -238,7 +246,15 @@ norm_stream() {
         # Dentro de un string de comilla simple (nunca a la vez que un cuerpo dollar): la
         # comilla doblada ('' -> SQ SQ) es un escape (sigue en el string); ni /*, ni */, ni
         # -- son comentarios. Se emite literal hasta cerrar el string.
+        # Un backslash inicia un PAR ESCAPADO: en una cadena escape E...e... un backslash+comilla
+        # NO cierra el string (AIR-232/N3: un DEFAULT E backslash-comilla slash-star cerraba el
+        # string en el backslash-comilla y el slash-star comia SECURITY DEFINER/REVOKE hasta EOF
+        # -> 0 fail). SUPUESTO conservador: aplicamos el mismo trato a cualquier cadena de comilla
+        # simple; con standard_conforming_strings Postgres trata el backslash como literal, asi que
+        # reconocer backslash-comilla como escape es el comportamiento seguro que evita el truncado
+        # (a lo sumo consume un char de mas DENTRO del string, nunca fuera).
         if (instr) {
+          if (c == "\\") { out = out substr(all, i, 2); i += 2; continue }
           if (two == SQ SQ) { out = out SQ SQ; i += 2; continue }
           out = out c
           if (c == SQ) instr = 0
