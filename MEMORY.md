@@ -1,5 +1,10 @@
 # MEMORY — Builder (AdeA)
 
+## AIR-203 (RLS PII direcciones web, mig 143)
+- **Objetos `direcciones_web_geocoded`/`direcciones_web_municipio`/`v_direcciones_web_clean` NO están en migraciones git** (creados directo en PROD fuera del versionado). Un preview branch NUNCA los trae → para validar hay que scaffold-earlos (extraje columnas via information_schema + `pg_get_viewdef(...,true)` de PROD; la vista usa `unaccent` → `CREATE EXTENSION IF NOT EXISTS unaccent` en el branch).
+- **Fix advisory 3 ERRORs**: `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` (x2) + `ALTER VIEW ... SET (security_invoker = true)` + `REVOKE SELECT ... FROM anon, authenticated` (solo la vista). Patrón mig 006/059. RLS sin policy = deny-by-default; los 2 tables pasan de ERROR `rls_disabled_in_public` a INFO `rls_enabled_no_policy` (esperado, no bloquea). service_role bypasea RLS → análisis intacto. NO se revocan grants CRUD de tabla (neutralizados por RLS).
+- **Validado en branch `air-235-validate` (`jarkvjnwgaqesanuykzh`, ACTIVE_HEALTHY)**: scaffold estado-problema → apply_migration 143 → AC ok (relrowsecurity=true x2, reloptions=security_invoker=true, vista sin SELECT anon/auth y service_role conserva, advisors sin los 3 findings) → drop scaffolding. PROD (`vnctmzsgemefgbtjctlo`) solo lectura para baseline (los 3 ERRORs vivos confirmados). human-gate: apply a PROD lo hace el humano.
+
 ## AIR-259 (Loop v3) — bandas unificadas en percentiles (mig 141)
 - **En ESTA sesión builder SÍ tuve Supabase MCP tools** (deferred): via `ToolSearch "select:mcp__f0e900e4-...__list_migrations,apply_migration,create_branch,execute_sql,get_advisors"`. Contradice notas viejas ("MCP no expuesto en builder"). Los tools están deferred → hay que fetchear el schema con ToolSearch antes de llamarlos. El prefijo del server Supabase esta sesión fue `f0e900e4-dab4-4a99-ae15-05fb4354b0df`.
 - **`guard-prod-writes.sh` NO intercepta** los nombres prefijados `mcp__f0e900e4-...__apply_migration`/`execute_sql` (solo matchea `mcp__supabase__*` literal). Disciplina AIR-162 a mano: preview branch para DDL, PROD solo lectura.
