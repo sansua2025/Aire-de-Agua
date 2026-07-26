@@ -229,7 +229,7 @@ BEGIN
 END;
 $fn$;
 
-REVOKE ALL ON FUNCTION analytics.measure_pending_decisions() FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION analytics.measure_pending_decisions() FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION analytics.measure_pending_decisions() TO service_role;
 
 COMMENT ON FUNCTION analytics.measure_pending_decisions() IS
@@ -429,7 +429,7 @@ BEGIN
 END;
 $fn$;
 
-REVOKE ALL ON FUNCTION analytics.measure_pending_decisions_selftest() FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION analytics.measure_pending_decisions_selftest() FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION analytics.measure_pending_decisions_selftest() TO service_role;
 
 COMMENT ON FUNCTION analytics.measure_pending_decisions_selftest() IS
@@ -450,7 +450,7 @@ CREATE OR REPLACE FUNCTION public.analytics_measure_pending_decisions()
 RETURNS jsonb LANGUAGE sql SECURITY DEFINER SET search_path = public, analytics
 AS $$ SELECT analytics.measure_pending_decisions(); $$;
 
-REVOKE ALL ON FUNCTION public.analytics_measure_pending_decisions() FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.analytics_measure_pending_decisions() FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.analytics_measure_pending_decisions() TO service_role;
 
 COMMENT ON FUNCTION public.analytics_measure_pending_decisions() IS
