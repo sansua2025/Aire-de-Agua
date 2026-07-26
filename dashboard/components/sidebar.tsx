@@ -43,8 +43,9 @@ export function Sidebar({
 
   // INTELIGENCIA — el Cerebro / Anomalías con contador en vivo (si disponible).
   const navInteligencia: NavItem[] = [
-    { href: '/ai',        icon: 'sparkles', label: 'el Cerebro', count: counts?.pendientes ?? undefined },
-    { href: '/anomalias', icon: 'alert',    label: 'Anomalías',  count: counts?.anomalias ?? undefined },
+    { href: '/ai',          icon: 'sparkles', label: 'el Cerebro', count: counts?.pendientes ?? undefined },
+    { href: '/decisiones',  icon: 'check',    label: 'Bitácora' },
+    { href: '/anomalias',   icon: 'alert',    label: 'Anomalías',  count: counts?.anomalias ?? undefined },
   ]
   const navSistema: NavItem[] = [
     { href: '/fuentes', icon: 'grid', label: 'Fuentes de datos' },

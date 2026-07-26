@@ -45,7 +45,7 @@ export function MobileNav({ counts, freshness, userEmail, signOutSlot }: MobileN
 
   // Rutas que viven bajo "Más" (no tienen pestaña propia). Con cualquiera activa,
   // la pestaña "Más" se marca como activa.
-  const SECONDARY = ['/funnel', '/email', '/pnl', '/anomalias', '/fuentes']
+  const SECONDARY = ['/decisiones', '/funnel', '/email', '/pnl', '/anomalias', '/fuentes']
   const inSecondary = SECONDARY.some((h) => isActive(pathname, h))
 
   // Cierra la hoja al navegar (cambia el pathname).
@@ -171,6 +171,7 @@ function MoreSheet({
     freshness && freshness.some((f) => f.stale) ? 'warning' : undefined
 
   const analitica: MoreRow[] = [
+    { href: '/decisiones', label: 'Bitácora de decisiones', sub: 'Antes → después de cada decisión' },
     { href: '/funnel', label: 'Funnel de conversión', sub: 'Embudo · Amplitude' },
     { href: '/email',  label: 'Email · Klaviyo',       sub: 'Campañas · flows · entregabilidad' },
     { href: '/pnl',    label: 'P&L del período',       sub: 'Rentabilidad · unit economics' },
