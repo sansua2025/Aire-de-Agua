@@ -385,12 +385,14 @@ BEGIN
 
     -- ── Fixture BASELINE NEGATIVO (regresión AIR-133, ruta DETECTOR) ──────────
     -- Detector margen_paid_negativo (seeded/activo en mig 134): su `valor` es
-    -- roas_margen_atribuido, NEGATIVO por diseño. baseline capturado = -0.5, post
-    -- (snapshot 1999-06-15..21, gasto_meta>piso, roas_margen_atribuido=-0.2) → valor
-    -- -0.2, signo_predicho='sube'. delta_real_pct GENERATED = (-0.2-(-0.5))/(-0.5)*100
-    -- = -60. Con el divisor firmado (fix), resultado_evaluacion debe COINCIDIR con la
-    -- categoría de v_detector_hit_rate (mig 136) sobre ese mismo delta (= 'negativo').
-    -- Con el bug (ABS) el delta salía +60 → 'positivo', discrepando del hit-rate.
+    -- roas_margen_atribuido, NEGATIVO por diseño. Baseline capturado y valor post son
+    -- ambos negativos (ver el INSERT de insights/snapshot de abajo), signo_predicho
+    -- 'sube'. delta_real_pct GENERATED se deriva con divisor FIRMADO (no ABS): siendo
+    -- baseline y post negativos, el resultado queda por debajo de cero. Con el divisor
+    -- firmado (fix), resultado_evaluacion debe COINCIDIR con la categoría que
+    -- v_detector_hit_rate (mig 136) computa sobre esa misma diferencia (= 'negativo').
+    -- Con el bug (ABS) el signo se invertía a positivo → 'positivo', discrepando del
+    -- hit-rate.
     INSERT INTO public.insights (dominio, tipo, titulo, descripcion, insight_key,
       metrica_clave, valor_observado, periodo_inicio, periodo_fin, signo_predicho,
       estado_accion, score_confianza)
