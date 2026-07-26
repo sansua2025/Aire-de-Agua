@@ -35,6 +35,21 @@
   mig 086). La tabla pasa a ser allowlist (solo declara el key + doc, nunca SQL ejecutable).
   Al revisar RPCs del cerebro: cualquier EXECUTE de texto que venga de tabla/param = BLOQUEANTE.
 
+- AIR-231/AIR-86 (PR #178) — al revisar un REVOKE EXECUTE sobre una funcion SECURITY DEFINER,
+  el checklist correcto es `REVOKE ... FROM PUBLIC, anon, authenticated`. Un REVOKE que omita
+  PUBLIC es un NO-OP (anon/authenticated heredan EXECUTE via membresia implicita en PUBLIC,
+  `=X/postgres` en `pg_proc.proacl`) y deja los advisors `anon_/authenticated_security_definer_
+  function_executable` en rojo pese a "verse" corregido — asi paso desapercibido en AIR-86 (mig
+  060) y se repitio en AIR-231. Verificar con `proacl::text` o `has_function_privilege(rol,fn,
+  'EXECUTE')`, no solo leer el REVOKE literal. 2a vez que se caza este patron -> graduar a check
+  determinista (AIR-232, en curso): script que falle si una funcion `prosecdef` conserva EXECUTE
+  para PUBLIC en `pg_proc.proacl`.
+- AIR-203 (PR #179) — RLS deny-by-default es el patron correcto para PII sin exponer via API:
+  `ENABLE ROW LEVEL SECURITY` sin policies bloquea anon/authenticated aunque queden grants CRUD
+  de tabla residuales (no hace falta revocarlos aparte); `service_role` bypasea RLS (Loops/n8n
+  intactos). Para vistas que evaden RLS de tablas base: exigir `security_invoker=true` +
+  `REVOKE SELECT ... FROM anon, authenticated` sobre la vista misma.
+
 ## Patrones de error a vigilar (graduar a regla si se repiten >=2)
 - (1x) Idempotencia de ejecutor n8n basada en `$json.length` sobre respuesta HTTP de PostgREST:
   comportamiento de array-vs-item del nodo HTTP no esta verificado en el repo; preferir Code node
@@ -92,14 +107,10 @@ señal de vida/muerte (migraciones/evals largos tardan en escribir el reporte fi
 verificar actividad real del worktree (`git status`, `git log -1 --format=%cd`) y dar margen (>20 min es
 legítimo); NUNCA lanzar un 2º builder sobre el mismo worktree/rama sin confirmar que el primero murió.
 
-## Preview branch: `create_branch` YA funciona, pero MIGRATIONS_FAILED → scaffold PROD-fiel (AIR-242, actualiza lección "PaymentRequired" vieja)
-`create_branch` ya no da `PaymentRequired`; el replay de migraciones sí falla (MIGRATIONS_FAILED, igual
-que air-234/air-235 e incluso `main`), dejando el branch `ACTIVE_HEALTHY` con schema PARCIAL/temprano
-(p.ej. `insights` sin `insight_key`/`estado_accion`, sin `strategic_learnings`/`brand_config`/`analytics`).
-Patrón que funcionó en 137: 1) `execute_sql` en el branch para scaffold PROD-fiel de SOLO lo que toca la
-migración (columnas nuevas, tablas/funciones de migraciones previas relevantes, omitiendo FKs
-irrelevantes). 2) `apply_migration` de la migración nueva encima. 3) Selftest + queries de AC.
-4) `delete_branch` al terminar.
+## Preview branch: `create_branch` funciona, pero MIGRATIONS_FAILED → scaffold PROD-fiel
+Ver nota consolidada "Preview branches ... ROTO" en `MEMORY.md` raíz (§Supabase migraciones) — mismo
+patrón (`execute_sql` scaffold del delta → `apply_migration` → selftest/AC → `delete_branch`), confirmado
+repetidamente en issues del Cerebro; no reescribir el análisis aquí en cada retro.
 
 ## Checklist — aplicar a PROD ANTES de esperar verde en `evals` (AIR-241, AIR-242 — 2ª vez, graduado)
 El job CI `evals` corre selftest RPCs contra PROD real; se pone ROJO (PGRST202 / schema cache stale)
@@ -113,22 +124,13 @@ intermedio). Para todo issue del Cerebro que añada selftest RPCs:
 ## Índice único parcial + ON CONFLICT: cambio PAREADO obligatorio (AIR-242)
 Al ampliar/estrechar el predicado de un índice único parcial, el `ON CONFLICT (col) WHERE <pred>` de
 CUALQUIER upsert que lo infiera DEBE re-sincronizarse con el NUEVO predicado en la MISMA migración
-(Postgres infiere el índice por `predicate_implied_by`; si no coincide, el UPSERT aborta en runtime,
-no en apply). Verificación real: forzar un UPSERT (INSERT que cae en conflicto → DO UPDATE) con
-fixtures, no basta con que la función compile ni con 0 filas (el ON CONFLICT solo se ejercita cuando
-el INSERT realmente corre). En 137: recrear `uq_strategic_learnings_active_key` (añade 'expirado' a la
-exclusión) obligó `CREATE OR REPLACE consolidar_strategic_learnings()` con el mismo WHERE.
+(Postgres infiere por `predicate_implied_by`; si no coincide, el UPSERT aborta en runtime, no en apply).
+Verificar forzando un UPSERT real (INSERT que cae en conflicto → DO UPDATE) con fixtures — no basta con
+que la función compile ni con 0 filas.
 
-## check-docstring-rpc-loop.sh — falso positivo con decimales narrativos (AIR-242, mig 137)
-(Ya graduado AIR-97/127/135 → `scripts/agent/check-docstring-rpc-loop.sh`, CI `docstring-rpc-loop`; no
-repetir el análisis manual, el check ya compara docstring↔cuerpo.) El check extrae CUALQUIER decimal
-cerca de `score`/`actual`/`delta` en el docstring-cabecera y exige que aparezca en el cuerpo como delta
-de `score_confianza`. Un valor narrativo histórico ("score 1.013" describiendo el learning falso de
-Klaviyo — dato de negocio, no un delta que la RPC implementa) lo disparó como FAIL falso. Fix real:
-reformular el comentario para no usar literales `N.NN` narrativos en el docstring-cabecera de RPCs del
-loop; preferir cualitativos ("score alto", "por encima del umbral"). 1ª vez que se ve este falso
-positivo — si se repite, candidato a endurecer el check (ignorar decimales sin operador `+`/`-`/`=`
-inmediato); proponer como issue agent-ready, no tocar el script desde memoria/retro.
+(Nota de poda: la lección "check-docstring-rpc-loop falso positivo con decimales narrativos" ya está
+GRADUADA — `scripts/agent/check-docstring-rpc-loop.sh` exige operador `+`/`-`/`*` inmediato antes de contar
+un decimal como delta, ver AIR-257 en `MEMORY.md` raíz. No repetir el análisis aquí.)
 
 ---
 

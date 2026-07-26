@@ -42,6 +42,28 @@ jobs:
           git fetch origin main --quiet || true
           bash scripts/agent/check-docstring-rpc-loop.sh --diff origin/main
 
+  security-surface:
+    name: security-surface
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      # AIR-232 (Parte A) — superficie de seguridad de migraciones. Gradúa a gate
+      # determinista las 3 lecciones vivas de la auditoría de seguridad:
+      #   S1 SECURITY DEFINER sin REVOKE ... FROM PUBLIC (AIR-231: revocar solo de
+      #      anon/authenticated es NO-OP mientras PUBLIC conserve el grant).
+      #   S2 CREATE TABLE public.* sin ENABLE ROW LEVEL SECURITY (AIR-203 / mig 006).
+      #   S3 CREATE [MATERIALIZED] VIEW public.* sin security_invoker = true (AIR-203 / AIR-87).
+      #   S4 SECURITY DEFINER sin SET search_path explícito.
+      # El self-test prueba +/- de las 4 reglas + el caso PUBLIC + el salto por allowlist.
+      - name: Self-test del check de superficie de seguridad
+        run: bash scripts/agent/check-security-surface.selftest.sh
+      - name: Superficie de seguridad sobre el diff de migraciones
+        run: |
+          git fetch origin main --quiet || true
+          bash scripts/agent/check-security-surface.sh --diff origin/main
+
   n8n-sync:
     name: n8n-sync
     runs-on: ubuntu-latest
