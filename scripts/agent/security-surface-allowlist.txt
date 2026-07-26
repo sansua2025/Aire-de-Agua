@@ -1,0 +1,49 @@
+# Allowlist de S1 (check-security-surface.sh) — AIR-232 Parte A
+# ------------------------------------------------------------------
+# Funciones SECURITY DEFINER que están GRANT-eadas a anon/authenticated POR DISEÑO
+# (read-path del dashboard) y por eso NO llevan REVOKE ... FROM PUBLIC. Un CREATE
+# [OR REPLACE] de una de estas firmas NO dispara S1.
+#
+# DERIVACIÓN (PROD read-only, proyecto vnctmzsgemefgbtjctlo, 2026-07-25):
+#   pg_proc.prosecdef = true  +  has_function_privilege(anon|authenticated,'EXECUTE')
+#   CRUZADO con get_advisors(security): NINGUNA de estas está marcada en rojo
+#   (no hay hallazgos anon/authenticated_security_definer_function_executable ni
+#   security_definer_view vivos). Regla AIR-232: no se allowlistea nada que el
+#   advisor marque — eso se ARREGLA, no se exime.
+#
+# Todas viven en el schema `analytics` (RPCs parametrizadas del Cerebro, migs
+# 119/128/…): SECURITY DEFINER porque corren agregaciones sobre tablas con RLS,
+# con SET search_path fijo, y exponen SOLO agregados numéricos al dashboard.
+#
+# NO incluidas (verificadas en PROD, no cumplen el criterio):
+#   - public.marcar_accion_tomada        → SECDEF pero anon/auth/public = NO exec
+#                                           (ya revocada; debe llevar REVOKE, no exención).
+#   - public.match_creatives_visuals_to_products → NO es SECURITY DEFINER (S1 nunca aplica).
+#
+# Antes de añadir una firma: confírmala en PROD (secdef=true, anon/auth exec=true)
+# y que get_advisors(security) NO la marque. Formato: firma completa, una por línea.
+
+analytics.get_anomalias(p_desde date, p_hasta date, p_dominio text, p_nivel text)
+analytics.get_cerebro_stats()
+analytics.get_channels_mix(p_desde date, p_hasta date, p_canal text)
+analytics.get_detector_hit_rate()
+analytics.get_email(p_desde date, p_hasta date)
+analytics.get_fuentes_detail()
+analytics.get_funnel(p_desde date, p_hasta date, p_canal text)
+analytics.get_funnel_history(p_semanas integer)
+analytics.get_inventory_summary(p_desde date, p_hasta date)
+analytics.get_kpis(p_desde date, p_hasta date, p_canal text)
+analytics.get_paid(p_desde date, p_hasta date, p_canal text)
+analytics.get_paid_ads(p_desde date, p_hasta date)
+analytics.get_paid_daily(p_desde date, p_hasta date)
+analytics.get_paid_signal_health(p_desde date, p_hasta date)
+analytics.get_pnl_rango(p_desde date, p_hasta date)
+analytics.get_targets()
+analytics.get_top_skus(p_desde date, p_hasta date, p_limit integer, p_canal text)
+analytics.get_ventas_serie(p_desde date, p_hasta date, p_granularidad text, p_canal text)
+analytics.get_wtd_pacing(p_hoy date, p_canal text)
+
+# Mutación gobernada del loop de insights: SECDEF, anon+authenticated exec en PROD,
+# advisor-clean. p_dry_run controla efecto. Marcada para revisión de superficie en
+# AIR-261 (Parte B): evaluar si el grant a anon sigue justificado.
+analytics.marcar_insights_obsoletos(p_dry_run boolean)

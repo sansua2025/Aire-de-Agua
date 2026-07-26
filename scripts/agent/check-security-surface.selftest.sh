@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+# Self-test de check-security-surface.sh (AIR-232 Parte A).
+# Verifica +/- por cada una de las 4 reglas (S1..S4), el caso clave del literal
+# PUBLIC (lección AIR-231) y el salto por allowlist. Usa archivos temporales
+# (mktemp); NUNCA escribe en supabase/migrations/.
+# Uso: bash scripts/agent/check-security-surface.selftest.sh   (exit 0 = OK)
+set -uo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LINT="$DIR/check-security-surface.sh"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+PASS=0; FAIL=0
+ok()  { echo "ok    $1"; PASS=$((PASS+1)); }
+bad() { echo "BAD   $1"; FAIL=$((FAIL+1)); }
+run() { bash "$LINT" --file "$1" 2>&1; }   # captura ANTES de grepear (pipefail + exit 1)
+
+# ============================================================
+# S1 — SECURITY DEFINER sin REVOKE ... FROM PUBLIC
+# ============================================================
+
+# S1-neg: SECDEF con REVOKE ... FROM PUBLIC, anon, authenticated -> PASA (sin FAIL S1).
+cat > "$TMP/s1_ok_public.sql" <<'SQL'
+CREATE OR REPLACE FUNCTION public.foo(p int)
+RETURNS int LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$ SELECT p; $$;
+REVOKE EXECUTE ON FUNCTION public.foo(int) FROM PUBLIC, anon, authenticated;
+SQL
+OUT="$(run "$TMP/s1_ok_public.sql")"
+echo "$OUT" | grep -q "S1:" && bad "S1 no debe disparar con REVOKE ... FROM PUBLIC" || ok "S1 pasa con REVOKE ... FROM PUBLIC"
+
+# S1-pos (CLAVE AIR-231): REVOKE solo FROM anon, authenticated (SIN PUBLIC) -> FALLA.
+cat > "$TMP/s1_bad_nopublic.sql" <<'SQL'
+CREATE OR REPLACE FUNCTION public.foo(p int)
+RETURNS int LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$ SELECT p; $$;
+REVOKE EXECUTE ON FUNCTION public.foo(int) FROM anon, authenticated;
+SQL
+OUT="$(run "$TMP/s1_bad_nopublic.sql")"
+echo "$OUT" | grep -q "S1:.*public.foo" \
+  && ok "S1 FALLA con REVOKE ... FROM anon,authenticated SIN PUBLIC (caso AIR-231)" \
+  || bad "S1 DEBERÍA fallar sin el literal PUBLIC"
+
+# S1-pos: SECDEF sin ningún REVOKE -> FALLA.
+cat > "$TMP/s1_bad_norevoke.sql" <<'SQL'
+CREATE FUNCTION public.bar()
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$ BEGIN NULL; END; $$;
+SQL
+OUT="$(run "$TMP/s1_bad_norevoke.sql")"
+echo "$OUT" | grep -q "S1:.*public.bar" \
+  && ok "S1 FALLA sin ningún REVOKE" || bad "S1 DEBERÍA fallar sin REVOKE"
+
+# S1-allowlist: firma en allowlist (analytics.get_kpis) sin REVOKE -> NO FALLA S1.
+cat > "$TMP/s1_allow.sql" <<'SQL'
+CREATE OR REPLACE FUNCTION analytics.get_kpis(p_desde date, p_hasta date, p_canal text DEFAULT NULL)
+RETURNS TABLE(x numeric) LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, analytics
+AS $$ SELECT 1::numeric; $$;
+GRANT EXECUTE ON FUNCTION analytics.get_kpis(date, date, text) TO anon;
+SQL
+run "$TMP/s1_allow.sql" | grep -q "S1:" \
+  && bad "S1 NO debe disparar en función allowlisted (analytics.get_kpis)" \
+  || ok "S1 se salta la firma allowlisted (analytics.get_kpis)"
+
+# ============================================================
+# S4 — SECURITY DEFINER sin SET search_path
+# ============================================================
+
+# S4-pos: SECDEF sin SET search_path -> FALLA (y también S1: sin REVOKE).
+cat > "$TMP/s4_bad.sql" <<'SQL'
+CREATE OR REPLACE FUNCTION public.baz()
+RETURNS int LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1; $$;
+REVOKE EXECUTE ON FUNCTION public.baz() FROM PUBLIC;
+SQL
+OUT="$(run "$TMP/s4_bad.sql")"
+echo "$OUT" | grep -q "S4:.*public.baz" \
+  && ok "S4 FALLA sin SET search_path" || bad "S4 DEBERÍA fallar sin SET search_path"
+# El REVOKE FROM PUBLIC está presente -> S1 NO debe disparar aquí (aísla S4).
+echo "$OUT" | grep -q "S1:" && bad "S4 case: S1 no debía disparar (hay REVOKE FROM PUBLIC)" || ok "S4 case: S1 correctamente silencioso"
+
+# S4-neg: SECDEF con SET search_path + REVOKE FROM PUBLIC -> sin FAIL.
+cat > "$TMP/s4_ok.sql" <<'SQL'
+CREATE FUNCTION public.qux()
+RETURNS int LANGUAGE sql SECURITY DEFINER SET search_path = '' AS $$ SELECT 1; $$;
+REVOKE EXECUTE ON FUNCTION public.qux() FROM PUBLIC, anon, authenticated;
+SQL
+run "$TMP/s4_ok.sql" | grep -qE "FAIL" \
+  && bad "S4-neg no debía producir FAIL alguno" || ok "S4 pasa con search_path + REVOKE FROM PUBLIC"
+
+# ============================================================
+# S2 — CREATE TABLE public.<x> sin ENABLE ROW LEVEL SECURITY
+# ============================================================
+
+# S2-pos: CREATE TABLE public sin RLS -> FALLA.
+cat > "$TMP/s2_bad.sql" <<'SQL'
+CREATE TABLE public.secreta (id int primary key, dato text);
+SQL
+OUT="$(run "$TMP/s2_bad.sql")"
+echo "$OUT" | grep -q "S2:.*public.secreta" \
+  && ok "S2 FALLA en CREATE TABLE public sin RLS" || bad "S2 DEBERÍA fallar sin ENABLE RLS"
+
+# S2-neg: CREATE TABLE public CON ENABLE RLS -> sin FAIL.
+cat > "$TMP/s2_ok.sql" <<'SQL'
+CREATE TABLE public.segura (id int primary key, dato text);
+ALTER TABLE public.segura ENABLE ROW LEVEL SECURITY;
+SQL
+run "$TMP/s2_ok.sql" | grep -qE "FAIL" \
+  && bad "S2-neg no debía producir FAIL" || ok "S2 pasa con ENABLE ROW LEVEL SECURITY"
+
+# S2-neg (schema no-public): CREATE TABLE analytics.x sin RLS -> NO dispara S2.
+cat > "$TMP/s2_analytics.sql" <<'SQL'
+CREATE TABLE analytics.staging (id int, v numeric);
+SQL
+run "$TMP/s2_analytics.sql" | grep -q "S2:" \
+  && bad "S2 solo aplica a public.*, no a analytics.*" || ok "S2 no dispara en analytics.* (acotado a public)"
+
+# ============================================================
+# S3 — CREATE [MATERIALIZED] VIEW public.<x> sin security_invoker
+# ============================================================
+
+# S3-pos: CREATE VIEW public sin security_invoker -> FALLA.
+cat > "$TMP/s3_bad.sql" <<'SQL'
+CREATE VIEW public.v_expuesta AS SELECT id, dato FROM public.segura;
+SQL
+OUT="$(run "$TMP/s3_bad.sql")"
+echo "$OUT" | grep -q "S3:.*public.v_expuesta" \
+  && ok "S3 FALLA en CREATE VIEW public sin security_invoker" || bad "S3 DEBERÍA fallar sin security_invoker"
+
+# S3-neg: CREATE VIEW public CON security_invoker = true (WITH inline) -> sin FAIL.
+cat > "$TMP/s3_ok_inline.sql" <<'SQL'
+CREATE VIEW public.v_ok WITH (security_invoker = true) AS SELECT 1 AS x;
+SQL
+run "$TMP/s3_ok_inline.sql" | grep -qE "FAIL" \
+  && bad "S3-neg (inline) no debía producir FAIL" || ok "S3 pasa con WITH (security_invoker = true)"
+
+# S3-neg: security_invoker vía ALTER VIEW aparte -> sin FAIL.
+cat > "$TMP/s3_ok_alter.sql" <<'SQL'
+CREATE VIEW public.v_ok2 AS SELECT 1 AS x;
+ALTER VIEW public.v_ok2 SET (security_invoker = true);
+SQL
+run "$TMP/s3_ok_alter.sql" | grep -qE "FAIL" \
+  && bad "S3-neg (ALTER) no debía producir FAIL" || ok "S3 pasa con ALTER VIEW ... SET (security_invoker = true)"
+
+# S3-neg (regresión analytics.view_dashboard_*): NO debe fallar (acotado a public).
+cat > "$TMP/s3_analytics_dashboard.sql" <<'SQL'
+CREATE OR REPLACE VIEW analytics.view_dashboard_kpis AS SELECT 1 AS x;
+SQL
+run "$TMP/s3_analytics_dashboard.sql" | grep -q "S3:" \
+  && bad "S3 no debe disparar en analytics.view_dashboard_* (acotado a public)" \
+  || ok "S3 no dispara en analytics.view_dashboard_* (regresión OK)"
+
+# ============================================================
+# Regresión: migraciones reales 142 / 143 NO deben enrojecer.
+# ============================================================
+REPO="$(cd "$DIR/../.." && pwd)"
+for m in 142_air231_revoke_execute_secdef_rpcs 143_air203_rls_direcciones_web_pii; do
+  p="$REPO/supabase/migrations/${m}.sql"
+  [ -f "$p" ] || { ok "skip regresión ${m} (no existe)"; continue; }
+  if run "$p" | grep -qE "FAIL"; then
+    bad "migración real ${m} produjo FAIL (falso positivo)"
+  else
+    ok "migración real ${m} sin FAIL"
+  fi
+done
+
+echo "---"
+echo "selftest: ${PASS} ok / ${FAIL} bad"
+[ "$FAIL" -eq 0 ]

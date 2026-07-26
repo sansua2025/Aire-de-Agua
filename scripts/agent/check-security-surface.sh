@@ -1,0 +1,206 @@
+#!/usr/bin/env bash
+# Superficie de seguridad de migraciones — guardarraíl CI determinista (AIR-232 Parte A).
+#
+# Gradúa a check las 3 lecciones vivas de la auditoría de seguridad (AIR-231/AIR-203/AIR-87):
+# lo que se repite en review de seguridad pasa a ser gate determinista, no prompt.
+# Se dispara SOLO sobre las líneas AÑADIDAS de supabase/migrations/*.sql (una migración
+# NUEVA introduce todo su contenido como añadido). No es retroactivo: el SQL histórico ya
+# aplicado en PROD no entra al diff, así que no lo enrojece.
+#
+# 4 reglas (todas FAIL, bloquean el merge):
+#   S1  CREATE [OR REPLACE] FUNCTION ... SECURITY DEFINER  sin un
+#       REVOKE EXECUTE ON FUNCTION <fn> ... FROM ... PUBLIC en la MISMA migración.
+#       Exige el literal PUBLIC (lección AIR-231 / mig 142: revocar solo de
+#       anon/authenticated es un NO-OP mientras PUBLIC conserve el grant — cualquier
+#       rol ejecuta la función vía la membresía implícita en PUBLIC). Excepción por
+#       allowlist de firma (security-surface-allowlist.txt): RPCs analytics.* que
+#       están GRANT-eadas a anon/authenticated por diseño (read-path del dashboard).
+#   S2  CREATE TABLE public.<x>  (o  ALTER TABLE ... SET SCHEMA public)  sin su
+#       ALTER TABLE ... ENABLE ROW LEVEL SECURITY. RLS deny-by-default es el patrón
+#       de la base (mig 006). Sin RLS, anon key + URL del proyecto lee/escribe la tabla.
+#   S3  CREATE [MATERIALIZED] VIEW public.<x>  sin  security_invoker = true. Una vista
+#       SECURITY DEFINER (el default) evalúa permisos del owner y salta el RLS de las
+#       tablas base (lección AIR-203 / AIR-87). Acotado a public. (por diseño excluye
+#       analytics.view_dashboard_* — el dashboard las consume por service_role).
+#   S4  CREATE FUNCTION ... SECURITY DEFINER  sin  SET search_path  explícito. Un
+#       search_path mutable en una función que corre como owner es un vector de
+#       escalada (advisor function_search_path_mutable).
+#
+# Uso (misma interfaz que check-data-rules.sh / check-docstring-rpc-loop.sh):
+#   check-security-surface.sh --file <ruta>...   # archivos .sql concretos
+#   check-security-surface.sh --diff <base>      # migraciones cambiadas vs base (origin/main)
+# Salida: líneas "FAIL ..." (bloquean, exit 1). Sin FAIL -> exit 0.
+set -uo pipefail
+
+MODE="${1:---help}"; shift || true
+FILES=()
+case "$MODE" in
+  --file) FILES=("$@") ;;
+  --diff)
+    BASE="${1:?Uso: check-security-surface.sh --diff <base>}"
+    while IFS= read -r f; do [ -n "$f" ] && FILES+=("$f"); done \
+      < <(git diff --name-only --diff-filter=ACMR "$BASE"...HEAD -- 'supabase/migrations/*.sql' 2>/dev/null)
+    ;;
+  *) echo "Uso: check-security-surface.sh --file <ruta>... | --diff <base>"; exit 2 ;;
+esac
+
+FAILS=0
+fail() { echo "FAIL  $1"; FAILS=$((FAILS+1)); }
+
+ALLOWLIST_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/security-surface-allowlist.txt"
+
+# allow_hit <qualname>: true si la firma (schema.fn) está en la allowlist de S1.
+# Compara el nombre calificado (todo antes del primer '(' de la firma), sin comillas
+# y en minúsculas. Un '#' inicia comentario en la allowlist.
+allow_hit() {
+  local q="$1" line name
+  [ -f "$ALLOWLIST_FILE" ] || return 1
+  while IFS= read -r line; do
+    line="${line%%#*}"
+    line="$(printf '%s' "$line" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+    [ -z "$line" ] && continue
+    name="$(printf '%s' "$line" | sed -E 's/\(.*//' | tr -d '"' | tr 'A-Z' 'a-z' | sed -E 's/[[:space:]]+$//')"
+    [ "$name" = "$q" ] && return 0
+  done < "$ALLOWLIST_FILE"
+  return 1
+}
+
+# strip_sql <file>: normaliza el .sql a UNA sola línea apta para partir por ';':
+#   - reemplaza cada cuerpo dollar-quoted ($$...$$ / $tag$...$tag$) por ' ASBODY '
+#     (los ';' internos del cuerpo de una función no deben partir statements);
+#   - elimina comentarios de línea '--' DESPUÉS de quitar cuerpos (para no desincronizar
+#     el tracker de dollar-quoting con un '--' que viviera dentro de un cuerpo);
+#   - colapsa saltos de línea/tabs a espacios simples.
+# El tracker de dollar-quoting se hace a mano (awk) porque los cuerpos son multilínea y
+# pueden contener '$1', '$$' anidados con tag distinto, etc.
+strip_sql() {
+  awk '
+    { all = all $0 "\n" }
+    END {
+      n = length(all); i = 1; out = ""; intag = 0; tag = ""
+      while (i <= n) {
+        c = substr(all, i, 1)
+        if (c == "$") {
+          j = i + 1; t = ""
+          while (j <= n && substr(all, j, 1) ~ /[a-zA-Z0-9_]/) { t = t substr(all, j, 1); j++ }
+          if (j <= n && substr(all, j, 1) == "$") {
+            if (!intag)        { intag = 1; tag = t; out = out " ASBODY "; i = j + 1; continue }
+            else if (t == tag) { intag = 0;          i = j + 1; continue }
+            else               {                     i = j + 1; continue }
+          }
+        }
+        if (!intag) out = out c
+        i++
+      }
+      print out
+    }
+  ' "$1" | sed -E 's/--.*$//' | tr '\n\t' '  ' | tr -s ' '
+}
+
+for f in ${FILES[@]+"${FILES[@]}"}; do
+  [ -f "$f" ] || continue
+  case "$f" in *.sql) ;; *) continue ;; esac
+
+  # ADDED: superficie del GATILLO. --diff -> solo líneas añadidas (la regla solo se
+  # dispara cuando el PR INTRODUCE el patrón). --file -> archivo completo.
+  if [ "$MODE" = "--diff" ]; then
+    ADDED="$(git diff "$BASE"...HEAD -- "$f" 2>/dev/null | grep -E '^\+' | grep -vE '^\+\+\+')"
+  else
+    ADDED="$(cat "$f")"
+  fi
+  # in_added <regex-egrep>: true si el patrón aparece (case-insensitive) en las líneas
+  # añadidas. Los comentarios '--' se ignoran para que un 'SECURITY DEFINER' citado en
+  # una cabecera no gatille (mig 142 documenta "6 funciones SECURITY DEFINER").
+  ADDED_NC="$(printf '%s' "$ADDED" | sed -E 's/--.*$//')"
+  in_added() { printf '%s' "$ADDED_NC" | grep -qiE "$1"; }
+
+  # Statements bodyless del archivo COMPLETO (el COMPLEMENTO de cada regla —REVOKE,
+  # ENABLE RLS, security_invoker— puede vivir en cualquier statement de la misma
+  # migración, no necesariamente pegado al CREATE).
+  FLAT="$(strip_sql "$f")"
+  IFS=';' read -ra STMTS <<< "$FLAT"
+
+  for stmt in "${STMTS[@]}"; do
+    slc="$(printf '%s' "$stmt" | tr 'A-Z' 'a-z')"
+
+    # ---------------- S1 + S4: funciones SECURITY DEFINER ----------------
+    if printf '%s' "$slc" | grep -qE 'create[[:space:]]+(or[[:space:]]+replace[[:space:]]+)?function[[:space:]]' \
+       && printf '%s' "$slc" | grep -qE 'security[[:space:]]+definer'; then
+      qual="$(printf '%s' "$stmt" | grep -oiE 'create[[:space:]]+(or[[:space:]]+replace[[:space:]]+)?function[[:space:]]+[a-zA-Z0-9_.\"]+' \
+              | head -1 | sed -E 's/.*function[[:space:]]+//I' | tr -d '"' | tr 'A-Z' 'a-z')"
+      [ -z "$qual" ] && continue
+      short="${qual##*.}"
+      # GATILLO: la función SECDEF fue introducida por el diff (nombre + 'security definer'
+      # en líneas añadidas). Evita disparar por un statement preexistente de una migración
+      # apenas rozada por el PR (las migraciones son inmutables, pero somos precisos).
+      in_added 'security[[:space:]]+definer' && in_added "(^|[^a-zA-Z0-9_])${short}([^a-zA-Z0-9_]|\$)" || continue
+
+      # S4: SET search_path explícito en la MISMA definición (bodyless conserva la cabecera).
+      if ! printf '%s' "$slc" | grep -qE 'set[[:space:]]+search_path'; then
+        fail "$f — S4: función SECURITY DEFINER '${qual}' sin 'SET search_path' explícito (search_path mutable = vector de escalada)."
+      fi
+
+      # S1: REVOKE ... FROM ... PUBLIC para esta función en la misma migración.
+      if allow_hit "$qual"; then
+        : # allowlisted: GRANT a anon/authenticated por diseño (read-path dashboard).
+      else
+        revoke_ok=0
+        for r in "${STMTS[@]}"; do
+          rlc="$(printf '%s' "$r" | tr 'A-Z' 'a-z')"
+          printf '%s' "$rlc" | grep -qE 'revoke[[:space:]]+execute[[:space:]]+on[[:space:]]+function' || continue
+          printf '%s' "$rlc" | grep -qE "(^|[^a-zA-Z0-9_])${short}([^a-zA-Z0-9_]|\$)" || continue
+          # El literal PUBLIC debe estar en la lista FROM (no en el 'public.' del schema,
+          # que va ANTES de 'from'). Cortamos en el primer ' from ' y buscamos 'public'.
+          case " $rlc " in *" from "*) frompart="${rlc#* from }" ;; *) continue ;; esac
+          printf '%s' "$frompart" | grep -qwE 'public' && revoke_ok=1
+        done
+        if [ "$revoke_ok" -eq 0 ]; then
+          fail "$f — S1: función SECURITY DEFINER '${qual}' sin 'REVOKE EXECUTE ON FUNCTION ${qual} ... FROM ... PUBLIC' en la misma migración (revocar solo de anon/authenticated es NO-OP; ver AIR-231). Si es read-path legítimo, agrégala a security-surface-allowlist.txt."
+        fi
+      fi
+    fi
+
+    # ---------------- S2: tablas public sin RLS ----------------
+    tname=""
+    if printf '%s' "$slc" | grep -qE 'create[[:space:]]+table[[:space:]]+(if[[:space:]]+not[[:space:]]+exists[[:space:]]+)?public\.'; then
+      tname="$(printf '%s' "$stmt" | grep -oiE 'create[[:space:]]+table[[:space:]]+(if[[:space:]]+not[[:space:]]+exists[[:space:]]+)?public\.[a-zA-Z0-9_.\"]+' \
+               | head -1 | sed -E 's/.*public\.//' | tr -d '"' | tr 'A-Z' 'a-z')"
+    elif printf '%s' "$slc" | grep -qE 'alter[[:space:]]+table[[:space:]].*set[[:space:]]+schema[[:space:]]+public'; then
+      tname="$(printf '%s' "$stmt" | grep -oiE 'alter[[:space:]]+table[[:space:]]+(only[[:space:]]+)?[a-zA-Z0-9_.\"]+' \
+               | head -1 | sed -E 's/.*table[[:space:]]+(only[[:space:]]+)?//I' | tr -d '"' | tr 'A-Z' 'a-z')"
+      tname="${tname##*.}"
+    fi
+    if [ -n "$tname" ]; then
+      if in_added "(create[[:space:]]+table|set[[:space:]]+schema)" && in_added "(^|[^a-zA-Z0-9_])${tname}([^a-zA-Z0-9_]|\$)"; then
+        rls_ok=0
+        for t in "${STMTS[@]}"; do
+          tlc="$(printf '%s' "$t" | tr 'A-Z' 'a-z')"
+          printf '%s' "$tlc" | grep -qE 'enable[[:space:]]+row[[:space:]]+level[[:space:]]+security' || continue
+          printf '%s' "$tlc" | grep -qE "(^|[^a-zA-Z0-9_])${tname}([^a-zA-Z0-9_]|\$)" && rls_ok=1
+        done
+        [ "$rls_ok" -eq 0 ] && fail "$f — S2: tabla public.${tname} sin 'ALTER TABLE ... ENABLE ROW LEVEL SECURITY' en la migración (RLS deny-by-default; ver mig 006 / AIR-203)."
+      fi
+    fi
+
+    # ---------------- S3: vistas public sin security_invoker ----------------
+    if printf '%s' "$slc" | grep -qE 'create[[:space:]]+(or[[:space:]]+replace[[:space:]]+)?(materialized[[:space:]]+)?view[[:space:]]+(if[[:space:]]+not[[:space:]]+exists[[:space:]]+)?public\.'; then
+      vname="$(printf '%s' "$stmt" | grep -oiE 'create[[:space:]]+(or[[:space:]]+replace[[:space:]]+)?(materialized[[:space:]]+)?view[[:space:]]+(if[[:space:]]+not[[:space:]]+exists[[:space:]]+)?public\.[a-zA-Z0-9_.\"]+' \
+               | head -1 | sed -E 's/.*public\.//' | tr -d '"' | tr 'A-Z' 'a-z')"
+      [ -z "$vname" ] && continue
+      if in_added 'create[[:space:]]+(or[[:space:]]+replace[[:space:]]+)?(materialized[[:space:]]+)?view' && in_added "(^|[^a-zA-Z0-9_])${vname}([^a-zA-Z0-9_]|\$)"; then
+        si_ok=0
+        for v in "${STMTS[@]}"; do
+          vlc="$(printf '%s' "$v" | tr 'A-Z' 'a-z')"
+          printf '%s' "$vlc" | grep -qE 'security_invoker[[:space:]]*=[[:space:]]*true' || continue
+          printf '%s' "$vlc" | grep -qE "(^|[^a-zA-Z0-9_])${vname}([^a-zA-Z0-9_]|\$)" && si_ok=1
+        done
+        [ "$si_ok" -eq 0 ] && fail "$f — S3: vista public.${vname} sin 'security_invoker = true' (una vista SECURITY DEFINER salta el RLS de las tablas base; ver AIR-203 / AIR-87)."
+      fi
+    fi
+  done
+done
+
+echo "---"
+echo "security-surface: ${FAILS} fail (archivos: ${#FILES[@]})"
+[ "$FAILS" -gt 0 ] && exit 1
+exit 0
