@@ -236,6 +236,72 @@ echo "$OUT" | grep -q "S1:.*analytics.get_kpis" \
   || bad "V7 DEBERÍA fallar: overload de nombre allowlisted queda exento por qualname"
 
 # ============================================================
+# AIR-232 (Parte A, 2ª ronda): 2 vectores NUEVOS del security-reviewer.
+#   N1 — '/*' o '--' dentro de un string '...' evadía el stripping de comentarios.
+#   N2 — allowlist por aridad (no por firma de tipos): overload de igual aridad y
+#        distinto tipo de un nombre allowlisted quedaba exento.
+# ============================================================
+
+# N1a — DEFAULT '/*' : el '/*' vive en un string; NO es comentario. Antes borraba
+# SECURITY DEFINER/cuerpo/REVOKE hasta EOF -> 0 fail. Ahora S1 FALLA (sin REVOKE).
+cat > "$TMP/n1a_slash_star_in_string.sql" <<'SQL'
+CREATE OR REPLACE FUNCTION public.evil_n1b(p text DEFAULT '/*')
+RETURNS int LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$ SELECT 1; $$;
+SQL
+OUT="$(run "$TMP/n1a_slash_star_in_string.sql")"
+echo "$OUT" | grep -q "S1:.*public.evil_n1b" \
+  && ok "N1a FALLA: DEFAULT '/*' en string no evade (string-aware)" \
+  || bad "N1a DEBERÍA fallar: '/*' dentro de string '...' evade el stripping"
+
+# N1b — DEFAULT '--' en la MISMA línea que SECURITY DEFINER. El '--' vive en un string;
+# antes (2º strip 'sed s/--.*$//') borraba el resto de la línea -> evadía. Ahora S1 FALLA.
+cat > "$TMP/n1b_dashdash_in_string.sql" <<'SQL'
+CREATE OR REPLACE FUNCTION public.evil_n1c(p text DEFAULT '--') RETURNS int LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$ SELECT 1; $$;
+SQL
+OUT="$(run "$TMP/n1b_dashdash_in_string.sql")"
+echo "$OUT" | grep -q "S1:.*public.evil_n1c" \
+  && ok "N1b FALLA: DEFAULT '--' en string (misma línea) no evade" \
+  || bad "N1b DEBERÍA fallar: '--' dentro de string '...' borra el resto de la línea"
+
+# N1-control — un '/*' de comentario REAL (fuera de string) SÍ se strippea y el caso sano
+# (con REVOKE FROM PUBLIC + search_path) PASA sin FAIL. Asegura que el fix no rompe el
+# stripping legítimo de comentarios.
+cat > "$TMP/n1_control_real_comment.sql" <<'SQL'
+/* comentario de bloque real: crea RPC de dashboard */
+CREATE OR REPLACE FUNCTION public.sano_n1(p int)
+RETURNS int LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$ SELECT p; $$;
+REVOKE EXECUTE ON FUNCTION public.sano_n1(int) FROM PUBLIC, anon, authenticated;
+SQL
+run "$TMP/n1_control_real_comment.sql" | grep -qE "FAIL" \
+  && bad "N1-control no debía producir FAIL (comentario real + caso sano)" \
+  || ok "N1-control PASA: comentario /* */ real se strippea, caso sano sin FAIL"
+
+# N2 — overload de un nombre allowlisted (analytics.get_funnel) con IGUAL aridad (3) pero
+# DISTINTO tipo (text,text,text vs date,date,text). Antes exento por aridad -> 0 fail.
+# Ahora S1 FALLA (la firma canónica de tipos no coincide con la allowlist).
+cat > "$TMP/n2_overload_wrong_types.sql" <<'SQL'
+CREATE OR REPLACE FUNCTION analytics.get_funnel(a text, b text, c text)
+RETURNS int LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$ SELECT 1; $$;
+GRANT EXECUTE ON FUNCTION analytics.get_funnel(text,text,text) TO PUBLIC;
+SQL
+OUT="$(run "$TMP/n2_overload_wrong_types.sql")"
+echo "$OUT" | grep -q "S1:.*analytics.get_funnel" \
+  && ok "N2 FALLA: overload get_funnel(text,text,text) NO exento (allowlist por tipos)" \
+  || bad "N2 DEBERÍA fallar: overload de igual aridad y distinto tipo queda exento"
+
+# N2-control — la firma allowlisted EXACTA (date,date,text, con nombres/DEFAULT/alias)
+# sigue exenta: NO debe disparar S1. Verifica que el match por tipos canónicos no produce
+# falso positivo sobre el read-path legítimo del dashboard.
+cat > "$TMP/n2_control_exact_sig.sql" <<'SQL'
+CREATE OR REPLACE FUNCTION analytics.get_funnel(p_desde date, p_hasta date, p_canal text DEFAULT NULL)
+RETURNS int LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, analytics AS $$ SELECT 1; $$;
+GRANT EXECUTE ON FUNCTION analytics.get_funnel(date, date, text) TO anon;
+SQL
+run "$TMP/n2_control_exact_sig.sql" | grep -q "S1:" \
+  && bad "N2-control: la firma allowlisted exacta NO debía disparar S1" \
+  || ok "N2-control PASA: firma allowlisted exacta (date,date,text) sigue exenta"
+
+# ============================================================
 # Regresión: migraciones reales 142 / 143 NO deben enrojecer.
 # ============================================================
 REPO="$(cd "$DIR/../.." && pwd)"

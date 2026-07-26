@@ -86,14 +86,109 @@ paren_args() {
   printf '%s' "$out"
 }
 
-# allow_hit <qualname> <aridad>: true si la FIRMA COMPLETA (schema.fn + aridad) está en
-# la allowlist de S1. Matchea por qualname Y aridad — NO solo por nombre (AIR-232/V7): un
-# overload peligroso de un nombre allowlisted (p.ej. analytics.get_kpis(evil text), aridad
-# 1, vs la firma legítima de aridad 3) NO queda exento. La aridad se usa como firma de
-# args (ver argcount) por robustez frente a alias de tipos. Un '#' inicia comentario.
+# is_type_word <token>: true si <token> es la PRIMERA palabra de un nombre de tipo de
+# Postgres (no un nombre de parámetro). Se usa para distinguir 'p_desde date' (nombre +
+# tipo) de 'timestamp with time zone' (tipo multi-palabra sin nombre).
+is_type_word() {
+  case "$1" in
+    int|int2|int4|int8|integer|smallint|bigint|bool|boolean|text|varchar|char|character|\
+    numeric|decimal|real|float|float4|float8|double|precision|date|time|timestamp|timestamptz|timetz|\
+    interval|json|jsonb|uuid|bytea|money|name|oid|xml|cidr|inet|macaddr|macaddr8|bit|\
+    serial|bigserial|smallserial|point|line|lseg|box|path|polygon|circle|tsvector|tsquery|\
+    hstore|anyelement|anyarray|anynonarray|record|void|trigger) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# canon_alias <tipo>: normaliza alias de tipos de Postgres a una forma canónica única
+# (int/int4->integer, int8->bigint, int2->smallint, bool->boolean, varchar/character
+# varying->character varying, numeric/decimal->numeric, float8/float->double precision,
+# float4->real, timestamptz->timestamp with time zone, timetz->time with time zone, etc.).
+# Descarta modificadores de longitud/precisión (numeric(10,2)->numeric) y preserva '[]'.
+canon_alias() {
+  local t arr=""
+  t="$(printf '%s' "$1" | tr 'A-Z' 'a-z' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' | tr -s ' ')"
+  case "$t" in *'[]') arr="[]"; t="$(printf '%s' "${t%\[\]}" | sed -E 's/[[:space:]]+$//')" ;; esac
+  t="$(printf '%s' "$t" | sed -E 's/\([^)]*\)//g; s/[[:space:]]+$//')"
+  case "$t" in
+    int|int4)                                    t='integer' ;;
+    int8)                                        t='bigint' ;;
+    int2)                                        t='smallint' ;;
+    bool)                                        t='boolean' ;;
+    varchar|'character varying')                 t='character varying' ;;
+    decimal|numeric)                             t='numeric' ;;
+    float8|float|'double precision')             t='double precision' ;;
+    float4|real)                                 t='real' ;;
+    timestamptz|'timestamp with time zone')      t='timestamp with time zone' ;;
+    timestamp|'timestamp without time zone')     t='timestamp without time zone' ;;
+    timetz|'time with time zone')                t='time with time zone' ;;
+    time|'time without time zone')               t='time without time zone' ;;
+  esac
+  printf '%s%s' "$t" "$arr"
+}
+
+# canon_one_type <arg>: tipo canónico de UN argumento. Descarta 'DEFAULT ...'/'= ...',
+# el modo (IN/INOUT/VARIADIC; OUT se excluye de la firma de identidad -> ''), y el nombre
+# de parámetro (identificador simple seguido de espacio que NO sea un type word). El resto
+# se normaliza con canon_alias. Alinea con pg_get_function_identity_arguments.
+canon_one_type() {
+  local s mode="" first
+  s="$(printf '%s' "$1" | tr 'A-Z' 'a-z' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' | tr -s ' ')"
+  [ -z "$s" ] && { printf ''; return; }
+  s="$(printf '%s' "$s" | sed -E 's/[[:space:]]+default[[:space:]]+.*$//; s/[[:space:]]*=[[:space:]]*.*$//')"
+  case "$s" in
+    'in '*)       s="${s#in }" ;;
+    'out '*)      printf ''; return ;;
+    'inout '*)    s="${s#inout }" ;;
+    'variadic '*) s="${s#variadic }"; mode="variadic " ;;
+  esac
+  s="$(printf '%s' "$s" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' | tr -s ' ')"
+  first="$(printf '%s' "$s" | sed -E 's/^([a-z_][a-z0-9_]*)[[:space:]].*/\1/')"
+  if [ "$first" != "$s" ] && ! is_type_word "$first"; then
+    s="$(printf '%s' "$s" | sed -E 's/^[a-z_][a-z0-9_]*[[:space:]]+//')"
+  fi
+  printf '%s%s' "$mode" "$(canon_alias "$s")"
+}
+
+# canon_sig <arglist>: FIRMA canónica de tipos de una lista de argumentos, tipos
+# separados por ',' (ignora nombres, DEFAULT y OUT; alias normalizados). '' -> ''.
+# Es la firma de identidad normalizada usada para matchear allowlist por TIPOS (no solo
+# por aridad — AIR-232/N2: un overload de misma aridad y distinto tipo NO queda exento).
+canon_sig() {
+  local a c depth=0 i cur="" out="" first=1
+  a="$(printf '%s' "$1" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+  [ -z "$a" ] && { printf ''; return; }
+  local -a parts=()
+  for (( i=0; i<${#a}; i++ )); do
+    c="${a:i:1}"
+    case "$c" in
+      '('|'[') depth=$((depth+1)); cur="$cur$c" ;;
+      ')'|']') depth=$((depth-1)); cur="$cur$c" ;;
+      ',') if [ "$depth" -eq 0 ]; then parts+=("$cur"); cur=""; else cur="$cur$c"; fi ;;
+      *) cur="$cur$c" ;;
+    esac
+  done
+  parts+=("$cur")
+  local p ct
+  for p in "${parts[@]}"; do
+    ct="$(canon_one_type "$p")"
+    [ -z "$ct" ] && continue
+    if [ "$first" -eq 1 ]; then out="$ct"; first=0; else out="$out,$ct"; fi
+  done
+  printf '%s' "$out"
+}
+
+# allow_hit <qualname> <aridad> <arglist-crudo>: true si la FIRMA COMPLETA (schema.fn +
+# firma canónica de TIPOS) está en la allowlist de S1. Matchea por qualname Y tipos
+# canónicos — NO solo por nombre (AIR-232/V7) ni solo por aridad (AIR-232/N2): un overload
+# peligroso de un nombre allowlisted con DISTINTO tipo a igual aridad (p.ej.
+# analytics.get_funnel(text,text,text) vs la firma legítima (date,date,text)) NO queda
+# exento. La aridad se usa como pre-filtro rápido; el match exige tipos canónicos iguales.
+# Un '#' inicia comentario.
 allow_hit() {
-  local q="$1" ar="$2" line lqual largs
+  local q="$1" ar="$2" csig="$3" line lqual largs
   [ -f "$ALLOWLIST_FILE" ] || return 1
+  csig="$(canon_sig "$csig")"
   while IFS= read -r line; do
     line="${line%%#*}"
     line="$(printf '%s' "$line" | tr 'A-Z' 'a-z' | tr -d '"' \
@@ -105,7 +200,9 @@ allow_hit() {
       *"("*) largs="$(printf '%s' "$line" | sed -E 's/^[^(]*\(//; s/\)[^)]*$//')" ;;
       *) largs="" ;;
     esac
-    [ "$(argcount "$largs")" = "$ar" ] && return 0
+    # Pre-filtro por aridad; match definitivo por firma canónica de tipos.
+    [ "$(argcount "$largs")" = "$ar" ] || continue
+    [ "$(canon_sig "$largs")" = "$csig" ] && return 0
   done < "$ALLOWLIST_FILE"
   return 1
 }
@@ -114,22 +211,39 @@ allow_hit() {
 #   - reemplaza cada cuerpo dollar-quoted ($$...$$ / $tag$...$tag$) por ' ASBODY '
 #     (los ';' internos del cuerpo de una función no deben partir statements);
 #   - elimina comentarios de BLOQUE '/* ... */' (multilínea) y de LÍNEA '--' que vivan
-#     FUERA de un cuerpo dollar-quoted (en Postgres un '/* */' es whitespace: sin esto,
-#     'SECURITY /*x*/ DEFINER' evadía la detección — AIR-232/V1);
+#     FUERA de un cuerpo dollar-quoted Y FUERA de un string de comilla simple (en Postgres
+#     un '/* */' es whitespace: sin esto, 'SECURITY /*x*/ DEFINER' evadía la detección —
+#     AIR-232/V1);
 #   - colapsa saltos de línea/tabs a espacios (une statements partidos en varias líneas
 #     -> 'SECURITY\nDEFINER' se detecta como uno solo — AIR-232/V2);
 #   - quita comillas dobles y colapsa espacios alrededor de '.' para normalizar el
 #     qualifier de schema ("public".x, public . x -> public.x — AIR-232/V3,V4,V5).
-# El tracker de dollar-quoting y de comentarios se hace a mano (awk) porque los cuerpos
-# son multilínea; un '/*' o '--' DENTRO de un cuerpo NO es comentario y no debe tocarse.
+# El tracker de dollar-quoting, de STRINGS de comilla simple y de comentarios se hace a
+# mano (awk, char-a-char) porque los cuerpos y strings son multilínea. Precedencia del
+# state-machine: cuerpo dollar-quoted > string '...' > comentario. Un '/*', '*/' o '--'
+# DENTRO de un cuerpo o de un string NO es comentario y no debe tocarse (AIR-232/N1: un
+# "DEFAULT '/*'" o "DEFAULT '--'" borraba SECURITY DEFINER/cuerpo/REVOKE hasta EOF).
+# NOTA: NO hay un segundo strip de '--' fuera de awk — reintroduciría el hueco del '--'
+# dentro de un string; el awk ya elimina TODO comentario de línea correctamente.
+# SQ: la comilla simple se pasa como variable awk (-v) — el shell la sustituye literal
+# dentro de "..." — para no depender de escapes hex/octal (\x27) que mawk antiguo no soporta.
 norm_stream() {
-  awk '
+  awk -v SQ="'" '
     { all = all $0 "\n" }
     END {
-      n = length(all); i = 1; out = ""; intag = 0; tag = ""
+      n = length(all); i = 1; out = ""; intag = 0; tag = ""; instr = 0
       while (i <= n) {
         c = substr(all, i, 1)
         two = substr(all, i, 2)
+        # Dentro de un string de comilla simple (nunca a la vez que un cuerpo dollar): la
+        # comilla doblada ('' -> SQ SQ) es un escape (sigue en el string); ni /*, ni */, ni
+        # -- son comentarios. Se emite literal hasta cerrar el string.
+        if (instr) {
+          if (two == SQ SQ) { out = out SQ SQ; i += 2; continue }
+          out = out c
+          if (c == SQ) instr = 0
+          i++; continue
+        }
         if (!intag && two == "/*") {
           i += 2
           while (i <= n && substr(all, i, 2) != "*/") i++
@@ -139,6 +253,8 @@ norm_stream() {
           while (i <= n && substr(all, i, 1) != "\n") i++
           continue
         }
+        # Un string de comilla simple solo ARRANCA fuera de un cuerpo dollar-quoted.
+        if (!intag && c == SQ) { instr = 1; out = out c; i++; continue }
         if (c == "$") {
           j = i + 1; t = ""
           while (j <= n && substr(all, j, 1) ~ /[a-zA-Z0-9_]/) { t = t substr(all, j, 1); j++ }
@@ -153,7 +269,7 @@ norm_stream() {
       }
       print out
     }
-  ' | sed -E 's/--.*$//' | tr '\n\t' '  ' | tr -d '"' \
+  ' | tr '\n\t' '  ' | tr -d '"' \
     | sed -E 's/[[:space:]]*\.[[:space:]]*/./g' | tr -s ' '
 }
 strip_sql() { norm_stream < "$1"; }
@@ -199,10 +315,12 @@ for f in ${FILES[@]+"${FILES[@]}"}; do
       # apenas rozada por el PR (las migraciones son inmutables, pero somos precisos).
       in_added 'security[[:space:]]+definer' && in_added "(^|[^a-zA-Z0-9_])${short}([^a-zA-Z0-9_]|\$)" || continue
 
-      # FIRMA: qualname + aridad. La aridad discrimina overloads y es la base del
-      # matching de allowlist (V7) y de REVOKE/GRANT (V6): un REVOKE sobre OTRA firma
-      # (otro schema u otra aridad) ya no satisface el check.
-      carity="$(argcount "$(paren_args "$slc" "$qual")")"
+      # FIRMA: qualname + aridad + firma canónica de tipos. La aridad discrimina overloads
+      # y es la base del matching de REVOKE/GRANT (V6): un REVOKE sobre OTRA firma (otro
+      # schema u otra aridad) ya no satisface el check. La firma de tipos (cargs) discrimina
+      # el match de allowlist (V7/N2): un overload de igual aridad y distinto tipo NO exento.
+      cargs="$(paren_args "$slc" "$qual")"
+      carity="$(argcount "$cargs")"
       qre="$(printf '%s' "$qual" | sed -E 's/[.]/\\./g')"
 
       # S4: SET search_path explícito en la MISMA definición (bodyless conserva la cabecera).
@@ -211,8 +329,8 @@ for f in ${FILES[@]+"${FILES[@]}"}; do
       fi
 
       # S1: REVOKE ... FROM ... PUBLIC para ESTA firma, sin GRANT que lo reabra.
-      if allow_hit "$qual" "$carity"; then
-        : # allowlisted (qualname+aridad): GRANT a anon/authenticated por diseño (dashboard).
+      if allow_hit "$qual" "$carity" "$cargs"; then
+        : # allowlisted (qualname + firma canónica de tipos): GRANT a anon/authenticated por diseño (dashboard).
       else
         # REVOKE EXECUTE ... <qual>(<misma aridad>) ... FROM ... PUBLIC.
         revoke_ok=0
