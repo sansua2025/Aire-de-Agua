@@ -49,37 +49,96 @@ fail() { echo "FAIL  $1"; FAILS=$((FAILS+1)); }
 
 ALLOWLIST_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/security-surface-allowlist.txt"
 
-# allow_hit <qualname>: true si la firma (schema.fn) está en la allowlist de S1.
-# Compara el nombre calificado (todo antes del primer '(' de la firma), sin comillas
-# y en minúsculas. Un '#' inicia comentario en la allowlist.
+# argcount <arglist>: número de argumentos de nivel superior de una firma. Cuenta las
+# comas a profundidad 0 (respeta '(...)' y '[...]' anidados, p.ej. numeric(10,2), int[]).
+# '' -> 0. Es la dimensión "args normalizada" de la firma: robusta a alias de tipos
+# (int vs integer), a DEFAULT y a nombres de parámetro — a diferencia de comparar el
+# texto de los tipos, que produciría falsos positivos contra migraciones reales.
+argcount() {
+  local a c depth=0 i n=0
+  a="$(printf '%s' "$1" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+  [ -z "$a" ] && { echo 0; return; }
+  n=1
+  for (( i=0; i<${#a}; i++ )); do
+    c="${a:i:1}"
+    case "$c" in
+      '('|'[') depth=$((depth+1)) ;;
+      ')'|']') depth=$((depth-1)) ;;
+      ',') [ "$depth" -eq 0 ] && n=$((n+1)) ;;
+    esac
+  done
+  echo "$n"
+}
+
+# paren_args <stmt-normalizado> <qual>: contenido del PRIMER grupo de paréntesis
+# balanceado que sigue a '<qual>(' (la lista de argumentos de la firma). '' si no aparece.
+# Opera sobre texto ya normalizado por strip_sql (comillas fuera, '.' sin espacios).
+paren_args() {
+  local s="$1" qual="$2" rest c depth=1 i out=""
+  case "$s" in *"${qual}("*) rest="${s#*"${qual}("}" ;; *) echo ""; return 1 ;; esac
+  for (( i=0; i<${#rest}; i++ )); do
+    c="${rest:i:1}"
+    if [ "$c" = "(" ]; then depth=$((depth+1))
+    elif [ "$c" = ")" ]; then depth=$((depth-1)); [ "$depth" -eq 0 ] && break
+    fi
+    out="$out$c"
+  done
+  printf '%s' "$out"
+}
+
+# allow_hit <qualname> <aridad>: true si la FIRMA COMPLETA (schema.fn + aridad) está en
+# la allowlist de S1. Matchea por qualname Y aridad — NO solo por nombre (AIR-232/V7): un
+# overload peligroso de un nombre allowlisted (p.ej. analytics.get_kpis(evil text), aridad
+# 1, vs la firma legítima de aridad 3) NO queda exento. La aridad se usa como firma de
+# args (ver argcount) por robustez frente a alias de tipos. Un '#' inicia comentario.
 allow_hit() {
-  local q="$1" line name
+  local q="$1" ar="$2" line lqual largs
   [ -f "$ALLOWLIST_FILE" ] || return 1
   while IFS= read -r line; do
     line="${line%%#*}"
-    line="$(printf '%s' "$line" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+    line="$(printf '%s' "$line" | tr 'A-Z' 'a-z' | tr -d '"' \
+            | sed -E 's/[[:space:]]*\.[[:space:]]*/./g; s/^[[:space:]]+//; s/[[:space:]]+$//')"
     [ -z "$line" ] && continue
-    name="$(printf '%s' "$line" | sed -E 's/\(.*//' | tr -d '"' | tr 'A-Z' 'a-z' | sed -E 's/[[:space:]]+$//')"
-    [ "$name" = "$q" ] && return 0
+    lqual="$(printf '%s' "$line" | sed -E 's/\(.*//; s/[[:space:]]+$//')"
+    [ "$lqual" = "$q" ] || continue
+    case "$line" in
+      *"("*) largs="$(printf '%s' "$line" | sed -E 's/^[^(]*\(//; s/\)[^)]*$//')" ;;
+      *) largs="" ;;
+    esac
+    [ "$(argcount "$largs")" = "$ar" ] && return 0
   done < "$ALLOWLIST_FILE"
   return 1
 }
 
-# strip_sql <file>: normaliza el .sql a UNA sola línea apta para partir por ';':
+# norm_stream: normaliza SQL (stdin) a UNA sola línea apta para partir por ';':
 #   - reemplaza cada cuerpo dollar-quoted ($$...$$ / $tag$...$tag$) por ' ASBODY '
 #     (los ';' internos del cuerpo de una función no deben partir statements);
-#   - elimina comentarios de línea '--' DESPUÉS de quitar cuerpos (para no desincronizar
-#     el tracker de dollar-quoting con un '--' que viviera dentro de un cuerpo);
-#   - colapsa saltos de línea/tabs a espacios simples.
-# El tracker de dollar-quoting se hace a mano (awk) porque los cuerpos son multilínea y
-# pueden contener '$1', '$$' anidados con tag distinto, etc.
-strip_sql() {
+#   - elimina comentarios de BLOQUE '/* ... */' (multilínea) y de LÍNEA '--' que vivan
+#     FUERA de un cuerpo dollar-quoted (en Postgres un '/* */' es whitespace: sin esto,
+#     'SECURITY /*x*/ DEFINER' evadía la detección — AIR-232/V1);
+#   - colapsa saltos de línea/tabs a espacios (une statements partidos en varias líneas
+#     -> 'SECURITY\nDEFINER' se detecta como uno solo — AIR-232/V2);
+#   - quita comillas dobles y colapsa espacios alrededor de '.' para normalizar el
+#     qualifier de schema ("public".x, public . x -> public.x — AIR-232/V3,V4,V5).
+# El tracker de dollar-quoting y de comentarios se hace a mano (awk) porque los cuerpos
+# son multilínea; un '/*' o '--' DENTRO de un cuerpo NO es comentario y no debe tocarse.
+norm_stream() {
   awk '
     { all = all $0 "\n" }
     END {
       n = length(all); i = 1; out = ""; intag = 0; tag = ""
       while (i <= n) {
         c = substr(all, i, 1)
+        two = substr(all, i, 2)
+        if (!intag && two == "/*") {
+          i += 2
+          while (i <= n && substr(all, i, 2) != "*/") i++
+          i += 2; out = out " "; continue
+        }
+        if (!intag && two == "--") {
+          while (i <= n && substr(all, i, 1) != "\n") i++
+          continue
+        }
         if (c == "$") {
           j = i + 1; t = ""
           while (j <= n && substr(all, j, 1) ~ /[a-zA-Z0-9_]/) { t = t substr(all, j, 1); j++ }
@@ -94,8 +153,10 @@ strip_sql() {
       }
       print out
     }
-  ' "$1" | sed -E 's/--.*$//' | tr '\n\t' '  ' | tr -s ' '
+  ' | sed -E 's/--.*$//' | tr '\n\t' '  ' | tr -d '"' \
+    | sed -E 's/[[:space:]]*\.[[:space:]]*/./g' | tr -s ' '
 }
+strip_sql() { norm_stream < "$1"; }
 
 for f in ${FILES[@]+"${FILES[@]}"}; do
   [ -f "$f" ] || continue
@@ -109,10 +170,13 @@ for f in ${FILES[@]+"${FILES[@]}"}; do
     ADDED="$(cat "$f")"
   fi
   # in_added <regex-egrep>: true si el patrón aparece (case-insensitive) en las líneas
-  # añadidas. Los comentarios '--' se ignoran para que un 'SECURITY DEFINER' citado en
-  # una cabecera no gatille (mig 142 documenta "6 funciones SECURITY DEFINER").
-  ADDED_NC="$(printf '%s' "$ADDED" | sed -E 's/--.*$//')"
-  in_added() { printf '%s' "$ADDED_NC" | grep -qiE "$1"; }
+  # añadidas, YA NORMALIZADAS (comentarios de bloque/línea fuera, saltos de línea unidos,
+  # schema-qualifier normalizado). Normalizar antes de grepear cierra V1 (comentario de
+  # bloque entre SECURITY y DEFINER) y V2 (SECURITY / DEFINER en líneas separadas): el
+  # gatillo ya no es línea-a-línea. Un 'SECURITY DEFINER' citado en una cabecera '--' no
+  # gatilla porque el comentario se elimina (mig 142 documenta "6 funciones SECURITY DEFINER").
+  ADDED_FLAT="$(printf '%s\n' "$ADDED" | norm_stream)"
+  in_added() { printf '%s' "$ADDED_FLAT" | grep -qiE "$1"; }
 
   # Statements bodyless del archivo COMPLETO (el COMPLEMENTO de cada regla —REVOKE,
   # ENABLE RLS, security_invoker— puede vivir en cualquier statement de la misma
@@ -135,27 +199,50 @@ for f in ${FILES[@]+"${FILES[@]}"}; do
       # apenas rozada por el PR (las migraciones son inmutables, pero somos precisos).
       in_added 'security[[:space:]]+definer' && in_added "(^|[^a-zA-Z0-9_])${short}([^a-zA-Z0-9_]|\$)" || continue
 
+      # FIRMA: qualname + aridad. La aridad discrimina overloads y es la base del
+      # matching de allowlist (V7) y de REVOKE/GRANT (V6): un REVOKE sobre OTRA firma
+      # (otro schema u otra aridad) ya no satisface el check.
+      carity="$(argcount "$(paren_args "$slc" "$qual")")"
+      qre="$(printf '%s' "$qual" | sed -E 's/[.]/\\./g')"
+
       # S4: SET search_path explícito en la MISMA definición (bodyless conserva la cabecera).
       if ! printf '%s' "$slc" | grep -qE 'set[[:space:]]+search_path'; then
         fail "$f — S4: función SECURITY DEFINER '${qual}' sin 'SET search_path' explícito (search_path mutable = vector de escalada)."
       fi
 
-      # S1: REVOKE ... FROM ... PUBLIC para esta función en la misma migración.
-      if allow_hit "$qual"; then
-        : # allowlisted: GRANT a anon/authenticated por diseño (read-path dashboard).
+      # S1: REVOKE ... FROM ... PUBLIC para ESTA firma, sin GRANT que lo reabra.
+      if allow_hit "$qual" "$carity"; then
+        : # allowlisted (qualname+aridad): GRANT a anon/authenticated por diseño (dashboard).
       else
+        # REVOKE EXECUTE ... <qual>(<misma aridad>) ... FROM ... PUBLIC.
         revoke_ok=0
         for r in "${STMTS[@]}"; do
           rlc="$(printf '%s' "$r" | tr 'A-Z' 'a-z')"
           printf '%s' "$rlc" | grep -qE 'revoke[[:space:]]+execute[[:space:]]+on[[:space:]]+function' || continue
-          printf '%s' "$rlc" | grep -qE "(^|[^a-zA-Z0-9_])${short}([^a-zA-Z0-9_]|\$)" || continue
+          # Firma completa: MISMO qualname (no solo el nombre corto -> cierra V6, un REVOKE
+          # sobre analytics.foo no cuenta para public.foo) y MISMA aridad.
+          printf '%s' "$rlc" | grep -qE "(^|[^a-zA-Z0-9_.])${qre}\(" || continue
+          [ "$(argcount "$(paren_args "$rlc" "$qual")")" = "$carity" ] || continue
           # El literal PUBLIC debe estar en la lista FROM (no en el 'public.' del schema,
           # que va ANTES de 'from'). Cortamos en el primer ' from ' y buscamos 'public'.
           case " $rlc " in *" from "*) frompart="${rlc#* from }" ;; *) continue ;; esac
           printf '%s' "$frompart" | grep -qwE 'public' && revoke_ok=1
         done
+        # NET-EFFECT (V6b): un GRANT EXECUTE ... <qual>(<aridad>) ... TO ... PUBLIC/anon/
+        # authenticated tras el REVOKE reabre el vector -> el REVOKE queda anulado.
+        grant_reopen=0
+        for g in "${STMTS[@]}"; do
+          glc="$(printf '%s' "$g" | tr 'A-Z' 'a-z')"
+          printf '%s' "$glc" | grep -qE 'grant[[:space:]]+execute[[:space:]]+on[[:space:]]+function' || continue
+          printf '%s' "$glc" | grep -qE "(^|[^a-zA-Z0-9_.])${qre}\(" || continue
+          [ "$(argcount "$(paren_args "$glc" "$qual")")" = "$carity" ] || continue
+          case " $glc " in *" to "*) topart="${glc#* to }" ;; *) continue ;; esac
+          printf '%s' "$topart" | grep -qwE 'public|anon|authenticated' && grant_reopen=1
+        done
         if [ "$revoke_ok" -eq 0 ]; then
           fail "$f — S1: función SECURITY DEFINER '${qual}' sin 'REVOKE EXECUTE ON FUNCTION ${qual} ... FROM ... PUBLIC' en la misma migración (revocar solo de anon/authenticated es NO-OP; ver AIR-231). Si es read-path legítimo, agrégala a security-surface-allowlist.txt."
+        elif [ "$grant_reopen" -eq 1 ]; then
+          fail "$f — S1: función SECURITY DEFINER '${qual}' tiene REVOKE FROM PUBLIC pero un 'GRANT EXECUTE ... TO PUBLIC/anon/authenticated' posterior REABRE el vector (net-effect = ejecutable por anon; ver AIR-231/AIR-232)."
         fi
       fi
     fi

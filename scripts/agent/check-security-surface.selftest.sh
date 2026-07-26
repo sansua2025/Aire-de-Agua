@@ -146,6 +146,96 @@ run "$TMP/s3_analytics_dashboard.sql" | grep -q "S3:" \
   || ok "S3 no dispara en analytics.view_dashboard_* (regresión OK)"
 
 # ============================================================
+# AIR-232 (Parte A, endurecimiento): 7 vectores de evasión que antes daban 0 fail.
+# Cada caso afirma que el vector AHORA es bloqueado (FALLA), o para V7 que el
+# overload peligroso NO queda exento por la allowlist.
+# ============================================================
+
+# V1 — comentario de bloque /* */ entre SECURITY y DEFINER (en Postgres es whitespace).
+cat > "$TMP/v1_block_comment.sql" <<'SQL'
+CREATE OR REPLACE FUNCTION public.evil1(p int)
+RETURNS int LANGUAGE sql SECURITY /* sneaky */ DEFINER SET search_path = public AS $$ SELECT p; $$;
+SQL
+OUT="$(run "$TMP/v1_block_comment.sql")"
+echo "$OUT" | grep -q "S1:.*public.evil1" \
+  && ok "V1 FALLA: SECURITY /* */ DEFINER (comentario de bloque saneado)" \
+  || bad "V1 DEBERÍA fallar: comentario de bloque entre SECURITY y DEFINER evade"
+
+# V2 — SECURITY y DEFINER en líneas separadas (statement multilínea).
+cat > "$TMP/v2_multiline.sql" <<'SQL'
+CREATE OR REPLACE FUNCTION public.evil2(p int)
+RETURNS int LANGUAGE sql
+SECURITY
+DEFINER
+SET search_path = public AS $$ SELECT p; $$;
+SQL
+OUT="$(run "$TMP/v2_multiline.sql")"
+echo "$OUT" | grep -q "S1:.*public.evil2" \
+  && ok "V2 FALLA: SECURITY / DEFINER en líneas separadas (detección por statement)" \
+  || bad "V2 DEBERÍA fallar: SECURITY y DEFINER en líneas separadas evade"
+
+# V3 — CREATE TABLE con schema citado "public".
+cat > "$TMP/v3_quoted_schema.sql" <<'SQL'
+CREATE TABLE "public".secreta (id int primary key, dato text);
+SQL
+OUT="$(run "$TMP/v3_quoted_schema.sql")"
+echo "$OUT" | grep -q "S2:.*public.secreta" \
+  && ok 'V3 FALLA: CREATE TABLE "public".secreta (schema citado normalizado)' \
+  || bad 'V3 DEBERÍA fallar: schema citado "public" evade S2'
+
+# V4 — CREATE TABLE con espacios alrededor del punto.
+cat > "$TMP/v4_spaced_dot.sql" <<'SQL'
+CREATE TABLE public . secreta (id int primary key, dato text);
+SQL
+OUT="$(run "$TMP/v4_spaced_dot.sql")"
+echo "$OUT" | grep -q "S2:.*public.secreta" \
+  && ok "V4 FALLA: CREATE TABLE public . secreta (espacios en el qualifier normalizados)" \
+  || bad "V4 DEBERÍA fallar: espacios alrededor del '.' evaden S2"
+
+# V5 — CREATE VIEW con schema citado "public".
+cat > "$TMP/v5_quoted_view.sql" <<'SQL'
+CREATE VIEW "public".v_expuesta AS SELECT 1 AS x;
+SQL
+OUT="$(run "$TMP/v5_quoted_view.sql")"
+echo "$OUT" | grep -q "S3:.*public.v_expuesta" \
+  && ok 'V5 FALLA: CREATE VIEW "public".v_expuesta (schema citado normalizado)' \
+  || bad 'V5 DEBERÍA fallar: schema citado "public" evade S3'
+
+# V6 — REVOKE con NOMBRE CORTO pero OTRO schema (analytics.foo) no cuenta para public.foo.
+cat > "$TMP/v6_revoke_wrong_schema.sql" <<'SQL'
+CREATE OR REPLACE FUNCTION public.foo(p int)
+RETURNS int LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$ SELECT p; $$;
+REVOKE EXECUTE ON FUNCTION analytics.foo(int) FROM PUBLIC;
+SQL
+OUT="$(run "$TMP/v6_revoke_wrong_schema.sql")"
+echo "$OUT" | grep -q "S1:.*public.foo" \
+  && ok "V6 FALLA: REVOKE sobre analytics.foo no satisface el check de public.foo (firma completa)" \
+  || bad "V6 DEBERÍA fallar: REVOKE por nombre corto en otro schema evade"
+
+# V6b — REVOKE FROM PUBLIC pero un GRANT ... TO PUBLIC posterior REABRE el vector.
+cat > "$TMP/v6b_grant_reopen.sql" <<'SQL'
+CREATE OR REPLACE FUNCTION public.foo(p int)
+RETURNS int LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$ SELECT p; $$;
+REVOKE EXECUTE ON FUNCTION public.foo(int) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.foo(int) TO PUBLIC;
+SQL
+OUT="$(run "$TMP/v6b_grant_reopen.sql")"
+echo "$OUT" | grep -q "S1:.*public.foo.*REABRE" \
+  && ok "V6b FALLA: GRANT ... TO PUBLIC tras el REVOKE reabre el vector (net-effect)" \
+  || bad "V6b DEBERÍA fallar: GRANT TO PUBLIC posterior anula el REVOKE"
+
+# V7 — overload peligroso de un nombre allowlisted NO debe quedar exento por firma.
+cat > "$TMP/v7_overload.sql" <<'SQL'
+CREATE OR REPLACE FUNCTION analytics.get_kpis(evil text)
+RETURNS int LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$ SELECT 1; $$;
+GRANT EXECUTE ON FUNCTION analytics.get_kpis(text) TO anon;
+SQL
+OUT="$(run "$TMP/v7_overload.sql")"
+echo "$OUT" | grep -q "S1:.*analytics.get_kpis" \
+  && ok "V7 FALLA: overload analytics.get_kpis(evil text) NO exento (allowlist por firma)" \
+  || bad "V7 DEBERÍA fallar: overload de nombre allowlisted queda exento por qualname"
+
+# ============================================================
 # Regresión: migraciones reales 142 / 143 NO deben enrojecer.
 # ============================================================
 REPO="$(cd "$DIR/../.." && pwd)"
