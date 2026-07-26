@@ -176,9 +176,15 @@ BEGIN
       CONTINUE;
     END IF;
 
-    -- delta en % derivado IGUAL que decisiones.delta_real_pct (GENERATED): NO se
-    -- escribe, sólo se usa para categorizar. baseline 0 → delta NULL → neutro.
-    v_delta_pct := (v_valor - r.valor_baseline) / NULLIF(ABS(r.valor_baseline), 0) * 100;
+    -- delta en % derivado IGUAL que decisiones.delta_real_pct (GENERATED, mig 053):
+    -- divide por valor_baseline CON SIGNO (no ABS), idéntico a la columna GENERATED
+    -- y al consumidor analytics.v_detector_hit_rate (mig 136). Con ABS el signo del
+    -- delta se invertía para baseline < 0 (ruta VIVA: detector margen_paid_negativo,
+    -- cuyo valor roas_margen_atribuido es negativo por diseño) → resultado_evaluacion
+    -- discrepaba del hit-rate sobre la misma fila. NO se escribe, sólo categoriza.
+    -- baseline 0 → NULLIF → NULL → categoría 'neutro' (idéntico al CASE
+    -- valor_baseline<>0 de la columna GENERATED).
+    v_delta_pct := (v_valor - r.valor_baseline) / NULLIF(r.valor_baseline, 0) * 100;
 
     -- Categorización IDÉNTICA a analytics.v_detector_hit_rate (mig 136):
     v_eval := CASE
@@ -254,6 +260,10 @@ COMMENT ON FUNCTION analytics.measure_pending_decisions() IS
 --           (guard semana_inicio > periodo_fin) → valor_resultado NULL + nota.
 --   (3) fila no-elegible: (C1) fecha_medicion > hoy y (C2) fila ya medida → intactas.
 --   (4) doble corrida idempotente: la 2ª no re-mide una decisión ya medida.
+--   (neg) BASELINE NEGATIVO (regresión AIR-133): detector margen_paid_negativo con
+--         valor_baseline=-0.5, valor post=-0.2, signo='sube' → resultado_evaluacion
+--         debe coincidir con la categoría que v_detector_hit_rate (mig 136) computa
+--         sobre delta_real_pct firmado (evita el divisor ABS que invertía el signo).
 CREATE OR REPLACE FUNCTION analytics.measure_pending_decisions_selftest()
   RETURNS jsonb
   LANGUAGE plpgsql
@@ -263,15 +273,19 @@ AS $fn$
 DECLARE
   v_verdict jsonb := '{}'::jsonb;
   -- ids insights
-  id_det uuid; id_fb uuid; id_guard uuid; id_c1 uuid; id_c2 uuid;
+  id_det uuid; id_fb uuid; id_guard uuid; id_c1 uuid; id_c2 uuid; id_neg uuid;
   -- ids decisiones
-  dec_det uuid; dec_fb uuid; dec_guard uuid; dec_c1 uuid; dec_c2 uuid;
+  dec_det uuid; dec_fb uuid; dec_guard uuid; dec_c1 uuid; dec_c2 uuid; dec_neg uuid;
   -- lecturas
   v_det_val numeric; v_det_eval text;
   v_fb_val  numeric; v_fb_eval  text;
   v_guard_val numeric; v_guard_nota text;
   v_c1_val numeric; v_c1_nota text;
   v_c2_val numeric; v_c2_nota text; v_c2_eval text;
+  -- baseline negativo (regresión AIR-133): valor, eval medido, y la categoría que
+  -- v_detector_hit_rate (mig 136) computaría sobre el MISMO delta_real_pct.
+  v_neg_val numeric; v_neg_eval text; v_neg_delta numeric;
+  v_neg_signo text; v_neg_umbral numeric; v_neg_expected text;
   -- idempotencia
   v_idem_eval2 text; v_idem_val_ok boolean;
 BEGIN
@@ -369,6 +383,31 @@ BEGIN
       555, 'positivo', 'INTACTO_C2')
     RETURNING id INTO dec_c2;
 
+    -- ── Fixture BASELINE NEGATIVO (regresión AIR-133, ruta DETECTOR) ──────────
+    -- Detector margen_paid_negativo (seeded/activo en mig 134): su `valor` es
+    -- roas_margen_atribuido, NEGATIVO por diseño. baseline capturado = -0.5, post
+    -- (snapshot 1999-06-15..21, gasto_meta>piso, roas_margen_atribuido=-0.2) → valor
+    -- -0.2, signo_predicho='sube'. delta_real_pct GENERATED = (-0.2-(-0.5))/(-0.5)*100
+    -- = -60. Con el divisor firmado (fix), resultado_evaluacion debe COINCIDIR con la
+    -- categoría de v_detector_hit_rate (mig 136) sobre ese mismo delta (= 'negativo').
+    -- Con el bug (ABS) el delta salía +60 → 'positivo', discrepando del hit-rate.
+    INSERT INTO public.insights (dominio, tipo, titulo, descripcion, insight_key,
+      metrica_clave, valor_observado, periodo_inicio, periodo_fin, signo_predicho,
+      estado_accion, score_confianza)
+    VALUES ('paid','riesgo','AIR133 neg','fixture','margen_paid_negativo',
+      'roas_margen_atribuido', -0.5, DATE '1999-06-01', DATE '1999-06-07', 'sube',
+      'hecho', 0.9)
+    RETURNING id INTO id_neg;
+
+    INSERT INTO public.weekly_snapshot (semana_inicio, semana_fin, gasto_meta,
+      roas_margen_atribuido)
+    VALUES (DATE '1999-06-15', DATE '1999-06-21', 500000, -0.2);
+
+    INSERT INTO public.decisiones (insight_id, descripcion_accion, canal,
+      ejecutado_por, ejecutado_at, metrica_objetivo, valor_baseline, fecha_medicion)
+    VALUES (id_neg,'a','meta','humano',now(),'roas_margen_atribuido',-0.5, DATE '1999-06-22')
+    RETURNING id INTO dec_neg;
+
     -- ── CORRIDA 1 ────────────────────────────────────────────────────────────
     PERFORM analytics.measure_pending_decisions();
 
@@ -377,6 +416,32 @@ BEGIN
     SELECT valor_resultado, notas_resultado       INTO v_guard_val, v_guard_nota FROM public.decisiones WHERE id = dec_guard;
     SELECT valor_resultado, notas_resultado       INTO v_c1_val,  v_c1_nota   FROM public.decisiones WHERE id = dec_c1;
     SELECT valor_resultado, notas_resultado, resultado_evaluacion INTO v_c2_val, v_c2_nota, v_c2_eval FROM public.decisiones WHERE id = dec_c2;
+
+    -- Baseline negativo: lee valor medido + eval + delta_real_pct (GENERATED, con
+    -- signo, inmune al bug) + signo_predicho de la MISMA fila.
+    SELECT d.valor_resultado, d.resultado_evaluacion, d.delta_real_pct, i.signo_predicho
+      INTO v_neg_val, v_neg_eval, v_neg_delta, v_neg_signo
+      FROM public.decisiones d JOIN public.insights i ON i.id = d.insight_id
+      WHERE d.id = dec_neg;
+
+    -- Umbral de ruido de la MISMA fuente que ambas funciones (brand_config).
+    SELECT COALESCE((umbrales->>'hit_rate_ruido_pct')::numeric, 5)
+      INTO v_neg_umbral FROM public.brand_config
+      WHERE marca_id = 'a1de0a9a-0000-4000-8000-000000000001'::uuid;
+    v_neg_umbral := COALESCE(v_neg_umbral, 5);
+
+    -- Categoría que analytics.v_detector_hit_rate (mig 136) computaría sobre ese mismo
+    -- delta_real_pct, mapeada al vocabulario de resultado_evaluacion (acierto→positivo,
+    -- fallo→negativo, sin_cambio/sin_prediccion→neutro). MISMA fórmula/umbral que mig
+    -- 136 (no hardcode): así el aserto ata resultado_evaluacion al hit-rate de la fila.
+    v_neg_expected := CASE
+      WHEN v_neg_signo IS NULL                          THEN 'neutro'
+      WHEN v_neg_delta IS NULL                          THEN 'neutro'
+      WHEN abs(v_neg_delta) < v_neg_umbral              THEN 'neutro'
+      WHEN (v_neg_signo = 'sube' AND v_neg_delta > 0)
+        OR (v_neg_signo = 'baja' AND v_neg_delta < 0)   THEN 'positivo'
+      ELSE 'negativo'
+    END;
 
     -- ── Idempotencia (case 4): manipular resultado_evaluacion de la fila detector a
     --    un valor distinto y verificar que la 2ª corrida NO la re-mide (guard
@@ -401,8 +466,15 @@ BEGIN
       'c2_medida_intacta',    (v_c2_val = 555 AND v_c2_nota = 'INTACTO_C2' AND v_c2_eval = 'positivo'),
       -- case 4: 2ª corrida no re-mide (guard) → eval sigue en 'neutro' manipulado
       'idempotente',          (v_idem_eval2 = 'neutro' AND v_idem_val_ok),
+      -- regresión baseline negativo: valor medido = -0.2 por la ruta detector y eval
+      -- coincide con la categoría de v_detector_hit_rate (mig 136) sobre el mismo
+      -- delta_real_pct firmado. Con el bug ABS el eval salía 'positivo' ≠ 'negativo'.
+      'neg_valor_medido',     (v_neg_val = -0.2),
+      'neg_eval_coincide_hitrate', (v_neg_eval IS NOT NULL AND v_neg_eval = v_neg_expected),
       -- diagnóstico
-      'det_val', v_det_val, 'fb_val', v_fb_val
+      'det_val', v_det_val, 'fb_val', v_fb_val,
+      'neg_val', v_neg_val, 'neg_eval', v_neg_eval,
+      'neg_expected', v_neg_expected, 'neg_delta', v_neg_delta
     );
 
     RAISE EXCEPTION 'AIR133_SELFTEST_ROLLBACK';
@@ -422,7 +494,9 @@ BEGIN
       COALESCE((v_verdict->>'guard_nota_sin_medir')::boolean, false) AND
       COALESCE((v_verdict->>'c1_futura_null')::boolean, false) AND
       COALESCE((v_verdict->>'c2_medida_intacta')::boolean, false) AND
-      COALESCE((v_verdict->>'idempotente')::boolean, false)
+      COALESCE((v_verdict->>'idempotente')::boolean, false) AND
+      COALESCE((v_verdict->>'neg_valor_medido')::boolean, false) AND
+      COALESCE((v_verdict->>'neg_eval_coincide_hitrate')::boolean, false)
     )
   );
   RETURN v_verdict;
@@ -434,11 +508,13 @@ GRANT EXECUTE ON FUNCTION analytics.measure_pending_decisions_selftest() TO serv
 
 COMMENT ON FUNCTION analytics.measure_pending_decisions_selftest() IS
   'AIR-133: eval determinista de analytics.measure_pending_decisions(). Monta fixtures '
-  '(detector medible, fallback, guard baseline-week, no-elegibles futura/ya-medida) + '
-  'weekly_snapshots fabricados en una subtransacción que SIEMPRE se revierte (cero '
-  'residuo, sin DELETE) y devuelve jsonb con .ok. Cubre medición por detector y '
-  'fallback, el guard anti-baseline-week, la intocabilidad de no-elegibles y la '
-  'idempotencia de doble corrida. Consumido por dashboard/evals/cerebro/measure-decisiones.test.ts.';
+  '(detector medible, fallback, guard baseline-week, no-elegibles futura/ya-medida, '
+  'baseline NEGATIVO por ruta detector) + weekly_snapshots fabricados en una '
+  'subtransacción que SIEMPRE se revierte (cero residuo, sin DELETE) y devuelve jsonb '
+  'con .ok. Cubre medición por detector y fallback, el guard anti-baseline-week, la '
+  'intocabilidad de no-elegibles, la idempotencia de doble corrida y la simetría de '
+  'signo del delta con delta_real_pct/mig136 para baseline<0. Consumido por '
+  'dashboard/evals/cerebro/measure-decisiones.test.ts.';
 
 
 -- ─────────────────────────────────────────────────────────────────────────
