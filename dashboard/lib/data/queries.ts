@@ -542,6 +542,26 @@ export const getInsightsActivos = unstable_cache(
 )
 
 /**
+ * Bitácora de decisiones (P2 · mig 145). Lee analytics.view_dashboard_decisiones:
+ * una fila por decisión aprobada + insight de origen, con delta_real_pct GENERATED
+ * (no recomputado en TS) y `estado` (pendiente|medido) computado en SQL. Estado
+ * VIVO (no serie): sin filtro global de período; la vista ya ordena por created_at
+ * desc. Tag 'insights': lo invalida el mismo write-path HITL que la cola (aprobar
+ * una decisión) y el flujo de medición (AIR-133) que escribe valor_resultado.
+ */
+export const getDecisiones = unstable_cache(
+  async () => {
+    const { data, error } = await supabase
+      .from('view_dashboard_decisiones')
+      .select('*')
+    if (error) throw error
+    return data ?? []
+  },
+  ['decisiones'],
+  { tags: ['insights'], revalidate: CACHE_FALLBACK_SECONDS }
+)
+
+/**
  * Cola agrupada por condición (AIR-85). Una fila por condición (representante),
  * con veces_en_grupo / ids_grupo / rango de aparición. Reemplaza a
  * getInsightsActivos como fuente de la cola; la vista sin agrupar sigue

@@ -357,6 +357,33 @@ type ViewCustomerPanel = ReadOnlyView<{
   ultima_actualizacion: string | null
 }>
 
+/**
+ * P2 · Bitácora de decisiones (mig 145). Una fila por decisión aprobada
+ * (public.decisiones) + insight de origen. `estado` computado en SQL. Los numeric
+ * (valor_baseline/valor_resultado/delta_real_pct) llegan como string por PostgREST;
+ * el front normaliza con parseNumber. delta_real_pct es GENERATED (no se recomputa).
+ */
+type ViewDecisiones = ReadOnlyView<{
+  id: string
+  descripcion_accion: string | null
+  canal: string | null
+  ejecutado_por: string | null
+  ejecutado_at: string | null
+  metrica_objetivo: string | null
+  valor_baseline: number | string | null
+  valor_resultado: number | string | null
+  delta_real_pct: number | string | null
+  resultado_evaluacion: 'positivo' | 'neutro' | 'negativo' | null
+  fecha_medicion: string | null
+  notas_resultado: string | null
+  created_at: string | null
+  insight_titulo: string | null
+  dominio: string | null
+  tipo: string | null
+  signo_predicho: 'sube' | 'baja' | null
+  estado: 'pendiente' | 'medido' | null
+}>
+
 // =============================================================================
 // RPCs parametrizadas AIR-193 (migración 119). Firma uniforme (p_desde, p_hasta,
 // p_canal) — SECURITY DEFINER + grant a anon. Corte de día America/Bogota.
@@ -764,6 +791,7 @@ export type AnalyticsDatabase = {
       view_dashboard_inventory_health: ViewInventoryHealth
       view_dashboard_discount_mix: ViewDiscountMix
       view_dashboard_customer_panel: ViewCustomerPanel
+      view_dashboard_decisiones: ViewDecisiones
     }
     Views: Record<string, never>
     Functions: AnalyticsFunctions
