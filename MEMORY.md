@@ -52,7 +52,32 @@ dentro del cuerpo del RPC (mismo patrón que `analytics.eval_recompute` mig 086,
 - **Carga masiva sin psql**: `execute_sql` no acepta ~69KB. Chunks idempotentes (50 filas/chunk, ON CONFLICT
   DO UPDATE) validados contra Postgres local antes.
 - Numeración secuencial estricta: `ls supabase/migrations/ | grep -oE '^[0-9]+' | sort -n | tail -1` (ver
-  también CLAUDE.md §Convención de migraciones). Último conocido al cerrar AIR-231/203: **143**.
+  también CLAUDE.md §Convención de migraciones). Último conocido al cerrar AIR-133: **144**.
+- **AIR-133: el corte del replay del preview puede ser MUY temprano (pre-`analytics`).** El branch tenía
+  `insights`/`weekly_snapshot`/`ai_analysis_log` (core de marzo) pero NO `analytics` schema, `brand_config`,
+  `decisiones`, `insight_detectors`, ni `evaluate_detectors`/`metric_value_in_range`. Scaffold PROD-fiel del
+  delta = `CREATE SCHEMA analytics` + `ADD COLUMN IF NOT EXISTS` (insights: insight_key/signo_predicho/
+  estado_accion; weekly_snapshot: roas_meta_atribuido/roas_margen_atribuido/margen_paid_atribuido/
+  revenue_paid_atribuido/mix_canal_web) + `DROP/ADD` de checks (insights_dominio_check sin `ventas`/`paid`;
+  ai_analysis_log_tipo_check sin `detector_eval`/`loop_closer`) + tablas mínimas (brand_config con umbrales,
+  decisiones, insight_detectors+seed) + funciones verbatim (mig 033/134). Sondear columnas/constraints reales
+  con `information_schema.columns` + `pg_get_constraintdef` ANTES de scaffoldear. Advisors del branch: RLS
+  disabled en las tablas scaffoldeadas bare (decisiones/insight_detectors/brand_config) + FK sin índice en
+  decisiones = ruido del scaffold, NO del deliverable (mig 144 no crea esas tablas; en PROD ya tienen RLS/idx).
+- **Wrapper PostgREST bien blindado NO aparece en `anon/authenticated_security_definer_function_executable`**:
+  con `REVOKE ALL FROM PUBLIC, anon, authenticated` + `GRANT service_role`, el advisor 0028/0029 no lo lista
+  (confirmado con `public.analytics_measure_pending_decisions` vs. `backfill_orders`/`update_ventas_utm` que sí
+  salen por tener EXECUTE de anon). `SET search_path` fijo → tampoco `function_search_path_mutable`.
+
+## Entorno — sesión builder AIR-133 (aprobaciones bloqueadas)
+- Supabase MCP SÍ expuesto vía `ToolSearch "select:mcp__f0e900e4-...__<tool>"` (create_branch/apply_migration/
+  execute_sql/get_advisors/delete_branch/confirm_cost). `create_branch` exige `get_cost`→`confirm_cost`→id.
+- **`delete_branch` y TODO el n8n MCP (`get_sdk_reference`/`validate_workflow`/etc.) devolvieron
+  `MCP error -32003: requires approval`** — no aprobables en sesión no interactiva. Consecuencia:
+  (1) el preview branch queda vivo → dejar nota para que el humano/orquestador lo borre;
+  (2) `validate_workflow` no corre → escribir el JSON nativo (deliverable del repo) y validar a mano
+  (`node -e` JSON.parse + toda conexión/`$('Node')` resuelve a un nodo existente + 1 trigger + ids únicos).
+  El workflow nuevo sin `activeVersion` sale N/A en `check-n8n-graph-parity.sh` (correcto).
 
 ## Schema — CHECKs y columnas GENERATED de referencia (verificados en PROD)
 - `insights`: `dominio` ∈ {meta_ads,organico,email,web,producto,cliente,inventario,general,paid,ventas};
