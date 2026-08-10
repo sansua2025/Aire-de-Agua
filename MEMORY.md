@@ -155,7 +155,7 @@ dentro del cuerpo del RPC (mismo patrón que `analytics.eval_recompute` mig 086,
   `signal-key: inactive:<normName>`). Un workflow apagado no produce fallos que contar: el silencio ES la
   señal, y la red de `sync_log` solo lo atrapa ~3 días tarde.
 - **`wf_inactive` se calcula contra una ALLOWLIST explícita (`EXPECTED_ACTIVE`), NUNCA contra
-  `$vars.SENTINELA_BASELINE`.** El baseline es "lo versionado", no "lo que debe estar prendido": 32 de los 47
+  `$vars.SENTINELA_BASELINE`.** El baseline es "lo versionado", no "lo que debe estar prendido": 31 de los 47
   exports están `active:false` por diseño (backfills, one-shots, `E6A_Copy_Generator`, `Error_Handler_Global`
   —que se invoca como `errorWorkflow` sin necesitar `active:true`—). Derivarla del baseline no solo hace ruido:
   la señal de un backfill apagado para siempre queda VIVA, el CANDADO 3 de `Calcular issues a cerrar` no la
@@ -164,22 +164,51 @@ dentro del cuerpo del RPC (mismo patrón que `analytics.eval_recompute` mig 086,
   n8n vs repo` compara los ACTIVOS vivos contra ESE MISMO baseline, así que las dos lecturas son mutuamente
   excluyentes (cada activo legítimo que faltara saldría como falso positivo de drift). Convención: allowlist
   en el propio nodo, como el `EXPECTED` de `Procesos loop estancados`.
-- **Tope de 5 issues por corrida** (`.claude/agents/sentinel.md` regla (d), `docs/agentes/AUTONOMIA.md` §3),
-  implementado al final de `Dedupe vs Linear`: se crean los 5 primeros y el resto va a UN issue resumen
-  `triage: N señales pendientes`. Ese resumen **no lleva marcador `signal-key:`** a propósito — su clave no
-  viaja por `Unir candidatos`, así que el CANDADO 3 lo leería como señal muerta y lo cerraría/recrearía cada
-  día (flip-flop); se deduplica por prefijo de TÍTULO + label `sentinela`. Como el tope acota la salida de
-  `Dedupe vs Linear`, acota también el correo human-gate, que se arma desde ahí.
+- **UN TOPE ACOTA LO QUE SE CREA, NUNCA LO QUE SE AVISA** (patrón de bug, cazado en el propio Sentinela).
+  Meter un `slice(0, MAX)` en un sensor introduce dos fallos de SUPRESIÓN si no se blindan a la vez:
+  **(1) el corte por POSICIÓN entierra la señal más grave.** El orden de llegada al merge no es el orden de
+  severidad: en `Unir candidatos` las dos señales human-gate (`draft_unpublished` idx 3, `wf_inactive` idx 5)
+  eran las ÚLTIMAS → las primeras en caerse, justo el día en que más importan (un webhook caído aporta
+  1 `exec_fail` + 1 `wf_inactive`; 10 `drift` bastan para enterrar el `wf_inactive`, y una tormenta de
+  webhooks que crashee los 5 E2 lo fabrica a voluntad — el ruido que entierra la alerta lo genera el ataque).
+  Fix en tres capas, ninguna suficiente sola: **(a)** ordenar por severidad ANTES del slice (human-gate
+  primero, luego `priority` 1→4, orden de llegada como desempate estable); **(b)** que el canal de AVISO
+  (correo) se calcule sobre el conjunto COMPLETO — lo omitido viaja en un campo `overflow` adjunto al primer
+  item enviado y sale en el correo marcado "omitida, sin issue", así que 6 human-gate no vuelven a esconder
+  la sexta; **(c)** `priority` explícita en cada señal (sin ella, `wf_inactive` caía al default 3/Medium y
+  perdía contra un `exec_fail` 1/Urgent).
+  **(2) todo overflow necesita un SUMIDERO GARANTIZADO.** El `if (!yaHayResumen) {…push(resumen)…}` descartaba
+  `resto` SIN RASTRO en el día 2 de una saturación: el resumen del día 1 sigue abierto (no lleva `signal-key`,
+  solo lo cierra un humano), su cuerpo es estático y el correo leía `omitidas` de un candidato que nunca se
+  empujaba → 0. Fix: si ya hay resumen abierto se le **comenta** la lista nueva (`Linear - Crear issue`
+  conmuta a `commentCreate` cuando el candidato trae `comentarIssueId`; el comentario no toca la
+  `description`, así que el resumen sigue sin marcador y el auto-cierre sigue sin poder tocarlo), y el conteo
+  viaja al correo por un camino que NO depende de ese candidato.
+  **Predicado de dedupe del resumen: patrón COMPLETO, no prefijo.** `/^triage:/` matchea también el título de
+  un `exec_fail` de un workflow llamado `triage: x` → suprimiría todo resumen futuro para siempre. Usar
+  `/^triage: \d+ señales pendientes$/`.
+  Al armar la lista del resumen: los items de esa salida son `{json:{…}}` → `c.json.titulo`, no `c.titulo`
+  (el bug hacía que la lista saliera vacía: `- — señal ``, clave ```).
 - **El correo human-gate no puede afirmar "creó N issues" leyendo los candidatos**: Linear responde los
   errores de GraphQL con **HTTP 200** y `issueCreate.success:false` (rate-limit ante una ráfaga, label id
   inválido), así que el nodo HTTP no falla. Hay que leer el resultado real; dentro de un `splitInBatches`,
   `$('Linear - Crear issue').all()` devuelve SOLO la última corrida → recorrer `all(0, runIndex)` en bucle
-  con try/catch (con `batchSize:1`, el run *i* corresponde al candidato *i*).
+  con try/catch. **Correlacionar por `signalKey`, no por posición**: los candidatos se leen de la salida
+  PRE-IF de `Dedupe vs Linear` mientras el loop consume la salida del IF — el día que el IF filtre algo, el
+  índice atribuye la creación al candidato equivocado. La clave de cada run se lee del item que el loop
+  entregó (`$('Loop crear issues').all(1, runIndex)`, salida 1 = rama `loop`); si hay claves y la de un
+  candidato NO aparece, ese candidato NO se creó → se reporta como fallido, jamás se hereda el resultado
+  del vecino.
+- **Una allowlist que hace `continue` cuando la clave no resuelve es ceguera PERMANENTE y silenciosa**
+  (typo o rename → ese workflow queda sin vigilancia y nadie se entera). Emitir señal propia
+  (`expected_missing:<wf>`) con label `needs-refinement` — **no** human-gate, para que el auto-cierre la
+  limpie sola cuando el nombre reaparezca y no se convierta en un issue inmortal.
 - Contrato de una señal nueva del Sentinela: (1) `{senal, fuente, signalKey, titulo, descripcion}` con el
   marcador `signal-key: <k>` al final del cuerpo (lo usan dedupe Y auto-cierre); (2) entrada nueva en el
   merge `Unir candidatos` — subir `numberInputs` Y conectar al índice correcto; (3) rama en `labelsFor()` de
   `Dedupe vs Linear` (`human-gate` cuando el fix NO es código: publicar draft, reactivar workflow);
-  (4) `sanitize()` sobre todo texto que venga de la API de n8n.
+  (4) `sanitize()` sobre todo texto que venga de la API de n8n; (5) `priority` explícita (1=Urgent … 4=Low)
+  — es lo que ordena el corte del tope, y omitirla degrada la señal a 3/Medium.
 - Aviso por email de señales human-gate: rama `done` (output **0**) de `Loop crear issues` → Code que lee
   `$('Dedupe vs Linear').all()` y filtra por el **label id human-gate** (no por una segunda lista de nombres
   de señal, que se desincronizaría) → nodo `n8n-nodes-base.gmail` v2.2. Credencial Gmail existente en la
