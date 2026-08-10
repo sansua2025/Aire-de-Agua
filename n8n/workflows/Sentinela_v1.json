@@ -3,7 +3,7 @@
   "createdAt": "2026-06-12T01:11:02.422Z",
   "id": "Aul2pyDbdIECaBhY",
   "name": "Sentinela v1",
-  "description": "AIR-99/AIR-225 · Cron diario 9am COT: convierte 3 senales (n8n exec fallidas, sync_log sin filas hoy, drift n8n/repo) en issues de Linear team AIR con labels needs-refinement + sentinela y dedupe por signal-key estable. Auto-cierra (Done) los issues cuya senal ya no esta activa, solo si llevan el label sentinela Y el marcador signal-key. errorWorkflow global cableado para alertar fallos del propio Sentinela.",
+  "description": "AIR-99/AIR-225 · Cron diario 9am COT: convierte senales operativas (n8n exec fallidas — status error Y crashed —, sync_log sin filas hoy, drift n8n/repo, draft sin publicar, loop estancado, workflow del baseline DESACTIVADO) en issues de Linear team AIR con labels sentinela + needs-refinement (o human-gate) y dedupe por signal-key estable. Auto-cierra (Done) los issues cuya senal ya no esta activa, solo si llevan el label sentinela Y el marcador signal-key. Las senales human-gate ademas se avisan por email. errorWorkflow global cableado para alertar fallos del propio Sentinela.",
   "active": false,
   "isArchived": false,
   "nodes": [
@@ -155,7 +155,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "function sanitize(s) {\n  if (s == null) return '';\n  let t = String(s);\n  t = t.replace(/[\\r\\n\\t]+/g, ' ');\n  t = t.replace(/[`<>{}|\\\\$]/g, '');\n  t = t.replace(/\\b(ignore|disregard|system|assistant|prompt|instruction)\\b/gi, '_');\n  t = t.replace(/\\s+/g, ' ').trim();\n  t = t.replace(/signal-key\\s*:/gi, 'signal-key_');\n  if (t.length > 140) t = t.slice(0, 140) + String.fromCharCode(8230);\n  return t;\n}\n// AIR-230 · Recencia/era + plantilla accionable.\n// A#2/A#3: solo cuentan fallos RECIENTES (stoppedAt dentro de N_DIAS), no el acumulado de las ultimas 100.\nconst N_DIAS = 3;\nconst ahora = Date.now();\nconst ventanaMs = N_DIAS * 86400000;\n// Errores (includeData=true) = input directo de este nodo.\nconst rows = $input.first().json.data || [];\n// A#1: todas las ejecuciones (todos los estados, includeData=false) para saber si el workflow YA se recupero.\nconst todas = ($('n8n - Ejecuciones recientes (todas)').first().json.data) || [];\n// Mapa workflowId -> ejecucion automatica mas reciente { at, status }.\nconst ultimaPorWf = {};\nfor (const e of todas) {\n  if (e.mode !== 'trigger' && e.mode !== 'webhook') continue; // solo disparos automaticos\n  const at = e.stoppedAt || e.startedAt || null;\n  if (!at) continue;\n  const prev = ultimaPorWf[e.workflowId];\n  if (!prev || at > prev.at) {\n    let st = e.status;\n    if (!st) st = e.finished ? 'success' : 'unknown';\n    ultimaPorWf[e.workflowId] = { at: at, status: st };\n  }\n}\nconst byWf = {};\nfor (const r of rows) {\n  // (1) AIR-225 auto-monitoreo: el Sentinela NO se auto-excluye de la deteccion historica de sus propios fallos.\n  //     La de-exclusion del self convive con la recencia (A#4): un fallo REPETIDO y RECIENTE del propio Sentinela\n  //     si genera issue; el dedupe por signal-key evita duplicados y el auto-cierre lo cierra al recuperarse.\n  if (r.mode !== 'trigger' && r.mode !== 'webhook') continue; // (2) allowlist: solo disparos automaticos (excluye manual)\n  if (!(r.data && r.data.resultData && r.data.resultData.error && r.data.resultData.error.message)) continue; // (3) requiere error real (includeData=true)\n  const at = r.stoppedAt || r.startedAt || null;\n  if (!at) continue;\n  // A#2 recencia real: descartar fallos fuera de la ventana de N_DIAS.\n  const atMs = Date.parse(at);\n  if (!(atMs > 0) || (ahora - atMs) > ventanaMs) continue;\n  const name = (r.workflowData && r.workflowData.name) || r.workflowId || 'desconocido';\n  if (!byWf[name]) byWf[name] = { count: 0, wfId: r.workflowId || '', lastErr: null, lastAt: null, lastExecId: null, lastNode: null, firstAt: null, isWebhook: false };\n  const g = byWf[name];\n  g.count += 1;\n  if (r.mode === 'webhook') g.isWebhook = true;\n  if (!g.firstAt || at < g.firstAt) g.firstAt = at;\n  if (!g.lastAt || at > g.lastAt) {\n    g.lastAt = at;\n    const err = r.data.resultData.error;\n    // B#6: el mensaje accionable esta en description/messages[0], no en el generico message.\n    g.lastErr = err.description || (err.messages && err.messages[0]) || err.message || '';\n    g.lastNode = (err.node && err.node.name) || '';\n    g.lastExecId = r.id || '';\n    g.wfId = r.workflowId || g.wfId;\n  }\n}\nconst out = [];\nfor (const name of Object.keys(byWf)) {\n  const g = byWf[name];\n  if (g.count < 2) continue; // A#3 umbral por recurrencia RECIENTE (no acumulado historico)\n  // A#1: si la ejecucion automatica mas reciente del workflow es success, ya se recupero -> suprimir la senal.\n  const ult = ultimaPorWf[g.wfId];\n  if (ult && ult.status === 'success') continue;\n  const safeName = sanitize(name);\n  const safeErr = sanitize(g.lastErr) || 'sin mensaje';\n  const safeNode = sanitize(g.lastNode) || 'desconocido';\n  const signalKey = 'n8n_exec_fail:' + safeName;\n  const titulo = (safeName + ' fallo ' + g.count + ' veces: ' + safeErr).slice(0, 200);\n  // B#5: link directo a la ultima ejecucion fallida.\n  const link = (g.wfId && g.lastExecId)\n    ? 'https://airedeagua.app.n8n.cloud/workflow/' + g.wfId + '/executions/' + g.lastExecId\n    : 'https://airedeagua.app.n8n.cloud/home/executions';\n  // B#8: prioridad por severidad. Webhook productivo caido -> 1 (Urgent); >=5 fallos -> 2 (High); resto -> 3 (Medium).\n  let priority = 3;\n  if (g.count >= 5) priority = 2;\n  if (g.isWebhook) priority = 1;\n  const descripcion = 'Señal automática (Sentinela v1): el workflow n8n **' + safeName + '** registró ' + g.count + ' ejecuciones con estado error en los últimos ' + N_DIAS + ' días.\\n\\n' +\n    'Nodo que falló: ' + safeNode + '\\n' +\n    'Último error (saneado): ' + safeErr + '\\n' +\n    'Primer fallo: ' + (g.firstAt || 'n/d') + '\\n' +\n    'Último fallo: ' + (g.lastAt || 'n/d') + '\\n' +\n    'Ejecución: ' + link + '\\n\\n' +\n    'Nivel de autonomía: pr-only (máximo).\\n\\nsignal-key: ' + signalKey;\n  out.push({ json: {\n    senal: 'n8n_exec_fail',\n    fuente: safeName,\n    signalKey: signalKey,\n    titulo: titulo,\n    descripcion: descripcion,\n    priority: priority,\n  } });\n}\nreturn out;"
+        "jsCode": "function sanitize(s) {\n  if (s == null) return '';\n  let t = String(s);\n  t = t.replace(/[\\r\\n\\t]+/g, ' ');\n  t = t.replace(/[`<>{}|\\\\$]/g, '');\n  t = t.replace(/\\b(ignore|disregard|system|assistant|prompt|instruction)\\b/gi, '_');\n  t = t.replace(/\\s+/g, ' ').trim();\n  t = t.replace(/signal-key\\s*:/gi, 'signal-key_');\n  if (t.length > 140) t = t.slice(0, 140) + String.fromCharCode(8230);\n  return t;\n}\n// AIR-230 · Recencia/era + plantilla accionable.\n// A#2/A#3: solo cuentan fallos RECIENTES (stoppedAt dentro de N_DIAS), no el acumulado de las ultimas 100.\nconst N_DIAS = 3;\nconst ahora = Date.now();\nconst ventanaMs = N_DIAS * 86400000;\n// COBERTURA DE `crashed` (incidente 2026-08-10, E2 - Webhook Shopify Customers):\n// la API REST v1 de n8n acepta UN SOLO valor en ?status=, asi que hay DOS nodos HTTP encadenados\n// (status=error y status=crashed). Se leen por referencia EXPLICITA de nodo, no por $input, para\n// que el orden del encadenado no cambie el resultado ni se cuente dos veces.\nfunction traerFilas(nodo) {\n  try {\n    const j = $(nodo).first().json;\n    return (j && j.data) || [];\n  } catch (e) {\n    return []; // el nodo no corrio / no devolvio data -> esa fuente aporta 0 filas\n  }\n}\nconst rows = traerFilas('n8n - Ejecuciones fallidas').concat(traerFilas('n8n - Ejecuciones crashed'));\n// A#1: todas las ejecuciones (todos los estados, includeData=false) para saber si el workflow YA se recupero.\nconst todas = ($('n8n - Ejecuciones recientes (todas)').first().json.data) || [];\n// Mapa workflowId -> ejecucion automatica mas reciente { at, status }.\nconst ultimaPorWf = {};\nfor (const e of todas) {\n  if (e.mode !== 'trigger' && e.mode !== 'webhook') continue; // solo disparos automaticos\n  // createdAt como ultimo recurso: una ejecucion crashed suele traer startedAt/stoppedAt null y sin\n  // el fallback quedaria invisible aqui, dejando que un success VIEJO suprima una senal viva.\n  const at = e.stoppedAt || e.startedAt || e.createdAt || null;\n  if (!at) continue;\n  const prev = ultimaPorWf[e.workflowId];\n  if (!prev || at > prev.at) {\n    let st = e.status;\n    if (!st) st = e.finished ? 'success' : 'unknown';\n    ultimaPorWf[e.workflowId] = { at: at, status: st };\n  }\n}\nconst byWf = {};\nconst execsVistos = new Set();\nfor (const r of rows) {\n  // (1) AIR-225 auto-monitoreo: el Sentinela NO se auto-excluye de la deteccion historica de sus propios fallos.\n  //     La de-exclusion del self convive con la recencia (A#4): un fallo REPETIDO y RECIENTE del propio Sentinela\n  //     si genera issue; el dedupe por signal-key evita duplicados y el auto-cierre lo cierra al recuperarse.\n  if (r.mode !== 'trigger' && r.mode !== 'webhook') continue; // (2) allowlist: solo disparos automaticos (excluye manual)\n  const execId = String(r.id || '');\n  if (execId && execsVistos.has(execId)) continue; // misma ejecucion en las dos respuestas -> contar una vez\n  if (execId) execsVistos.add(execId);\n  const estado = String(r.status || '').toLowerCase();\n  const esCrashed = estado === 'crashed';\n  const err = (r.data && r.data.resultData && r.data.resultData.error) || null;\n  // (3) requiere un fallo REAL: o hay error con mensaje (includeData=true), o el estado es `crashed`.\n  //     Una ejecucion crashed muere ANTES de correr ningun nodo -> runData {} y SIN resultData; exigirle\n  //     resultData.error.message la descartaba, y ese fue el miss que dejo pasar la caida de E2 (16 crashed).\n  if (!esCrashed && !(err && err.message)) continue;\n  // Mismo motivo: sin el fallback a createdAt las crashed se caen aqui por falta de timestamp.\n  const at = r.stoppedAt || r.startedAt || r.createdAt || null;\n  if (!at) continue;\n  // A#2 recencia real: descartar fallos fuera de la ventana de N_DIAS.\n  const atMs = Date.parse(at);\n  if (!(atMs > 0) || (ahora - atMs) > ventanaMs) continue;\n  const name = (r.workflowData && r.workflowData.name) || r.workflowId || 'desconocido';\n  if (!byWf[name]) byWf[name] = { count: 0, crashed: 0, wfId: r.workflowId || '', lastErr: null, lastAt: null, lastExecId: null, lastNode: null, firstAt: null, isWebhook: false };\n  const g = byWf[name];\n  g.count += 1;\n  if (esCrashed) g.crashed += 1;\n  if (r.mode === 'webhook') g.isWebhook = true;\n  if (!g.firstAt || at < g.firstAt) g.firstAt = at;\n  if (!g.lastAt || at > g.lastAt) {\n    g.lastAt = at;\n    // B#6: el mensaje accionable esta en description/messages[0], no en el generico message.\n    // Sin resultData (crashed) se usa un mensaje sintetico: el hecho de que no haya error es la senal.\n    g.lastErr = err\n      ? (err.description || (err.messages && err.messages[0]) || err.message || '')\n      : 'ejecucion crashed (sin resultData)';\n    g.lastNode = (err && err.node && err.node.name) || (esCrashed ? 'ninguno (murio antes de ejecutar nodos)' : '');\n    g.lastExecId = execId;\n    g.wfId = r.workflowId || g.wfId;\n  }\n}\nconst out = [];\nfor (const name of Object.keys(byWf)) {\n  const g = byWf[name];\n  if (g.count < 2) continue; // A#3 umbral por recurrencia RECIENTE (no acumulado historico)\n  // A#1: si la ejecucion automatica mas reciente del workflow es success, ya se recupero -> suprimir la senal.\n  const ult = ultimaPorWf[g.wfId];\n  if (ult && ult.status === 'success') continue;\n  const safeName = sanitize(name);\n  const safeErr = sanitize(g.lastErr) || 'sin mensaje';\n  const safeNode = sanitize(g.lastNode) || 'desconocido';\n  const signalKey = 'n8n_exec_fail:' + safeName;\n  const titulo = (safeName + ' fallo ' + g.count + ' veces: ' + safeErr).slice(0, 200);\n  // B#5: link directo a la ultima ejecucion fallida.\n  const link = (g.wfId && g.lastExecId)\n    ? 'https://airedeagua.app.n8n.cloud/workflow/' + g.wfId + '/executions/' + g.lastExecId\n    : 'https://airedeagua.app.n8n.cloud/home/executions';\n  // B#8: prioridad por severidad. Webhook productivo caido -> 1 (Urgent); >=5 fallos -> 2 (High); resto -> 3 (Medium).\n  let priority = 3;\n  if (g.count >= 5) priority = 2;\n  if (g.isWebhook) priority = 1;\n  const nErr = g.count - g.crashed;\n  const desglose = g.crashed > 0 ? (' (' + nErr + ' error / ' + g.crashed + ' crashed)') : '';\n  const notaCrashed = g.crashed > 0\n    ? ('\\nAtención: ' + g.crashed + ' de esas ejecuciones quedaron en estado **crashed**: el worker murió ANTES de ejecutar ningún nodo (runData vacío, sin resultData), típico de agotamiento de capacidad/concurrencia y no de un bug de lógica. n8n auto-desactiva un workflow tras crashes repetidos.\\n')\n    : '';\n  const descripcion = 'Señal automática (Sentinela v1): el workflow n8n **' + safeName + '** registró ' + g.count + ' ejecuciones fallidas' + desglose + ' (estado error o crashed) en los últimos ' + N_DIAS + ' días.\\n' + notaCrashed + '\\n' +\n    'Nodo que falló: ' + safeNode + '\\n' +\n    'Último error (saneado): ' + safeErr + '\\n' +\n    'Primer fallo: ' + (g.firstAt || 'n/d') + '\\n' +\n    'Último fallo: ' + (g.lastAt || 'n/d') + '\\n' +\n    'Ejecución: ' + link + '\\n\\n' +\n    'Nivel de autonomía: pr-only (máximo).\\n\\nsignal-key: ' + signalKey;\n  out.push({ json: {\n    senal: 'n8n_exec_fail',\n    fuente: safeName,\n    signalKey: signalKey,\n    titulo: titulo,\n    descripcion: descripcion,\n    priority: priority,\n  } });\n}\nreturn out;"
       }
     },
     {
@@ -169,7 +169,7 @@
       ],
       "parameters": {
         "mode": "append",
-        "numberInputs": 5
+        "numberInputs": 6
       }
     },
     {
@@ -306,7 +306,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// Label IDs (team AIR). NUNCA usar agent-ready (c89c500f-...) en señales de Sentinela: es pr-only.\nconst LBL_NEEDS_REFINEMENT = '197fb5ae-dff3-45de-b2ae-1533069d1d39';\nconst LBL_SENSORS = 'd30a9e60-b290-4fd4-bacc-c9c87d66bf18';\n// AIR-225: provenance. TODA señal de Sentinela nace con el label 'sentinela'.\n// Es el candado del auto-cierre: solo issues con este label (+ marcador signal-key) son elegibles para cerrarse.\nconst LBL_SENTINELA = '519560f6-81b5-4f06-b5b8-29c50813bb09';\n// AIR-248: human-gate. draft_unpublished se arregla con un publish_workflow humano (no codigo) -> jamas agent-ready ni needs-refinement.\nconst LBL_HUMAN_GATE = '5ecc352a-e16d-4768-935f-133ae389a9dd';\n// Labels por tipo de señal (sentinela SIEMPRE presente):\n//   n8n_exec_fail / drift -> [sentinela, needs-refinement]\n//   sync_gap / loop_process_gap -> [sentinela, Sensors, needs-refinement] (jamás agent-ready)\n//   draft_unpublished     -> [sentinela, human-gate] (paso humano; ni agent-ready ni needs-refinement)\nfunction labelsFor(senal) {\n  if (senal === 'sync_gap') return [LBL_SENTINELA, LBL_SENSORS, LBL_NEEDS_REFINEMENT];\n  if (senal === 'loop_process_gap') return [LBL_SENTINELA, LBL_SENSORS, LBL_NEEDS_REFINEMENT];\n  if (senal === 'draft_unpublished') return [LBL_SENTINELA, LBL_HUMAN_GATE];\n  return [LBL_SENTINELA, LBL_NEEDS_REFINEMENT];\n}\nconst ctx = $(\"Linear - Contexto (label + abiertos)\").first().json;\nconst gql = (ctx && ctx.data) || {};\nconst abiertos = (gql.issues && gql.issues.nodes) || [];\nconst keysAbiertos = new Set();\nfor (const i of abiertos) {\n  const m = String(i.description || '').match(/signal-key:\\s*([^\\n\\r]+)/);\n  if (m && m[1]) keysAbiertos.add(m[1].trim());\n}\nconst candidatos = $input.all().map(function (i) { return i.json; });\nconst vistos = new Set();\nconst out = [];\nfor (const c of candidatos) {\n  const t = String(c.titulo || '').trim();\n  if (!t) continue;\n  const sk = String(c.signalKey || '').trim();\n  if (!sk) continue;\n  if (keysAbiertos.has(sk)) continue;\n  if (vistos.has(sk)) continue;\n  vistos.add(sk);\n  const senal = c.senal || '';\n  // AIR-230 B: threading de priority hasta el IssueCreateInput. exec_fail lo trae (1/2/3);\n  // sync_gap/drift/draft_unpublished no lo setean -> 3 (Medium) por defecto (nunca None).\n  const priority = (typeof c.priority === 'number' && c.priority >= 1 && c.priority <= 4) ? c.priority : 3;\n  out.push({ json: {\n    titulo: t,\n    descripcion: c.descripcion || '',\n    senal: senal,\n    fuente: c.fuente || '',\n    signalKey: sk,\n    labelIds: labelsFor(senal),\n    priority: priority,\n  } });\n}\nreturn out;"
+        "jsCode": "// Label IDs (team AIR). NUNCA usar agent-ready (c89c500f-...) en señales de Sentinela: es pr-only.\nconst LBL_NEEDS_REFINEMENT = '197fb5ae-dff3-45de-b2ae-1533069d1d39';\nconst LBL_SENSORS = 'd30a9e60-b290-4fd4-bacc-c9c87d66bf18';\n// AIR-225: provenance. TODA señal de Sentinela nace con el label 'sentinela'.\n// Es el candado del auto-cierre: solo issues con este label (+ marcador signal-key) son elegibles para cerrarse.\nconst LBL_SENTINELA = '519560f6-81b5-4f06-b5b8-29c50813bb09';\n// AIR-248: human-gate. draft_unpublished se arregla con un publish_workflow humano (no codigo) -> jamas agent-ready ni needs-refinement.\nconst LBL_HUMAN_GATE = '5ecc352a-e16d-4768-935f-133ae389a9dd';\n// Labels por tipo de señal (sentinela SIEMPRE presente):\n//   n8n_exec_fail / drift -> [sentinela, needs-refinement]\n//   sync_gap / loop_process_gap -> [sentinela, Sensors, needs-refinement] (jamás agent-ready)\n//   draft_unpublished / wf_inactive -> [sentinela, human-gate] (paso humano; ni agent-ready ni needs-refinement)\nfunction labelsFor(senal) {\n  if (senal === 'sync_gap') return [LBL_SENTINELA, LBL_SENSORS, LBL_NEEDS_REFINEMENT];\n  if (senal === 'loop_process_gap') return [LBL_SENTINELA, LBL_SENSORS, LBL_NEEDS_REFINEMENT];\n  if (senal === 'draft_unpublished') return [LBL_SENTINELA, LBL_HUMAN_GATE];\n  // wf_inactive: reactivar un workflow apagado es una DECISION humana (puede reproducir la caida). El email de aviso se dispara con este mismo label.\n  if (senal === 'wf_inactive') return [LBL_SENTINELA, LBL_HUMAN_GATE];\n  return [LBL_SENTINELA, LBL_NEEDS_REFINEMENT];\n}\nconst ctx = $(\"Linear - Contexto (label + abiertos)\").first().json;\nconst gql = (ctx && ctx.data) || {};\nconst abiertos = (gql.issues && gql.issues.nodes) || [];\nconst keysAbiertos = new Set();\nfor (const i of abiertos) {\n  const m = String(i.description || '').match(/signal-key:\\s*([^\\n\\r]+)/);\n  if (m && m[1]) keysAbiertos.add(m[1].trim());\n}\nconst candidatos = $input.all().map(function (i) { return i.json; });\nconst vistos = new Set();\nconst out = [];\nfor (const c of candidatos) {\n  const t = String(c.titulo || '').trim();\n  if (!t) continue;\n  const sk = String(c.signalKey || '').trim();\n  if (!sk) continue;\n  if (keysAbiertos.has(sk)) continue;\n  if (vistos.has(sk)) continue;\n  vistos.add(sk);\n  const senal = c.senal || '';\n  // AIR-230 B: threading de priority hasta el IssueCreateInput. exec_fail lo trae (1/2/3);\n  // sync_gap/drift/draft_unpublished no lo setean -> 3 (Medium) por defecto (nunca None).\n  const priority = (typeof c.priority === 'number' && c.priority >= 1 && c.priority <= 4) ? c.priority : 3;\n  out.push({ json: {\n    titulo: t,\n    descripcion: c.descripcion || '',\n    senal: senal,\n    fuente: c.fuente || '',\n    signalKey: sk,\n    labelIds: labelsFor(senal),\n    priority: priority,\n  } });\n}\nreturn out;"
       }
     },
     {
@@ -556,6 +556,102 @@
         "language": "javaScript",
         "jsCode": "function sanitize(s) {\n  if (s == null) return '';\n  let t = String(s).replace(/[\\r\\n\\t]+/g, ' ').replace(/[`<>{}|\\\\$]/g, '');\n  t = t.replace(/signal-key\\s*:/gi, 'signal-key_');\n  return t.replace(/\\s+/g, ' ').trim().slice(0, 120);\n}\n// AIR-237 - Senal loop_process_gap: un proceso de loop dejo de registrar corridas EXITOSAS en\n// public.ai_analysis_log mas alla de su cadencia esperada (el caso raiz de AIR-237 fue una corrida\n// que quedo logueada pero FALLO; contar solo exitos evita que un run fallido resetee el reloj).\n// EXPECTED es una ALLOWLIST hardcodeada: NO se itera sobre las filas devueltas sino sobre esta lista,\n// para que el edge \"el proceso NUNCA corrio\" (MAX(created_at)=null) tambien dispare la senal.\n// Umbral POR TIPO (confirmado con el owner), no un umbral fijo:\n//   insights_decay          -> corre SEMANAL; 8d  = 7d de cadencia + 1d de gracia.\n//   knowledge_consolidation -> corre MENSUAL (AIR-246); 35d = ~30d de cadencia + gracia. Un umbral\n//     fijo de 8d aqui daria falsos positivos ~3 de cada 4 semanas (spam), de ahi el mapa por tipo.\nconst EXPECTED = [\n  { tipo: 'insights_decay',          umbral_dias: 8  },   // semanal + gracia\n  { tipo: 'knowledge_consolidation', umbral_dias: 35 },   // mensual + gracia (AIR-246)\n];\n// estado exitoso segun el constraint ai_analysis_log_estado_check (running/completed/error/ok/\n// abortado/skip_duplicado). El HTTP ya filtra a in.(completed,ok,success); aqui se refuerza.\nconst OK = new Set(['completed', 'ok', 'success']);\nconst rows = $input.all().map(function (i) { return i.json; });\n// MAX(created_at) por tipo, SOLO filas exitosas.\nconst maxPorTipo = {};\nfor (const r of rows) {\n  if (!r || !OK.has(String(r.estado || '').toLowerCase())) continue;\n  const tipo = String(r.tipo || '');\n  const atMs = r.created_at ? Date.parse(r.created_at) : NaN;\n  if (!(atMs > 0)) continue;\n  if (!(tipo in maxPorTipo) || atMs > maxPorTipo[tipo]) maxPorTipo[tipo] = atMs;\n}\nconst ahora = Date.now();\nconst out = [];\nfor (const exp of EXPECTED) {\n  const tipo = exp.tipo;                 // enum de la allowlist -> seguro, NO forjable\n  const umbral = exp.umbral_dias;\n  const ultimoMs = (tipo in maxPorTipo) ? maxPorTipo[tipo] : null;\n  let dias = null;\n  if (ultimoMs != null) {\n    dias = Math.floor((ahora - ultimoMs) / 86400000);\n    if (dias <= umbral) continue;        // dentro de cadencia esperada -> no hay gap\n  }\n  // signalKey / marcador signal-key: se construye SOLO desde <tipo> (enum del check), jamas desde\n  // texto crudo de la fila (resumen/error_mensaje) -> no forjable via prompt injection.\n  const signalKey = 'loop_process_gap:' + tipo;\n  const ultimaTxt = ultimoMs != null ? new Date(ultimoMs).toISOString() : 'nunca';\n  const diasTxt = dias != null ? String(dias) : 'infinito (sin corrida exitosa registrada)';\n  const titulo = ('Proceso loop ' + tipo + ' no se registra hace ' + diasTxt + ' dias (umbral ' + umbral + 'd)').slice(0, 200);\n  const descripcion = 'Senal automatica (Sentinela v1): el proceso de loop **' + tipo + '** no registra una corrida EXITOSA en public.ai_analysis_log ' +\n    (ultimoMs != null\n      ? ('desde hace ' + dias + ' dias (ultima exitosa: ' + ultimaTxt + ')')\n      : 'NUNCA (no hay ninguna corrida exitosa registrada)') + '. ' +\n    'Umbral esperado para este tipo: ' + umbral + ' dias (cadencia + gracia). ' +\n    'Solo se cuentan corridas con estado exitoso (completed/ok/success): un run que quedo logueado pero FALLO no resetea el reloj (caso raiz AIR-237).\\n\\n' +\n    'Nivel de autonomia: pr-only (maximo).\\n\\nsignal-key: ' + signalKey;\n  out.push({ json: {\n    senal: 'loop_process_gap',\n    fuente: tipo,\n    signalKey: signalKey,\n    titulo: titulo,\n    descripcion: descripcion,\n  } });\n}\nreturn out;"
       }
+    },
+    {
+      "id": "cc250001-0250-4c50-b250-crashedhttp1",
+      "name": "n8n - Ejecuciones crashed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        560,
+        -160
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://airedeagua.app.n8n.cloud/api/v1/executions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "status",
+              "value": "crashed"
+            },
+            {
+              "name": "limit",
+              "value": "100"
+            },
+            {
+              "name": "includeData",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "n8n API"
+        }
+      }
+    },
+    {
+      "id": "ff251001-0251-4f51-b251-wfinactive01",
+      "name": "Workflow del baseline inactivo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        672
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "function sanitize(s) {\n  if (s == null) return '';\n  let t = String(s).replace(/[\\r\\n\\t]+/g, ' ').replace(/[`<>{}|\\\\$]/g, '');\n  t = t.replace(/signal-key\\s*:/gi, 'signal-key_');\n  return t.replace(/\\s+/g, ' ').trim().slice(0, 120);\n}\nfunction normName(name) {\n  return String(name || '').trim().replace(/[^a-zA-Z0-9_\\- ]/g, '').replace(/[\\s-]+/g, '_');\n}\n// Senal wf_inactive: un workflow que SI esta en el baseline versionado esta APAGADO en n8n.\n// Caso real (2026-08-10): n8n auto-desactivo 'E2 - Webhook Shopify Customers' tras una tormenta de\n// webhooks y el Sentinela no lo vio. 'Drift n8n vs repo' solo cubre el caso INVERSO (activo en n8n y\n// ausente del baseline) porque filtra `list.filter(w => w.active)`: nunca lee `active` como senal de\n// apagado. Esta rama cierra ese hueco leyendo la MISMA respuesta ya fetchada por\n// 'n8n - Workflows actuales' (GET /api/v1/workflows trae `active`), sin llamadas HTTP extra.\nconst BASELINE = $vars && $vars.SENTINELA_BASELINE ? JSON.parse($vars.SENTINELA_BASELINE) : null;\nconst list = $input.first().json.data || [];\nconst out = [];\nif (!BASELINE) {\n  return out; // mismo comportamiento que 'Drift n8n vs repo': sin baseline no se emite nada\n}\nconst baseSet = new Set(BASELINE);\nconst vistos = new Set();\nfor (const w of list) {\n  const n = normName(w.name);\n  if (!baseSet.has(n)) continue;   // solo workflows del baseline versionado\n  if (w.active === true) continue; // vivo y activo -> nada que reportar\n  if (vistos.has(n)) continue;\n  vistos.add(n);\n  const safe = sanitize(n);\n  const wfId = sanitize(w.id);\n  // signal-key estable para dedupe/auto-cierre (mismo contrato que el resto de senales).\n  const signalKey = 'inactive:' + safe;\n  const titulo = ('Workflow ' + safe + ' esta DESACTIVADO en n8n').slice(0, 200);\n  const link = wfId\n    ? 'https://airedeagua.app.n8n.cloud/workflow/' + wfId\n    : 'https://airedeagua.app.n8n.cloud/home/workflows';\n  const descripcion = 'Señal automática (Sentinela v1): el workflow **' + safe + '** existe en el baseline versionado (n8n/workflows/) pero su estado vivo en n8n es `active: false` — está DESACTIVADO y no procesa nada.\\n\\n' +\n    'n8n desactiva un workflow por su cuenta tras crashes repetidos, y también pudo apagarse a mano. En cualquiera de los dos casos la ingesta que depende de él está detenida y en silencio: sin ejecuciones no hay fallos que contar.\\n\\n' +\n    'Workflow: ' + link + '\\n\\n' +\n    'Fix (paso HUMANO): decidir si se reactiva. Reactivarlo sin entender por qué se apagó puede reproducir la caída que lo tumbó, así que requiere una decisión humana explícita — por eso esta señal es human-gate y nunca agent-ready.\\n\\n' +\n    'Nivel de autonomía: human-gate (requiere decisión humana para reactivar).\\n\\nsignal-key: ' + signalKey;\n  out.push({ json: {\n    senal: 'wf_inactive',\n    fuente: safe,\n    signalKey: signalKey,\n    titulo: titulo,\n    descripcion: descripcion,\n  } });\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "aa252001-0252-4a52-b252-hgmailbuild1",
+      "name": "Armar email human-gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1792,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "function sanitize(s) {\n  if (s == null) return '';\n  let t = String(s).replace(/[\\r\\n\\t]+/g, ' ').replace(/[`<>{}|\\\\$]/g, '');\n  t = t.replace(/&/g, '&amp;');\n  t = t.replace(/signal-key\\s*:/gi, 'signal-key_');\n  return t.replace(/\\s+/g, ' ').trim().slice(0, 200);\n}\n// Aviso por email de las senales HUMAN-GATE (draft_unpublished, wf_inactive).\n// Una senal human-gate no la puede resolver un agente: exige una decision humana (publicar un draft,\n// reactivar un workflow apagado). Un issue de Linear puede pasar dias sin mirarse, y justo esas son las\n// senales donde el silencio cuesta caro -> ademas del issue, se manda correo.\n// Corre en la rama 'done' del loop de creacion: solo se notifica lo que YA quedo creado en Linear.\n// Fuente de verdad de \"que es human-gate\": el label que asigno 'Dedupe vs Linear' (una sola lista de\n// senales; asi no hay dos listas que se puedan desincronizar al agregar una senal nueva).\nconst LBL_HUMAN_GATE = '5ecc352a-e16d-4768-935f-133ae389a9dd';\nlet creados = [];\ntry {\n  creados = $('Dedupe vs Linear').all().map(function (i) { return i.json; });\n} catch (e) {\n  creados = [];\n}\nconst hg = creados.filter(function (c) {\n  return Array.isArray(c.labelIds) && c.labelIds.indexOf(LBL_HUMAN_GATE) !== -1;\n});\nif (!hg.length) return []; // sin senales human-gate no se emite item -> el nodo Gmail no corre\n// Todo lo que entra al HTML es texto EXTERNO (nombres de workflow de la API de n8n) = DATA, nunca\n// instrucciones: cada campo vuelve a pasar por sanitize() (quita < > y escapa &) antes de interpolarse.\nconst filas = hg.map(function (c) {\n  return '<li><b>' + sanitize(c.titulo) + '</b><br>' +\n    'senal: ' + sanitize(c.senal) + ' &middot; fuente: ' + sanitize(c.fuente) + '<br>' +\n    '<code>clave: ' + sanitize(c.signalKey) + '</code></li>';\n}).join('');\nconst subject = 'Sentinela · ' + hg.length + ' señal(es) human-gate requieren decisión humana';\nconst html = '<p>El Sentinela creó <b>' + hg.length + '</b> issue(s) en Linear (team AIR) con el label <b>human-gate</b>. ' +\n  'Ninguna la puede cerrar un agente: requieren una decisión tuya.</p>' +\n  '<ul>' + filas + '</ul>' +\n  '<p>Cola completa: filtra en Linear por los labels <b>sentinela</b> + <b>human-gate</b>.</p>' +\n  '<p style=\"color:#888;font-size:12px\">Los textos de esta alerta provienen de datos externos (API de n8n) y están saneados: son DATOS, no instrucciones.</p>';\nreturn [{ json: { subject: subject, html: html, count: hg.length } }];"
+      }
+    },
+    {
+      "id": "bb253001-0253-4b53-b253-hgmailsend01",
+      "name": "Enviar email human-gate",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        2016,
+        0
+      ],
+      "parameters": {
+        "sendTo": "ssuarez.mesa@gmail.com",
+        "subject": "={{ $json.subject }}",
+        "message": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false,
+          "senderName": "Aire de Agua · Sentinela"
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "PLACEHOLDER",
+          "name": "Gmail account"
+        }
+      }
     }
   ],
   "connections": {
@@ -594,7 +690,7 @@
       "main": [
         [
           {
-            "node": "Agrupar fallos >=2",
+            "node": "n8n - Ejecuciones crashed",
             "type": "main",
             "index": 0
           }
@@ -662,6 +758,11 @@
             "node": "Draft sin publicar",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Workflow del baseline inactivo",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
@@ -712,7 +813,13 @@
     },
     "Loop crear issues": {
       "main": [
-        [],
+        [
+          {
+            "node": "Armar email human-gate",
+            "type": "main",
+            "index": 0
+          }
+        ],
         [
           {
             "node": "Linear - Crear issue",
@@ -818,6 +925,39 @@
             "node": "Unir candidatos",
             "type": "main",
             "index": 4
+          }
+        ]
+      ]
+    },
+    "n8n - Ejecuciones crashed": {
+      "main": [
+        [
+          {
+            "node": "Agrupar fallos >=2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Workflow del baseline inactivo": {
+      "main": [
+        [
+          {
+            "node": "Unir candidatos",
+            "type": "main",
+            "index": 5
+          }
+        ]
+      ]
+    },
+    "Armar email human-gate": {
+      "main": [
+        [
+          {
+            "node": "Enviar email human-gate",
+            "type": "main",
+            "index": 0
           }
         ]
       ]

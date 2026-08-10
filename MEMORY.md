@@ -134,6 +134,47 @@ dentro del cuerpo del RPC (mismo patrón que `analytics.eval_recompute` mig 086,
   el literal, no relajar el check. `\broas\b` de R5 no matchea `roas_meta`/`roas_margen_atribuido` (`_` es
   word-char) — esas columnas son seguras.
 
+## Sentinela — puntos ciegos del sensor y contrato de señales
+- **`?status=` de la API REST v1 de n8n acepta UN SOLO valor** → un nodo HTTP por estado. `error` y
+  `crashed` son estados DISTINTOS: una ejecución `crashed` muere ANTES de correr ningún nodo (`runData:{}`,
+  `startedAt: null`, **sin `resultData`**), así que cualquier filtro que exija `data.resultData.error.message`
+  la descarta y cualquier ventana de recencia basada solo en `stoppedAt||startedAt` la descarta otra vez
+  (doble miss real: 16 crashed de E2 invisibles, 2026-08-10). Reglas: fallback de timestamp a `createdAt`,
+  mensaje sintético cuando no hay `resultData`, y dedupe por `execution.id` al unir dos respuestas.
+- **Dos nodos HTTP → un Code node: encadenarlos, no paralelizarlos.** Dos conexiones a la misma entrada de
+  un Code node lo ejecutan dos veces. Patrón: `A → B → Code`, y dentro del Code leer AMBAS por referencia
+  explícita `$('nombre')` (envuelta en try/catch para degradar si una no corrió), nunca por `$input`.
+- **`Drift n8n vs repo` solo cubre "activo en n8n y ausente del baseline"** (`list.filter(w => w.active)`):
+  el caso inverso —workflow del baseline con `active:false`— es una señal aparte (`wf_inactive`,
+  `signal-key: inactive:<normName>`). Un workflow apagado no produce fallos que contar: el silencio ES la
+  señal, y la red de `sync_log` solo lo atrapa ~3 días tarde.
+- Contrato de una señal nueva del Sentinela: (1) `{senal, fuente, signalKey, titulo, descripcion}` con el
+  marcador `signal-key: <k>` al final del cuerpo (lo usan dedupe Y auto-cierre); (2) entrada nueva en el
+  merge `Unir candidatos` — subir `numberInputs` Y conectar al índice correcto; (3) rama en `labelsFor()` de
+  `Dedupe vs Linear` (`human-gate` cuando el fix NO es código: publicar draft, reactivar workflow);
+  (4) `sanitize()` sobre todo texto que venga de la API de n8n.
+- Aviso por email de señales human-gate: rama `done` (output **0**) de `Loop crear issues` → Code que lee
+  `$('Dedupe vs Linear').all()` y filtra por el **label id human-gate** (no por una segunda lista de nombres
+  de señal, que se desincronizaría) → nodo `n8n-nodes-base.gmail` v2.2. Credencial Gmail existente en la
+  instancia: `Gmail account` (`gmailOAuth2`); en el repo va SIEMPRE como `{"id":"PLACEHOLDER","name":"Gmail
+  account"}` (convención de los 9 workflows que ya mandan correo). Devolver `[]` del Code = el nodo Gmail no
+  corre (no hace falta IF).
+- **NINGÚN export de `n8n/workflows/*.json` tiene hoy `activeVersion` como objeto** (`Sentinela_v1.json` trae
+  la CLAVE pero con valor `null`) → `check-n8n-graph-parity.sh` sale "paridad N/A" para todo el directorio.
+  La regla AIR-140 de doble edición no aplica al JSON de git; la paridad real vive en la instancia y la
+  verifica el orquestador tras el publish.
+
+## n8n Cloud — NO existe control de concurrencia por workflow (verificado 2026-08-10)
+El `workflowSettings` del propio OpenAPI de la instancia (`GET /api/v1/openapi.yml`) tiene
+`additionalProperties: false` y sus únicas claves son: `saveExecutionProgress`, `saveManualExecutions`,
+`saveDataErrorExecution`, `saveDataSuccessExecution`, `executionTimeout`, `errorWorkflow`, `timezone`,
+`executionOrder`, `binaryMode`, `callerPolicy`, `callerIds`, `timeSavedMode`, `timeSavedPerExecution`,
+`redactionPolicy`, `availableInMCP`, `customTelemetryTags`. Cero ocurrencias de "concurren"/"throttle" en
+todo el spec, y el `setWorkflowSettings` del MCP oficial expone el mismo set. La concurrencia en n8n es
+**instancia** (`N8N_CONCURRENCY_PRODUCTION_LIMIT`, fijado por el plan en Cloud), no por workflow → ante una
+ráfaga de webhooks NO hay parámetro de encolado que poner en el JSON; meter una clave inventada la ignora
+la API en silencio. Palancas reales: subir plan/worker, o rediseñar la ingesta (webhook → cola → consumidor).
+
 ## n8n "slim" de payload Shopify → RPC — verificar contrato completo (AIR-43)
 Cuando un nodo Code recorta el payload de Shopify a un whitelist de campos antes de mandarlo a un RPC, el
 whitelist puede desincronizarse del contrato real del RPC **sin error visible**: el campo no llega, el RPC
