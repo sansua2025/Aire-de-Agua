@@ -137,17 +137,44 @@ dentro del cuerpo del RPC (mismo patrón que `analytics.eval_recompute` mig 086,
 ## Sentinela — puntos ciegos del sensor y contrato de señales
 - **`?status=` de la API REST v1 de n8n acepta UN SOLO valor** → un nodo HTTP por estado. `error` y
   `crashed` son estados DISTINTOS: una ejecución `crashed` muere ANTES de correr ningún nodo (`runData:{}`,
-  `startedAt: null`, **sin `resultData`**), así que cualquier filtro que exija `data.resultData.error.message`
-  la descarta y cualquier ventana de recencia basada solo en `stoppedAt||startedAt` la descarta otra vez
-  (doble miss real: 16 crashed de E2 invisibles, 2026-08-10). Reglas: fallback de timestamp a `createdAt`,
-  mensaje sintético cuando no hay `resultData`, y dedupe por `execution.id` al unir dos respuestas.
+  `startedAt: null`, **sin `resultData`**). Los misses que dejaron pasar la caída de E2 (2026-08-10) fueron
+  EXACTAMENTE DOS: (1) el sensor solo pedía `?status=error`, así que las `crashed` ni se traían; (2) el filtro
+  exigía `data.resultData.error.message`, que una `crashed` nunca tiene. **La ventana de recencia NO fue un
+  miss**: verificado contra PROD, las 23 ejecuciones `crashed` de `DQ4tVkCbtnp4KDX4` traen `stoppedAt`
+  POBLADO (solo `startedAt` es null), así que `stoppedAt||startedAt` las habría dejado pasar. El fallback a
+  `createdAt` se mantiene como defensa extra, no como parte del fix — y no está garantizado por contrato: el
+  schema `execution` del OpenAPI de la instancia no declara `createdAt`. Reglas: mensaje sintético cuando no
+  hay `resultData`, dedupe por `execution.id` al unir dos respuestas, y **un solo criterio de timestamp para
+  todas las ejecuciones** (mezclar `stoppedAt` de unas con `createdAt` de otras deja que un `success` viejo
+  gane el slot de "más reciente" y suprima una señal viva).
 - **Dos nodos HTTP → un Code node: encadenarlos, no paralelizarlos.** Dos conexiones a la misma entrada de
   un Code node lo ejecutan dos veces. Patrón: `A → B → Code`, y dentro del Code leer AMBAS por referencia
   explícita `$('nombre')` (envuelta en try/catch para degradar si una no corrió), nunca por `$input`.
 - **`Drift n8n vs repo` solo cubre "activo en n8n y ausente del baseline"** (`list.filter(w => w.active)`):
-  el caso inverso —workflow del baseline con `active:false`— es una señal aparte (`wf_inactive`,
+  el caso inverso —un workflow que DEBE estar prendido con `active:false`— es una señal aparte (`wf_inactive`,
   `signal-key: inactive:<normName>`). Un workflow apagado no produce fallos que contar: el silencio ES la
   señal, y la red de `sync_log` solo lo atrapa ~3 días tarde.
+- **`wf_inactive` se calcula contra una ALLOWLIST explícita (`EXPECTED_ACTIVE`), NUNCA contra
+  `$vars.SENTINELA_BASELINE`.** El baseline es "lo versionado", no "lo que debe estar prendido": 32 de los 47
+  exports están `active:false` por diseño (backfills, one-shots, `E6A_Copy_Generator`, `Error_Handler_Global`
+  —que se invoca como `errorWorkflow` sin necesitar `active:true`—). Derivarla del baseline no solo hace ruido:
+  la señal de un backfill apagado para siempre queda VIVA, el CANDADO 3 de `Calcular issues a cerrar` no la
+  cierra nunca y, al ser human-gate, ningún agente puede cerrarla → **issue inmortal** que se recrea si un
+  humano lo cierra a mano. Tampoco vale reinterpretar el baseline como "los que deben estar activos": `Drift
+  n8n vs repo` compara los ACTIVOS vivos contra ESE MISMO baseline, así que las dos lecturas son mutuamente
+  excluyentes (cada activo legítimo que faltara saldría como falso positivo de drift). Convención: allowlist
+  en el propio nodo, como el `EXPECTED` de `Procesos loop estancados`.
+- **Tope de 5 issues por corrida** (`.claude/agents/sentinel.md` regla (d), `docs/agentes/AUTONOMIA.md` §3),
+  implementado al final de `Dedupe vs Linear`: se crean los 5 primeros y el resto va a UN issue resumen
+  `triage: N señales pendientes`. Ese resumen **no lleva marcador `signal-key:`** a propósito — su clave no
+  viaja por `Unir candidatos`, así que el CANDADO 3 lo leería como señal muerta y lo cerraría/recrearía cada
+  día (flip-flop); se deduplica por prefijo de TÍTULO + label `sentinela`. Como el tope acota la salida de
+  `Dedupe vs Linear`, acota también el correo human-gate, que se arma desde ahí.
+- **El correo human-gate no puede afirmar "creó N issues" leyendo los candidatos**: Linear responde los
+  errores de GraphQL con **HTTP 200** y `issueCreate.success:false` (rate-limit ante una ráfaga, label id
+  inválido), así que el nodo HTTP no falla. Hay que leer el resultado real; dentro de un `splitInBatches`,
+  `$('Linear - Crear issue').all()` devuelve SOLO la última corrida → recorrer `all(0, runIndex)` en bucle
+  con try/catch (con `batchSize:1`, el run *i* corresponde al candidato *i*).
 - Contrato de una señal nueva del Sentinela: (1) `{senal, fuente, signalKey, titulo, descripcion}` con el
   marcador `signal-key: <k>` al final del cuerpo (lo usan dedupe Y auto-cierre); (2) entrada nueva en el
   merge `Unir candidatos` — subir `numberInputs` Y conectar al índice correcto; (3) rama en `labelsFor()` de
