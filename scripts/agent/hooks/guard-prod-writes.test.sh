@@ -111,6 +111,15 @@ run silencio 'mcp__github__create_branch'    'x'                                
 run silencio 'mcp__github__delete_branch'    'x'                                     'GitHub delete_branch: rama de git, no de Supabase'
 run silencio "${UUID}__list_branches"        ''                                      'list_branches es de solo lectura -> fuera del guard'
 
+echo "== exclusión de GitHub ANCLADA AL INICIO (no subcadena en cualquier posición) =="
+# El glob era `*__github__*`, que casa la subcadena EN CUALQUIER POSICIÓN: un
+# servidor MCP arbitrario cuyo tool llevara `__github__` en medio se saltaba el
+# guard entero. Los 2 primeros FALLAN con el glob sin anclar; el 3.º no (la rama
+# execute_sql va ANTES que la de GitHub en el `case`) y pinea justo ese orden.
+run ask "mcp__x__github__merge_branch"  '' 'merge_branch con "__github__" en posición NO inicial'
+run ask "mcp__x__github__create_branch" '' 'create_branch con "__github__" en posición NO inicial'
+run ask "mcp__x__github__execute_sql"   'INSERT INTO gastos (monto) VALUES (1);' 'orden del case: execute_sql pesa más que la exclusión de GitHub'
+
 echo "== silencio: falsos positivos de -w (palabra completa) =="
 run silencio "mcp__supabase__execute_sql" 'select created_at from gastos;'            'created_at NO es CREATE'
 run silencio "mcp__supabase__execute_sql" 'select updated_at, id from ventas;'        'updated_at NO es UPDATE'
@@ -123,19 +132,58 @@ run_nojq ask      "${UUID}__execute_sql"     'INSERT INTO gastos VALUES(1);' 'ex
 run_nojq silencio "${UUID}__execute_sql"     'SELECT 1'                      'execute_sql con SELECT -> silencio'
 run_nojq silencio 'Bash'                     'ls'                            'tool ajeno -> silencio'
 
-echo "== LÍMITE CONOCIDO (documentado, NO arreglado): el parámetro debe llamarse 'query' =="
-# Pinea la limitación descrita en la cabecera del hook para que la afirmación del
-# comentario sea verificable y para que un futuro arreglo salte aquí como test rojo
-# (y se cambie el 'silencio' por 'ask'). NO es la conducta deseada: es la conducta real.
-json_sql="{\"tool_name\":\"${UUID}__execute_sql\",\"tool_input\":{\"sql\":\"INSERT INTO gastos VALUES(1);\"}}"
-out="$(printf '%s' "$json_sql" | bash "$HOOK" 2>/dev/null)"; rc=$?
-got="$(clasificar "$out" "$rc")"
-if [ "$got" = "silencio" ]; then
-  printf 'ok    (%s) INSERT en un parámetro llamado "sql" pasa en silencio (fail-open conocido)\n' "$got"; PASS=$((PASS+1))
-else
-  printf 'FALLO (%s, esperaba silencio) el fail-open por nombre de parámetro cambió: actualiza la cabecera del hook\n' "$got"; FAIL=$((FAIL+1))
-fi
+echo "== LÍMITE CONOCIDO (documentado, NO arreglado) — casos XFAIL =="
+# Estos casos pinean fail-opens REALES descritos en la cabecera del hook
+# (secciones "LÍMITE CONOCIDO (a)" y "(b)"). Son XFAIL a propósito:
+#   - Si el fail-open sigue ahí -> `xfail`, NO cuenta como FAIL (es la conducta
+#     documentada, no una regresión nueva).
+#   - Si alguien lo ARREGLA -> `MEJORA`, tampoco cuenta como FAIL. Esto es
+#     deliberado: el job `hooks-guards` no tiene `continue-on-error`, así que un
+#     pin estricto haría que CI bloqueara justo el PR que arregla el hueco.
+#   - Cualquier OTRA salida (crash, stdout raro) sí es FAIL: eso es rotura real.
+# Al ver un `MEJORA`: borra ese caso de aquí, muévelo a la sección normal como
+# `run ask ...` y quita el límite correspondiente de la cabecera del hook.
+XFAIL=0; MEJORA=0
+
+# xfail_open <json_completo_de_stdin> <descripción>
+xfail_open() {
+  local json="$1" desc="$2" out rc got
+  out="$(printf '%s' "$json" | bash "$HOOK" 2>/dev/null)"; rc=$?
+  got="$(clasificar "$out" "$rc")"
+  case "$got" in
+    silencio) printf 'xfail  (silencio) %s — fail-open conocido, sigue abierto\n' "$desc"; XFAIL=$((XFAIL+1)) ;;
+    ask)      printf 'MEJORA (ask)      %s — ¡ARREGLADO! Promueve este caso a `run ask` y actualiza la cabecera del hook\n' "$desc"; MEJORA=$((MEJORA+1)) ;;
+    *)        printf 'FALLO  (%s)       %s — ni silencio ni ask: el hook está roto\n' "$got" "$desc"; FAIL=$((FAIL+1)) ;;
+  esac
+}
+
+# (b) El parámetro de la query debe llamarse exactamente `query`.
+xfail_open \
+  "{\"tool_name\":\"${UUID}__execute_sql\",\"tool_input\":{\"sql\":\"INSERT INTO gastos VALUES(1);\"}}" \
+  'INSERT en un parámetro llamado "sql" (no "query")'
+
+# (a) La detección es por VERBO SQL: un write que no exhiba ninguno de los nueve
+# verbos pasa. El RPC es el caso grave — en este repo es la vía canónica de write.
+for q in \
+  "select public.ingest_refund('{}'::jsonb);|write vía RPC (sintácticamente un SELECT)" \
+  "MERGE INTO gastos g USING s ON g.id = s.id WHEN MATCHED THEN DO NOTHING;|MERGE" \
+  "CALL public.recalcular_pnl();|CALL (procedimiento)" \
+  "COPY gastos FROM STDIN;|COPY" \
+  "REFRESH MATERIALIZED VIEW mv_pnl;|REFRESH MATERIALIZED VIEW" \
+  "select setval('gastos_id_seq', 1);|setval" \
+  "LOCK TABLE gastos IN ACCESS EXCLUSIVE MODE;|LOCK TABLE" \
+; do
+  q_sql="${q%%|*}"; q_desc="${q##*|}"
+  q_json="$(tool="${UUID}__execute_sql" query="$q_sql" jq -nc '{tool_name:env.tool,tool_input:{query:env.query}}' 2>/dev/null)" \
+    || q_json="{\"tool_name\":\"${UUID}__execute_sql\",\"tool_input\":{\"query\":\"$q_sql\"}}"
+  xfail_open "$q_json" "$q_desc"
+done
 
 echo "-----------------------------------------"
-printf 'PASS=%s  FAIL=%s\n' "$PASS" "$FAIL"
+printf 'PASS=%s  FAIL=%s  XFAIL=%s  MEJORA=%s\n' "$PASS" "$FAIL" "$XFAIL" "$MEJORA"
+if [ "$MEJORA" -gt 0 ]; then
+  printf '\nNOTA: %s caso(s) marcados MEJORA. Eso es una BUENA señal, no un fallo:\n' "$MEJORA"
+  printf '      un fail-open documentado dejó de existir. Promuévelo a `run ask` y\n'
+  printf '      quita el límite de la cabecera de guard-prod-writes.sh.\n'
+fi
 [ "$FAIL" -eq 0 ]

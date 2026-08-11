@@ -28,12 +28,15 @@
 #   - execute_sql con DDL/DML write  -> ask (INSERT|UPDATE|DELETE|CREATE|ALTER|
 #                                        DROP|GRANT|REVOKE|TRUNCATE, como palabra).
 #   - execute_sql SELECT/read puro   -> pasar en silencio.
-#   - cualquier tool `mcp__…__github__…` / `mcp__github__…` -> pasar en silencio:
+#   - tool que EMPIEZA por `mcp__github__` -> pasar en silencio:
 #     `create_branch`/`delete_branch` de GitHub son ramas de git, no de Supabase,
-#     y el agente crea ramas en cada issue. La exclusión es por literal a
-#     propósito y falla en la dirección segura: si el prefijo de ese servidor
-#     cambiara, dejaría de coincidir y el tool pasaría a pedir confirmación
-#     (un `ask` de más), nunca a saltarse el guard.
+#     y el agente crea ramas en cada issue. El glob está ANCLADO AL INICIO
+#     (`mcp__github__*`), no es una subcadena libre: con `*__github__*` cualquier
+#     tool que llevara `__github__` en medio (`mcp__x__github__merge_branch`)
+#     se saltaba el guard. La exclusión es por literal a propósito y falla en la
+#     dirección segura: si el prefijo de ese servidor cambiara, dejaría de
+#     coincidir y el tool pasaría a pedir confirmación (un `ask` de más), nunca
+#     a saltarse el guard.
 #   - cualquier otro tool            -> pasar en silencio.
 #
 # SEMÁNTICA DEL `matcher` DE settings.json (capa 1) — VERIFICADO EN EL BINARIO
@@ -89,7 +92,19 @@
 #   script reconoce un `execute_sql` sin prefijo alguno, pero ese tool jamás
 #   llegaría aquí porque la capa 1 exige `^mcp__`.
 #
-# LÍMITE CONOCIDO — NO es fail-closed ante un servidor MCP arbitrario
+# LÍMITE CONOCIDO (a) — la detección es POR VERBO SQL, no por efecto
+#   La rama `execute_sql` clasifica buscando INSERT|UPDATE|DELETE|CREATE|ALTER|
+#   DROP|GRANT|REVOKE|TRUNCATE como palabra. Un write que no exhiba ninguno de
+#   esos verbos pasa EN SILENCIO. Verificado: `select public.ingest_refund(...)`
+#   —un RPC que escribe es sintácticamente un SELECT, y en este repo los RPC son
+#   la vía canónica de escritura—, `MERGE`, `CALL`, `COPY … FROM`,
+#   `REFRESH MATERIALIZED VIEW`, `select setval(...)` y `LOCK TABLE` NO disparan
+#   el guard. NO afirmar en ningún sitio que "todo `execute_sql` con write pide
+#   confirmación": la afirmación correcta es "todo `execute_sql` con uno de esos
+#   nueve verbos". Ampliar la lista de verbos no cierra el hueco de los RPC:
+#   eso exigiría una allowlist de funciones o clasificar del lado del servidor.
+#
+# LÍMITE CONOCIDO (b) — NO es fail-closed ante un servidor MCP arbitrario
 #   Ampliar el sufijo cubre el NOMBRE del tool, no su payload. Para la rama
 #   `execute_sql` la decisión sale de `tool_input.query`: si un servidor nuevo
 #   nombra ese parámetro de otra forma (`sql`, `statement`, …), tanto el camino
@@ -120,8 +135,10 @@
 # TESTS
 #   `bash scripts/agent/hooks/guard-prod-writes.test.sh` (incluye el caso del
 #   UUID que falló abierto, las variantes `*_v2`, los ocho tools de
-#   branch/proyecto, la exclusión de GitHub, el read-only, los falsos positivos
-#   tipo `created_at` y el pin del LÍMITE CONOCIDO de arriba).
+#   branch/proyecto, la exclusión de GitHub anclada al INICIO, el read-only, los
+#   falsos positivos tipo `created_at`, y los LÍMITES CONOCIDOS (a) y (b) como
+#   casos XFAIL — reportan pero NO cuentan como FAIL, ni si el fail-open sigue
+#   ni si alguien lo arregla, para que CI no bloquee el PR que lo cierre).
 #   Lo corre el job `hooks-guards` de `.github/workflows/ci.yml`: antes NINGÚN
 #   job ejecutaba estos self-tests, que es cómo la regresión del literal
 #   sobrevivió semanas sin que nadie la viera.
@@ -184,10 +201,13 @@ case "$TOOL" in
     # SELECT / read puro -> silencio.
     exit 0
     ;;
-  *__github__*)
+  mcp__github__*)
     # Ramas de git, no de Supabase. VA ANTES del grupo de branch/proyecto y
     # DESPUÉS de apply_migration/execute_sql (GitHub no expone ninguno de esos
     # dos; si algún día lo hiciera, seguiría entrando por el guard).
+    # ANCLADO AL INICIO a propósito: `*__github__*` casaba la subcadena en
+    # CUALQUIER posición, así que `mcp__x__github__merge_branch` (un servidor
+    # arbitrario, no el de GitHub) se saltaba el guard. Cubierto por el test.
     exit 0
     ;;
   *merge_branch*|*create_branch*|*delete_branch*|*reset_branch*|*rebase_branch*|*deploy_edge_function*|*pause_project*|*restore_project*)
