@@ -21,7 +21,8 @@
  *     monto, fecha, pagador_nombre, creado_por, firestore_id, precision_fecha.
  *
  * MAPEOS (diccionario explícito; FALLA RUIDOSAMENTE ante valor desconocido):
- *   category → categoria_id (13 slugs del seed 106 + claude/influencers/legal de 109)
+ *   category → categoria_id (13 slugs del seed 106 + claude/influencers/legal de 109
+ *                            + las 6 categorías de tecnología de la mig 146)
  *   paidBy   → pagador_id  (aire_de_agua, santi_susi, mandre[histórico/inactivo])
  *
  * FECHA:
@@ -80,7 +81,18 @@ const CATEGORIA_MAP = {
   'claude': 'claude',
   'influencers': 'influencers',
   'legal': 'legal',
+  // Categorías de tecnología de la conciliación 2026 (seed en mig 146).
+  'n8n': 'n8n',
+  'figma': 'figma',
+  'canva': 'canva',
+  'supabase': 'supabase',
+  'google cloud': 'google_cloud', 'google_cloud': 'google_cloud',
+  'google workspace': 'google_workspace', 'google_workspace': 'google_workspace',
 };
+
+// Slugs destino distintos que acepta CATEGORIA_MAP (varias claves apuntan al
+// mismo slug). Solo se usa para el texto del error de categoría desconocida.
+const CATEGORIA_SLUGS = new Set(Object.values(CATEGORIA_MAP));
 
 // paidBy (BQ) → pagador_id. Tolera variantes de espacios/case y de '&' con o
 // sin espacios ('Santi&Susi' == 'Santi & Susi'), pero SOLO para estos 2.
@@ -259,7 +271,7 @@ function mapRow(row, i) {
   if (!catF) errors.push(`${ref}: sin campo category`);
   else {
     categoria_id = CATEGORIA_MAP[normCat(catF.value)];
-    if (!categoria_id) errors.push(`${ref}: category desconocida "${catF.value}" (no está en el diccionario de 13 slugs)`);
+    if (!categoria_id) errors.push(`${ref}: category desconocida "${catF.value}" (no está en el diccionario de ${CATEGORIA_SLUGS.size} slugs)`);
   }
 
   const pagF = resolveField(row, FIELD_CANDIDATES.paidBy);
