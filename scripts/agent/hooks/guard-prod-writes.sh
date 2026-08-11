@@ -3,8 +3,7 @@
 #
 # PROPÓSITO
 #   Frenar (pidiendo confirmación humana) cualquier WRITE al Supabase de PROD
-#   (ref vnctmzsgemefgbtjctlo). El MCP `mcp__supabase__*` apunta a PROD; el
-#   `mcp__supabase-ro__*` es read-only y NO pasa por aquí.
+#   (ref vnctmzsgemefgbtjctlo).
 #
 # CONTRATO (Claude Code PreToolUse)
 #   stdin : JSON con `tool_name` y `tool_input`. Ejemplos:
@@ -24,9 +23,39 @@
 #   - execute_sql SELECT/read puro  -> pasar en silencio.
 #   - cualquier otro tool           -> pasar en silencio.
 #
+# MATCHING POR SUFIJO — POR QUÉ (incidente 11-ago-2026)
+#   El `case` de abajo compara el SUFIJO del tool (`*apply_migration`,
+#   `*execute_sql`), NO el nombre completo. Motivo: el PREFIJO del servidor MCP
+#   NO es estable entre entornos. En Claude Code local el mismo tool llega como
+#   `mcp__supabase__execute_sql`, pero en el entorno remoto/web llega con el UUID
+#   del servidor: `mcp__f0e900e4-dab4-4a99-ae15-05fb4354b0df__execute_sql`.
+#   El 11-ago-2026 este guard comparaba contra los literales `mcp__supabase__*`
+#   y NO se disparó ni una vez en una sesión que aplicó una migración e insertó
+#   42 filas de dinero en PROD: falló ABIERTO, en silencio, en las dos capas
+#   (aquí y en el `matcher` de `.claude/settings.json`). Cualquier prefijo
+#   `mcp__<loquesea>__` debe entrar por el mismo camino.
+#   El sufijo es deliberadamente ancho (fail-closed): si un servidor MCP nuevo
+#   expone `execute_sql`, cae bajo el guard por defecto. Es preferible un `ask`
+#   de más que un write a PROD sin confirmación.
+#
+# CAMINO READ-ONLY (`mcp__supabase-ro__*`) — sigue SILENCIOSO
+#   Antes el read-only quedaba fuera del guard por el literal. Con el matching
+#   por sufijo SÍ entra, lo cual es más seguro y no lo vuelve ruidoso: un SELECT
+#   por `mcp__supabase-ro__execute_sql` no contiene ninguna palabra de write, así
+#   que cae en la rama "SELECT/read puro -> silencio" (exit 0, sin stdout). Solo
+#   pediría confirmación si por ese servidor pasara un DDL/DML, que es justo lo
+#   que queremos ver. Cubierto por `guard-prod-writes.test.sh`.
+#
 # WIRING
 #   El cableado de este hook va en `.claude/settings.json` (hooks.PreToolUse).
 #   NO se configura aquí — lo hace el orquestador. Este archivo es solo la lógica.
+#   OJO: el `matcher` de settings.json es la PRIMERA capa y falla igual si usa
+#   un literal — debe ser una regex `^mcp__.*__(apply_migration|execute_sql)`.
+#   Ver la nota de semántica del matcher en ese archivo.
+#
+# TESTS
+#   `bash scripts/agent/hooks/guard-prod-writes.test.sh` (incluye el caso del
+#   UUID que falló abierto, el read-only y los falsos positivos tipo `created_at`).
 set -uo pipefail
 
 REASON='Write a PROD (vnctmzsgemefgbtjctlo). Antes de confirmar: (1) ¿corriste el gate real / verificaste rpc==oracle==golden? (2) ¿aplicaste primero en un preview branch? (3) ¿es el mínimo cambio? Migraciones: preview branch primero.'
@@ -56,12 +85,15 @@ if [ -z "$TOOL" ]; then
   TOOL="$(printf '%s' "$INPUT" | tr -d '\n' | sed -n 's/.*"tool_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
 fi
 
+# Patrones glob de `case`: reconocen el tool por SUFIJO, sea cual sea el prefijo
+# del servidor MCP (`mcp__supabase__…`, `mcp__<uuid>__…`, `mcp__loquesea__…`) e
+# incluso sin prefijo. Ver la nota "MATCHING POR SUFIJO" en la cabecera.
 case "$TOOL" in
-  mcp__supabase__apply_migration)
+  *apply_migration)
     # DDL siempre: pedir confirmación sin mirar el cuerpo.
     ask
     ;;
-  mcp__supabase__execute_sql)
+  *execute_sql)
     # Extraer la query y decidir por su contenido.
     QUERY=""
     if command -v jq >/dev/null 2>&1; then
