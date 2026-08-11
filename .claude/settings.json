@@ -36,7 +36,6 @@
         ]
       },
       {
-        "_comment": "AIR-162 — matcher REGEX, no literal. Claude Code trata el matcher como literal (comparación ===) si solo contiene letras, dígitos, guion bajo, guion, espacios, coma y barra vertical (doc oficial: https://code.claude.com/docs/en/hooks); con cualquier otro caracter lo compila como RegExp de JavaScript y usa .test() SIN anclar. Matiz: el guion solo cuenta como caracter 'seguro' (literal) desde Claude Code v2.1.195; en versiones anteriores forzaba la evaluación como regex. Por eso el literal 'mcp__supabase__apply_migration' falló ABIERTO el 11-ago-2026: en el entorno remoto el tool llega como mcp__<uuid>__apply_migration. El '^' ancla el inicio; el final queda abierto a propósito (fail-closed ante variantes tipo *_v2). Dos bloques a propósito: validate-sql.sh corre solo para apply_migration.",
         "matcher": "^mcp__.*__apply_migration",
         "hooks": [
           {
@@ -50,8 +49,16 @@
         ]
       },
       {
-        "_comment": "AIR-162 — ver nota del bloque apply_migration. Este bloque NO encadena validate-sql.sh (igual que antes); solo el guard. Alcanza tambien a mcp__supabase-ro__execute_sql: un SELECT por ahi pasa en silencio (el guard solo pide confirmacion si la query trae un write).",
         "matcher": "^mcp__.*__execute_sql",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/scripts/agent/hooks/guard-prod-writes.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "^mcp__.*__(merge_branch|create_branch|delete_branch|reset_branch|rebase_branch|deploy_edge_function|pause_project|restore_project)",
         "hooks": [
           {
             "type": "command",
