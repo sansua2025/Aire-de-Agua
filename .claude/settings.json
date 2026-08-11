@@ -36,7 +36,7 @@
         ]
       },
       {
-        "_comment": "AIR-162 — matcher REGEX, no literal. Claude Code trata el matcher como literal (comparación ===) si solo contiene [a-zA-Z0-9_|]; con cualquier otro caracter lo compila como RegExp y usa .test() SIN anclar. Por eso el literal 'mcp__supabase__apply_migration' falló ABIERTO el 11-ago-2026: en el entorno remoto el tool llega como mcp__<uuid>__apply_migration. El '^' ancla el inicio; el final queda abierto a propósito (fail-closed ante variantes tipo *_v2). Dos bloques a propósito: validate-sql.sh corre solo para apply_migration.",
+        "_comment": "AIR-162 — matcher REGEX, no literal. Claude Code trata el matcher como literal (comparación ===) si solo contiene letras, dígitos, guion bajo, guion, espacios, coma y barra vertical (doc oficial: https://code.claude.com/docs/en/hooks); con cualquier otro caracter lo compila como RegExp de JavaScript y usa .test() SIN anclar. Matiz: el guion solo cuenta como caracter 'seguro' (literal) desde Claude Code v2.1.195; en versiones anteriores forzaba la evaluación como regex. Por eso el literal 'mcp__supabase__apply_migration' falló ABIERTO el 11-ago-2026: en el entorno remoto el tool llega como mcp__<uuid>__apply_migration. El '^' ancla el inicio; el final queda abierto a propósito (fail-closed ante variantes tipo *_v2). Dos bloques a propósito: validate-sql.sh corre solo para apply_migration.",
         "matcher": "^mcp__.*__apply_migration",
         "hooks": [
           {
