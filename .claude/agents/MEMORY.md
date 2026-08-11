@@ -68,12 +68,23 @@ mismo" deja pasar el debilitamiento COORDINADO, y pasaba verde con el guard ente
 de que dos artefactos coincidan (hook cableado, matchers regex y no literales, globs con sus anclajes,
 listas que no encogen). Corolario: no normalizar antes de comparar lo que se protege — quitar los `*` de
 un glob borra justo la señal (`*x*`->`*x` reabre `_v2`).
+**Lección de su v2, también rechazada: un check que INFIERE la cobertura parseando el texto del artefacto
+pierde siempre.** Cada ronda apareció una forma nueva de engañar al parser sin tocar la conducta: espacio
+dentro del grupo del matcher (word-splitting de `for n in $names`), `case` señuelo delante del real
+(localizar por POSICIÓN), arm-sombra con el token presente, `ask` -> `exit 0`. Regla: **si el artefacto se
+puede EJECUTAR, verifícalo por conducta** — payload sintético por stdin y assert sobre la respuesta; el
+parseo se reserva para lo que no tiene binario (ahí, `settings.json`), y aun entonces se EVALÚA la regex
+(`re.search` con la semántica del binario) en vez de inspeccionar la cadena. Bonus: probar por conducta
+caza gratis las castraciones semánticas que ningún parser ve.
 
 ## Control negativo > conteo de tests (AIR-162 PR #184)
 Un test que no falla cuando el guard está roto no prueba nada; revertir el fix y ver qué falla cazó el pin
-del LÍMITE CONOCIDO como trampa. Aplicado al check de cobertura: castrado de 9 formas (una por afirmación),
-selftest rojo en las 9 — si castrar una rama deja el selftest verde, esa rama es redundante o falta el caso
-que la pinea. En suites con XFAIL: pinear el NÚMERO de casos, o borran uno y el run sigue verde.
+del LÍMITE CONOCIDO como trampa. Aplicado al check de cobertura: castrado de 14 formas (una por afirmación
+y una por constante del piso), selftest rojo en las 14 — si castrar una rama deja el selftest verde, esa
+rama es redundante o falta el caso que la pinea (así aparecieron los pines de `FLOOR_SQL_TOOLS`, de los
+prefijos de sonda y de los controles de discriminación). Y las mutaciones del selftest pasan por `cmp`:
+una castración que no cambia el archivo da un verde que no significa nada. En suites con XFAIL: pinear el
+NÚMERO de casos, o borran uno y el run sigue verde.
 
 ---
 
