@@ -36,7 +36,7 @@
         ]
       },
       {
-        "matcher": "mcp__supabase__apply_migration",
+        "matcher": "^mcp__.*__apply_migration",
         "hooks": [
           {
             "type": "command",
@@ -49,7 +49,16 @@
         ]
       },
       {
-        "matcher": "mcp__supabase__execute_sql",
+        "matcher": "^mcp__.*__execute_sql",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/scripts/agent/hooks/guard-prod-writes.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "^mcp__.*__(merge_branch|create_branch|delete_branch|reset_branch|rebase_branch|deploy_edge_function|pause_project|restore_project)",
         "hooks": [
           {
             "type": "command",
