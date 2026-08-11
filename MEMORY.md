@@ -1,7 +1,11 @@
 # MEMORY — Builder (AdeA)
 
 ## Seguridad — RPCs SECURITY DEFINER y RLS (AIR-231, AIR-203; regresión AIR-86)
-- **Vector real de un RPC SECURITY DEFINER ejecutable por anon/authenticated es el grant a PUBLIC** (`=X/postgres` en `pg_proc.proacl`), NO grants explícitos a esos roles — los heredan vía membresía implícita en PUBLIC. `REVOKE EXECUTE ... FROM anon, authenticated` (sin PUBLIC) es un **NO-OP**: así falló AIR-86 (mig 060) y reapareció en AIR-231. Regla: siempre `REVOKE EXECUTE ... FROM PUBLIC, anon, authenticated`. Toda `CREATE FUNCTION`/`CREATE OR REPLACE FUNCTION` nueva reabre el vector si no re-declara el REVOKE (grant default vuelve a incluir PUBLIC) — confirmado en `notify_product_update()` (trigger fn nueva) y `analytics_aprobar_propuesta` (recreada en mig 101). Verificación read-only: `proacl::text` (`=X/postgres`⇒PUBLIC tiene EXECUTE) + `has_function_privilege(rol,fn,'EXECUTE')`. **Patrón cazado 2 veces (AIR-86, AIR-231) → graduar a check determinista en AIR-232 (guardarraíl CI, en curso): scan de `proacl` sobre funciones `prosecdef` que falle si PUBLIC conserva EXECUTE.**
+- **REVOKE EXECUTE de SECURITY DEFINER sin PUBLIC = NO-OP** (anon/authenticated heredan vía membresía
+  implícita en PUBLIC) — GRADUADO a `scripts/agent/check-security-surface.sh` (regla S1, CI job
+  `security-surface`). Toda `CREATE FUNCTION` nueva reabre el vector si no re-declara `REVOKE EXECUTE
+  ... FROM PUBLIC, anon, authenticated`; el check ya lo cubre. Verificación manual si hace falta:
+  `proacl::text` (`=X/postgres`⇒PUBLIC tiene EXECUTE) + `has_function_privilege(rol,fn,'EXECUTE')`.
 - **RLS `ENABLE ROW LEVEL SECURITY` sin policies = deny-by-default** (patrón mig 006, reusado en AIR-203 mig 143 sobre PII de direcciones): neutraliza grants CRUD de tabla residuales sin tocarlos (no hace falta revocarlos aparte). `service_role` BYPASSEA RLS → Loops n8n/análisis siguen intactos. Para vistas que saltan RLS de las tablas base: `security_invoker=true` + `REVOKE SELECT ... FROM anon, authenticated`.
 - **Preview branches inservibles para verificar seguridad de RPCs/objetos viejos** (`MIGRATIONS_FAILED`, snapshot corta ~61 migraciones — AIR-192): objetos de migraciones posteriores al corte del replay no existen ahí, y aplicar un REVOKE/ALTER sobre un objeto ausente ERRORA. Verificación se hizo read-only contra PROD (`proacl`, `has_function_privilege`, `get_advisors` baseline) en vez de branch. Excepción AIR-203: objetos creados directo en PROD fuera de git (`direcciones_web_*`) sí se pudieron scaffold-ear con éxito en un branch reusable (columnas vía information_schema + `pg_get_viewdef(...,true)`) porque el branch YA estaba ACTIVE_HEALTHY para otros fines — no asumir que siempre funciona.
 - Al red-teamear RLS/security_invoker de forma exhaustiva: barrer `pg_get_functiondef` filtrando `prokind='f'` — funciones agregadas (`prokind='a'`) rompen el escaneo si no se excluyen.
@@ -16,14 +20,18 @@ documental, nunca SQL ejecutable); la lógica vive en un `CASE key WHEN '...' TH
 dentro del cuerpo del RPC (mismo patrón que `analytics.eval_recompute` mig 086, `evaluate_detectors` mig 134).
 
 ## Supabase migraciones — patrones recurrentes
+- **CONFLICTO sin resolver con la regla AIR-162 vigente (verificar antes de usar `create_branch`)**: esta
+  nota histórica (AIR-234/235/236/238/240/241/242/259/231/203) describe `create_branch` funcionando para
+  scaffold PROD-fiel vía `execute_sql`. CLAUDE.md §Disciplina de cambios a PROD (confirmado 11-ago-2026,
+  PR #184) PROHÍBE `create_branch` vía MCP y afirma que el grant OAuth NO alcanza los proyectos de preview
+  (`execute_sql` contra su ref da "permission denied"). No asumir que el patrón de abajo sigue vigente —
+  confirmar cuál rige HOY. La vía normal ahora es el check `Supabase Preview` del PR.
 - **Preview branches de este proyecto tienen el replay de migraciones ROTO** (`MIGRATIONS_FAILED`, snapshot
   stale ~abril/mig temprana o corte ~61 migraciones según el branch) pero `ACTIVE_HEALTHY` y consultable.
-  Para validar una mig nueva: `execute_sql` para **scaffolding PROD-fiel de SOLO el delta que la migración
-  toca** (columnas/tablas/funciones de migraciones previas relevantes, verificadas read-only contra PROD
-  antes) → `apply_migration` de la mig real encima → selftest/AC → `delete_branch`. Advisors del branch
-  traen ruido baseline del scaffolding (rls_disabled/search_path_mutable en objetos recreados a mano) — NO
-  son del deliverable; filtrar por "¿el advisor nombra MI objeto?". Confirmado repetidamente (AIR-234/235/
-  236/238/240/241/242/259/231/203) — no re-investigar el bug del replay, ya es axioma del proyecto.
+  Patrón histórico (ver conflicto arriba): `execute_sql` para **scaffolding PROD-fiel de SOLO el delta que
+  la migración toca** → `apply_migration` de la mig real encima → selftest/AC → `delete_branch`. Advisors
+  del branch traen ruido baseline del scaffolding — NO son del deliverable; filtrar por "¿el advisor nombra
+  MI objeto?".
 - **`CREATE OR REPLACE FUNCTION` BORRA el `SET search_path`** fijado por un `ALTER FUNCTION` previo (o por
   un `CREATE OR REPLACE` anterior). Toda vez que se reescribe una función con proconfig `search_path` real
   en PROD, re-declarar `SET search_path TO '...'` (mismo valor verificado) dentro del propio `CREATE OR
@@ -51,33 +59,15 @@ dentro del cuerpo del RPC (mismo patrón que `analytics.eval_recompute` mig 086,
   Conteos de filas/rangos de fecha sí son OK. (AIR-175, candidato R8 en check-data-rules si repite.)
 - **Carga masiva sin psql**: `execute_sql` no acepta ~69KB. Chunks idempotentes (50 filas/chunk, ON CONFLICT
   DO UPDATE) validados contra Postgres local antes.
-- Numeración secuencial estricta: `ls supabase/migrations/ | grep -oE '^[0-9]+' | sort -n | tail -1` (ver
-  también CLAUDE.md §Convención de migraciones). Último conocido al cerrar AIR-133: **144**.
-- **AIR-133: el corte del replay del preview puede ser MUY temprano (pre-`analytics`).** El branch tenía
-  `insights`/`weekly_snapshot`/`ai_analysis_log` (core de marzo) pero NO `analytics` schema, `brand_config`,
-  `decisiones`, `insight_detectors`, ni `evaluate_detectors`/`metric_value_in_range`. Scaffold PROD-fiel del
-  delta = `CREATE SCHEMA analytics` + `ADD COLUMN IF NOT EXISTS` (insights: insight_key/signo_predicho/
-  estado_accion; weekly_snapshot: roas_meta_atribuido/roas_margen_atribuido/margen_paid_atribuido/
-  revenue_paid_atribuido/mix_canal_web) + `DROP/ADD` de checks (insights_dominio_check sin `ventas`/`paid`;
-  ai_analysis_log_tipo_check sin `detector_eval`/`loop_closer`) + tablas mínimas (brand_config con umbrales,
-  decisiones, insight_detectors+seed) + funciones verbatim (mig 033/134). Sondear columnas/constraints reales
-  con `information_schema.columns` + `pg_get_constraintdef` ANTES de scaffoldear. Advisors del branch: RLS
-  disabled en las tablas scaffoldeadas bare (decisiones/insight_detectors/brand_config) + FK sin índice en
-  decisiones = ruido del scaffold, NO del deliverable (mig 144 no crea esas tablas; en PROD ya tienen RLS/idx).
 - **Wrapper PostgREST bien blindado NO aparece en `anon/authenticated_security_definer_function_executable`**:
   con `REVOKE ALL FROM PUBLIC, anon, authenticated` + `GRANT service_role`, el advisor 0028/0029 no lo lista
   (confirmado con `public.analytics_measure_pending_decisions` vs. `backfill_orders`/`update_ventas_utm` que sí
   salen por tener EXECUTE de anon). `SET search_path` fijo → tampoco `function_search_path_mutable`.
 
-## Entorno — sesión builder AIR-133 (aprobaciones bloqueadas)
-- Supabase MCP SÍ expuesto vía `ToolSearch "select:mcp__f0e900e4-...__<tool>"` (create_branch/apply_migration/
-  execute_sql/get_advisors/delete_branch/confirm_cost). `create_branch` exige `get_cost`→`confirm_cost`→id.
-- **`delete_branch` y TODO el n8n MCP (`get_sdk_reference`/`validate_workflow`/etc.) devolvieron
-  `MCP error -32003: requires approval`** — no aprobables en sesión no interactiva. Consecuencia:
-  (1) el preview branch queda vivo → dejar nota para que el humano/orquestador lo borre;
-  (2) `validate_workflow` no corre → escribir el JSON nativo (deliverable del repo) y validar a mano
-  (`node -e` JSON.parse + toda conexión/`$('Node')` resuelve a un nodo existente + 1 trigger + ids únicos).
-  El workflow nuevo sin `activeVersion` sale N/A en `check-n8n-graph-parity.sh` (correcto).
+## Entorno — sesión builder AIR-133 (aprobaciones bloqueadas; ver conflicto AIR-162 arriba)
+`delete_branch` y todo el n8n MCP (`validate_workflow`/etc.) pueden devolver `MCP error -32003: requires
+approval` en sesión no interactiva → si `validate_workflow` no corre, validar el JSON a mano (`node -e`
+JSON.parse + toda conexión/`$('Node')` resuelve a un nodo existente + 1 trigger + ids únicos).
 
 ## Schema — CHECKs y columnas GENERATED de referencia (verificados en PROD)
 - `insights`: `dominio` ∈ {meta_ads,organico,email,web,producto,cliente,inventario,general,paid,ventas};
@@ -88,8 +78,8 @@ dentro del cuerpo del RPC (mismo patrón que `analytics.eval_recompute` mig 086,
   `ejecutado_por` ∈ {agente_auto,agente_aprobado,humano}; `resultado_evaluacion` ∈ {positivo,neutro,negativo};
   `delta_real_pct` es GENERATED STORED (excluir de INSERT).
 - `meta_ads_performance`: GENERATED = ctr,cpc,roas,cpa. `weekly_snapshot`: sin columnas GENERATED.
-- `strategic_learnings` (mig 058): `score_estabilidad`/`margen_*` GENERATED STORED; `estado` ∈
-  candidato/en_revision/aprobado/promovido/rechazado/deprecado.
+- `strategic_learnings` (mig 058): `score_estabilidad`/`margen_*` GENERATED STORED; `estado` ∈ candidato/
+  en_revision/aprobado/promovido/rechazado/deprecado.
 - `analytics.get_roas(date,date,text)` (mig 088, bug histórico AIR-65): agrega POR ADSET sobre ventana
   completa (no `WHERE fecha BETWEEN` directo sobre revenue — subcontaba ~2x con conversión diferida). NO
   filtra cobertura_cogs (devuelve revenue, no margen). `v_meta_ads_roas_real` NO tiene filtro de fecha (agrega
@@ -135,21 +125,17 @@ dentro del cuerpo del RPC (mismo patrón que `analytics.eval_recompute` mig 086,
   word-char) — esas columnas son seguras.
 
 ## n8n "slim" de payload Shopify → RPC — verificar contrato completo (AIR-43)
-Cuando un nodo Code recorta el payload de Shopify a un whitelist de campos antes de mandarlo a un RPC, el
-whitelist puede desincronizarse del contrato real del RPC **sin error visible**: el campo no llega, el RPC
-hace fallback silencioso (`COALESCE`) y la columna queda NULL sin excepción. Caso real: slim mandaba
-`payment_gateway` (deprecado) pero no `payment_gateway_names` (array, que `backfill_orders` prioriza) →
-`metodo_pago` NULL en 96,6% de filas. Al editar un slim: leer el `COALESCE`/mapeo del RPC destino y confirmar
-que CADA campo leído está en el whitelist — especial atención a pares campo-nuevo/campo-deprecado de la API
-de origen.
+Un nodo Code que recorta el payload de Shopify a un whitelist de campos puede desincronizarse del RPC
+**sin error visible** (COALESCE hace fallback silencioso → columna NULL). Caso real: faltaba
+`payment_gateway_names` → `metodo_pago` NULL en 96,6% de filas. Al editar un slim: leer el
+COALESCE/mapeo del RPC destino y confirmar que CADA campo leído está en el whitelist — ojo con pares
+campo-nuevo/campo-deprecado de la API de origen.
 
 ## check-docstring-rpc-loop.sh — falsos positivos con decimales narrativos (AIR-97/127/135/257, graduado)
-Ya graduado a `scripts/agent/check-docstring-rpc-loop.sh` + CI `docstring-rpc-loop` + selftest — no repetir
-el análisis manual. Regla vigente: un decimal en el docstring-cabecera SOLO cuenta como delta de
-`score_confianza` si va precedido de operador de ajuste (`+`,`-`,`+=`,`-=`,`*`); decimales narrativos
-("score 1.01", "(n=42)") no disparan. `AS $$` debe ir al inicio de línea para que el check separe
-cabecera/cuerpo. Fixture real permanente: `033_analytics_close_insight_loop.sql` (delta huérfano histórico
-AIR-97, solo dispara con `--file`, nunca con `--diff` porque ya está en main).
+Ya graduado a `scripts/agent/check-docstring-rpc-loop.sh` + CI `docstring-rpc-loop` — no repetir el análisis.
+Un decimal en el docstring-cabecera solo cuenta como delta de `score_confianza` si va precedido de operador
+(`+`,`-`,`+=`,`-=`,`*`); los narrativos ("score 1.01") no. Caveat: **`AS $$` debe ir al INICIO de línea** —
+así separa cabecera de cuerpo; sangrado, corta mal y el análisis sale equivocado en silencio.
 
 ## Entorno
 - En sesión con worktree aislado (`.claude/worktrees/agent-*`): editar/escribir SIEMPRE la copia del
@@ -159,7 +145,7 @@ AIR-97, solo dispara con `--file`, nunca con `--diff` porque ya está en main).
   `apply_migration`/`get_advisors`/`validate_workflow` al reviewer/orchestrator. EXCEPCIÓN confirmada AIR-259:
   al menos una sesión builder SÍ tuvo Supabase MCP vía `ToolSearch "select:mcp__<prefix>__<tool>,..."` (tools
   deferred, prefijo del server varía por sesión) — no asumir de entrada que está ausente, probar ToolSearch
-  primero. Reportar la capacidad real al terminar en cualquier caso.
-- `guard-prod-writes.sh` matchea SOLO `mcp__supabase__*` literal — NO intercepta nombres prefijados
-  `mcp__<hash>__apply_migration`/`execute_sql` de sesiones con MCP deferred. El hook no lo cubre → disciplina
-  AIR-162 a mano (preview branch para DDL, PROD solo lectura) sigue siendo responsabilidad del agente.
+  primero. Reportar la capacidad real al terminar en cualquier caso. `guard-prod-writes.sh` YA cubre
+  cualquier prefijo de servidor MCP (matching por sufijo, fix AIR-162/PR#184) — no hace falta disciplina
+  manual adicional por el prefijo, pero sigue sin cubrir writes vía RPC ni el camino Bash (ver CLAUDE.md
+  §Disciplina de cambios a PROD).

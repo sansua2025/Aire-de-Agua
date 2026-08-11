@@ -14,7 +14,6 @@
   `metrica_objetivo`, `descripcion_accion`, `fecha_medicion` son NOT NULL. NO hay unique constraint
   en `insight_id` (solo indice no-unico `idx_decisiones_insight`) -> idempotencia solo a nivel app.
 - HITL AIR-82: aprobar pone estado_accion='en_curso', accion_tomada=true, requiere_del_humano->'informacion'.
-
 - AIR-42 (RPC `asignar_segmento_nuevo`) — patron CORRECTO de guard anti-degradacion de segmento:
   `UPDATE clientes SET segmento='nuevo' ... WHERE id=X AND (segmento IS NULL OR segmento='nuevo')`.
   El WHERE atomico hace la carrera con el cron RFM segura (si el cron promueve entre COUNT y UPDATE,
@@ -35,15 +34,9 @@
   mig 086). La tabla pasa a ser allowlist (solo declara el key + doc, nunca SQL ejecutable).
   Al revisar RPCs del cerebro: cualquier EXECUTE de texto que venga de tabla/param = BLOQUEANTE.
 
-- AIR-231/AIR-86 (PR #178) — al revisar un REVOKE EXECUTE sobre una funcion SECURITY DEFINER,
-  el checklist correcto es `REVOKE ... FROM PUBLIC, anon, authenticated`. Un REVOKE que omita
-  PUBLIC es un NO-OP (anon/authenticated heredan EXECUTE via membresia implicita en PUBLIC,
-  `=X/postgres` en `pg_proc.proacl`) y deja los advisors `anon_/authenticated_security_definer_
-  function_executable` en rojo pese a "verse" corregido — asi paso desapercibido en AIR-86 (mig
-  060) y se repitio en AIR-231. Verificar con `proacl::text` o `has_function_privilege(rol,fn,
-  'EXECUTE')`, no solo leer el REVOKE literal. 2a vez que se caza este patron -> graduar a check
-  determinista (AIR-232, en curso): script que falle si una funcion `prosecdef` conserva EXECUTE
-  para PUBLIC en `pg_proc.proacl`.
+- AIR-231/AIR-86 (REVOKE EXECUTE de SECURITY DEFINER sin PUBLIC = NO-OP) — GRADUADO a
+  `scripts/agent/check-security-surface.sh` (regla S1, CI job `security-surface`). No repetir
+  el análisis aquí; detalle en el header del script.
 - AIR-203 (PR #179) — RLS deny-by-default es el patron correcto para PII sin exponer via API:
   `ENABLE ROW LEVEL SECURITY` sin policies bloquea anon/authenticated aunque queden grants CRUD
   de tabla residuales (no hace falta revocarlos aparte); `service_role` bypasea RLS (Loops/n8n
@@ -60,18 +53,51 @@
   referencie una columna de tabla (no un literal) dentro de una función `SECURITY DEFINER` bajo
   `supabase/migrations/`.
 
+## Verificar contra el artefacto ejecutable, no su descripción (AIR-162 PR #184, 4x en 1 sesión)
+Se repitió: validar `settings.json` con `python -m json.tool` (solo sintaxis) en vez de contra su
+`$schema` (ahí estaba el fallo real); "corregir" el charset del matcher contra la doc oficial en vez
+del binario `claude` instalado; citar una rama del binario fuera de su contexto real. Regla: si existe
+un artefacto ejecutable (binario, esquema, catálogo de la BD), verificar CONTRA ÉL, no contra su doc.
+
+## "Doc/comentario promete cobertura que el código no entrega" — GRADUADO (AIR-162 PR #184)
+3 apariciones en un solo PR (comentarios del guard, CLAUDE.md, globs sin el `*` final), todas afirmando
+más cobertura de la real. Graduado a `scripts/agent/check-guard-coverage-parity.sh` (CI `hooks-guards`).
+**Lección de su v1, rechazada en revisión: un check de PARIDAD no basta.** "Que dos archivos digan lo
+mismo" deja pasar el debilitamiento COORDINADO, y pasaba verde con el guard entero desconectado de
+`settings.json`. Todo check de consistencia necesita además un PISO ABSOLUTO: invariantes que no dependan
+de que dos artefactos coincidan (hook cableado, matchers regex y no literales, globs con sus anclajes,
+listas que no encogen). Corolario: no normalizar antes de comparar lo que se protege — quitar los `*` de
+un glob borra justo la señal (`*x*`->`*x` reabre `_v2`).
+**Lección de su v2, también rechazada: un check que INFIERE la cobertura parseando el texto del artefacto
+pierde siempre.** Cada ronda apareció una forma nueva de engañar al parser sin tocar la conducta: espacio
+dentro del grupo del matcher (word-splitting de `for n in $names`), `case` señuelo delante del real
+(localizar por POSICIÓN), arm-sombra con el token presente, `ask` -> `exit 0`. Regla: **si el artefacto se
+puede EJECUTAR, verifícalo por conducta** — payload sintético por stdin y assert sobre la respuesta; el
+parseo se reserva para lo que no tiene binario (ahí, `settings.json`), y aun entonces se EVALÚA la regex
+(`re.search` con la semántica del binario) en vez de inspeccionar la cadena. Bonus: probar por conducta
+caza gratis las castraciones semánticas que ningún parser ve.
+
+## Control negativo > conteo de tests (AIR-162 PR #184)
+Un test que no falla cuando el guard está roto no prueba nada; revertir el fix y ver qué falla cazó el pin
+del LÍMITE CONOCIDO como trampa. Aplicado al check de cobertura: castrado de 14 formas (una por afirmación
+y una por constante del piso), selftest rojo en las 14 — si castrar una rama deja el selftest verde, esa
+rama es redundante o falta el caso que la pinea (así aparecieron los pines de `FLOOR_SQL_TOOLS`, de los
+prefijos de sonda y de los controles de discriminación). Y las mutaciones del selftest pasan por `cmp`:
+una castración que no cambia el archivo da un verde que no significa nada. En suites con XFAIL: pinear el
+NÚMERO de casos, o borran uno y el run sigue verde.
+
 ---
 
 # Verify — memoria
 
 ## verify NUNCA debe mutar archivos vía Bash (AIR-242, incidente sin daño persistente)
-`disallowedTools` de verify.md bloquea Write/Edit/NotebookEdit/apply_migration/execute_sql, pero Bash
-sigue disponible y puede escribir igual (`sed -i`, `tee`, `>`, `dd`). En AIR-242 verify usó `sed` sobre
-el SQL/comentarios de la migración 137 durante su corrida: viola "nunca editar el SQL de una migración"
-(CLAUDE.md) y el rol read-only de verify (correr checks y reportar, no arreglar). Sin daño (working tree
-limpio al terminar) pero boundary crossing real. Recomendación (NO aplicada — toca `.claude/agents/*`,
-requiere aprobación humana): prohibición explícita en `verify.md` de escribir/editar por CUALQUIER vía
-en Bash, y evaluar hook PreToolUse que bloquee patrones de escritura (`sed -i`,`>`,`tee`) en su Bash.
+`disallowedTools` bloquea Write/Edit/apply_migration/execute_sql, pero Bash sigue disponible y puede
+escribir igual (`sed -i`, `tee`, `>`). AIR-242: verify usó `sed` sobre el SQL de una migración durante
+su corrida (viola "nunca editar el SQL de una migración" y el rol read-only de verify; sin daño, pero
+boundary crossing real). GRADUADO a `scripts/agent/hooks/guard-verify-readonly.sh` (AIR-258, CI
+`hooks-guards`). **Ojo: ese hook es FAIL-OPEN por diseño** — PreToolUse no garantiza el nombre del
+subagente activo, así que si ninguna señal identifica a verify, PASA (para no romper a builder/fixer).
+La garantía dura del boundary sigue siendo el prompt (`verify.md` § READ-ONLY ESTRICTO).
 
 ---
 
@@ -88,17 +114,12 @@ Antes de planear construcción, comprobar si el issue YA está satisfecho:
 
 # Builder / Orchestrator — memoria compartida
 
-## MCP no disponible en subagentes con allowlist positiva de `tools` (lección sesión AIR-71/119/67/97)
-Los subagentes con lista `tools:` positiva (builder, verify, reviewer, retro, fixer) **NO reciben
-herramientas MCP en el entorno web/remoto**, aunque el frontmatter declare `mcpServers`. Solo los
-agentes "All tools except..." (issue-analyst, orchestrator) tienen MCP garantizado.
-
-Consecuencia operativa:
-- El builder puede AUTORAR archivos (SQL/JSON) pero NO puede validar vía MCP (apply_migration,
-  validate_workflow, get_advisors).
-- El ORQUESTADOR debe ejecutar él mismo las operaciones MCP: probar migraciones en Supabase,
-  `validate_workflow` de n8n, consultar prod para confirmar contratos.
-- No asumir que builder o verify validan en prod vía MCP.
+## MCP no disponible en subagentes con allowlist positiva de `tools` (lección AIR-71/119/67/97)
+Subagentes con lista `tools:` positiva (builder, verify, reviewer, retro, fixer) NO reciben MCP en el
+entorno web/remoto, aunque el frontmatter declare `mcpServers`. Solo "All tools except..." (issue-analyst,
+orchestrator) tienen MCP garantizado. Consecuencia: builder autora archivos pero NO valida vía MCP
+(apply_migration/validate_workflow/get_advisors) — eso lo hace el ORQUESTADOR. No asumir que builder o
+verify validan en prod vía MCP.
 
 ## Falso positivo de "agente huérfano" — NO relanzar por output pequeño solo (Fase 0 AIR-233)
 Un builder largo (~21 min) fue declarado muerto por output-file de 123 bytes; se relanzó un 2º builder
@@ -107,26 +128,24 @@ señal de vida/muerte (migraciones/evals largos tardan en escribir el reporte fi
 verificar actividad real del worktree (`git status`, `git log -1 --format=%cd`) y dar margen (>20 min es
 legítimo); NUNCA lanzar un 2º builder sobre el mismo worktree/rama sin confirmar que el primero murió.
 
-## Preview branch: `create_branch` funciona, pero MIGRATIONS_FAILED → scaffold PROD-fiel
-Ver nota consolidada "Preview branches ... ROTO" en `MEMORY.md` raíz (§Supabase migraciones) — mismo
-patrón (`execute_sql` scaffold del delta → `apply_migration` → selftest/AC → `delete_branch`), confirmado
-repetidamente en issues del Cerebro; no reescribir el análisis aquí en cada retro.
+## Preview branch vía `create_branch` — CONFLICTO sin resolver con la regla AIR-162 vigente (verificar antes de usar)
+Nota histórica (Cerebro, AIR-234/235/236/238/240/241/242/259/231/203): `create_branch` funcionaba y
+permitía scaffold PROD-fiel vía `execute_sql` sobre el branch. La regla AIR-162 vigente en CLAUDE.md
+(confirmada 11-ago-2026, PR #184) PROHÍBE `create_branch` vía MCP y afirma que el grant OAuth NO
+alcanza los proyectos de preview (`execute_sql` contra su ref da "permission denied"). Antes de
+scaffoldear en un branch: confirmar cuál de las dos rige HOY, no asumir que el patrón viejo sigue vivo
+— la vía normal ahora es el check `Supabase Preview` del PR (ver CLAUDE.md §Disciplina de cambios a PROD).
 
-## Checklist — aplicar a PROD ANTES de esperar verde en `evals` (AIR-241, AIR-242 — 2ª vez, graduado)
-El job CI `evals` corre selftest RPCs contra PROD real; se pone ROJO (PGRST202 / schema cache stale)
-si la migración que los define aún no está aplicada a PROD. Confirmado 2 veces (AIR-241 PR #168,
-AIR-242 PR #169: gap real de ~35min entre los demás checks y `evals` en el mismo run, por el apply
-intermedio). Para todo issue del Cerebro que añada selftest RPCs:
-1. `apply_migration` a PROD + `NOTIFY pgrst, 'reload schema'` ANTES de esperar el resultado de `evals`.
-2. Si `evals` ya corrió en rojo por PGRST202 antes del apply, usar `rerun_failed_jobs` DESPUÉS de aplicar
-   — no interpretar ese rojo como bug de la migración.
+## Checklist — aplicar a PROD ANTES de esperar verde en `evals` (AIR-241/242, graduado)
+El job CI `evals` corre selftest RPCs contra PROD; sale ROJO (PGRST202/schema cache stale) si la
+migración que los define aún no está aplicada. Confirmado 2 veces. Para todo issue que añada selftest
+RPCs: `apply_migration` + `NOTIFY pgrst, 'reload schema'` ANTES de esperar `evals`; si ya corrió en rojo
+por PGRST202, `rerun_failed_jobs` DESPUÉS de aplicar (no es bug de la migración).
 
 ## Índice único parcial + ON CONFLICT: cambio PAREADO obligatorio (AIR-242)
 Al ampliar/estrechar el predicado de un índice único parcial, el `ON CONFLICT (col) WHERE <pred>` de
-CUALQUIER upsert que lo infiera DEBE re-sincronizarse con el NUEVO predicado en la MISMA migración
-(Postgres infiere por `predicate_implied_by`; si no coincide, el UPSERT aborta en runtime, no en apply).
-Verificar forzando un UPSERT real (INSERT que cae en conflicto → DO UPDATE) con fixtures — no basta con
-que la función compile ni con 0 filas.
+CUALQUIER upsert que lo infiera debe re-sincronizarse en la MISMA migración (Postgres infiere por
+`predicate_implied_by`; si no coincide, el UPSERT aborta en runtime). Verificar forzando un UPSERT real.
 
 (Nota de poda: la lección "check-docstring-rpc-loop falso positivo con decimales narrativos" ya está
 GRADUADA — `scripts/agent/check-docstring-rpc-loop.sh` exige operador `+`/`-`/`*` inmediato antes de contar
@@ -139,11 +158,6 @@ un decimal como delta, ver AIR-257 en `MEMORY.md` raíz. No repetir el análisis
 ## Entorno remoto — restricciones adicionales confirmadas
 `gh` CLI NO disponible en Claude Code on web; operaciones GitHub van por MCP `mcp__github__*` (solo
 garantizado en orquestador — refuerza la lección de MCP arriba).
-
-Nota de poda: la lección "n8n dual-grafo `nodes`/`activeVersion.nodes`" (AIR-79) YA está graduada — ver
-CLAUDE.md § "Paridad nodes ↔ activeVersion.nodes (AIR-140)" + check `check-n8n-graph-parity.sh`
-(CI `n8n-graph-parity`); no repetir aquí. La firma de `buscar_brand_knowledge` (vector, no texto) vive
-solo en `MEMORY.md` (raíz) para no duplicar.
 
 ## `insights` de Supabase es solo para negocio/datos — no proceso
 `get_memoria_activa(null,...)` ignora el filtro de dominio y devuelve los top-10 `vigente`
