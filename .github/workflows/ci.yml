@@ -81,6 +81,17 @@ jobs:
         run: bash scripts/agent/hooks/guard-prod-writes.test.sh
       - name: Guard de verify read-only (self-test)
         run: bash scripts/agent/hooks/guard-verify-readonly.test.sh
+      # AIR-162 (retro PR #184) — la cobertura declarada del guard divergió de
+      # la real 3 veces en una sola ronda de revisión (comentarios del guard,
+      # CLAUDE.md, globs sin '*' final). El check sostiene un PISO ABSOLUTO
+      # (settings.json cablea el hook de verdad, matchers regex y no literales,
+      # globs anclados por ambos lados, tool-set y verb-list que no encogen) y
+      # además compara la PARIDAD entre settings.json, el hook y CLAUDE.md —
+      # mismo tratamiento que check-n8n-graph-parity.sh (AIR-140).
+      - name: Self-test de cobertura del guard (controles negativos)
+        run: bash scripts/agent/check-guard-coverage-parity.selftest.sh
+      - name: Cobertura del guard de writes a PROD (piso + paridad)
+        run: bash scripts/agent/check-guard-coverage-parity.sh
 
   n8n-sync:
     name: n8n-sync
