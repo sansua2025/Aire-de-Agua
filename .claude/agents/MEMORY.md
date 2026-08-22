@@ -121,6 +121,26 @@
   NO falla, por cast implicito date->timestamp, y por tanto un BEGIN/EXCEPTION no cubre esa direccion)
   salio de correr 4 expresiones en PROD, no de razonar sobre el catalogo. Ante cualquier duda de
   "esto lanzaria error?", ejecutarlo en lectura antes de afirmarlo en el veredicto.
+- MCP Linear: hay DOS entradas y solo una autoriza. `linear` (minuscula) pide OAuth y falla en
+  sesiones no interactivas; **`Linear` (mayuscula) SI funciona** -> usar `mcp__Linear__get_issue`.
+  Antes de reportar "no pude leer el issue", probar la variante en mayuscula. (PR #186: di por
+  perdido el acceso durante 4 rondas por no probarla.)
+- LEER EL ISSUE NO ES OPCIONAL, y hacerlo tarde cuesta. En PR #186 el codigo estaba impecable tras
+  4 rondas, pero al leer AIR-271 aparecio que el criterio 5 (Sentinela abre issue ante fuente
+  critica stale) NO estaba implementado mientras el cuerpo del PR decia `Closes AIR-271`. Chequeo
+  obligatorio del reviewer, barato y que ningun check automatico hace:
+    (a) recorrer los criterios de aceptacion UNO A UNO contra el diff;
+    (b) si alguno no esta, verificar que el cuerpo NO diga `Closes` (usar `Part of`) — al mergear,
+        la integracion de Linear cierra el issue y el criterio no cumplido DESAPARECE;
+    (c) revisar tambien el criterio de VERIFICACION literal del issue: en AIR-220 pedia 0 matches
+        de CURRENT_DATE en el archivo nuevo, y sobrevive como SQL vivo en la copia congelada de
+        rollback (_v1) — legitimo, pero rompe la futura regla que el mismo issue propone graduar.
+  Señal de alarma: un PR que ABRE issues de seguimiento por "cerrar por silencio y no por criterio"
+  (AIR-275) y a la vez se cierra a si mismo por entrega parcial.
+- Desviarse de la solucion que PROPONE el issue es correcto si el PR deja escrito el porque. En
+  AIR-271 el issue pedia derivar el historico de sync_log; el PR lo rechaza con evidencia (109
+  corridas 'ok' con 0 filas). Al revisar: no exigir fidelidad literal al issue, exigir que la
+  desviacion este ARGUMENTADA y verificada.
 
 ## Patrones de error a vigilar (graduar a regla si se repiten >=2)
 - (1x) Idempotencia de ejecutor n8n basada en `$json.length` sobre respuesta HTTP de PostgREST:
