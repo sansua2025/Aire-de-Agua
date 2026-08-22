@@ -49,8 +49,9 @@ CREATE TABLE IF NOT EXISTS public.data_sources (
   tabla             text NOT NULL,
   -- Columna que marca la FECHA DEL DATO (no la de la corrida).
   campo_fecha       text NOT NULL,
-  -- true  -> campo_fecha es timestamptz y se convierte con AT TIME ZONE Bogota
-  -- false -> campo_fecha ya es date
+  -- DERIVADA por el trigger desde information_schema — lo que se pase en el
+  -- INSERT se sobrescribe. true -> campo_fecha es timestamptz y se convierte
+  -- con AT TIME ZONE Bogota; false -> ya es date.
   campo_fecha_es_tz boolean NOT NULL DEFAULT false,
   -- ¿campo_fecha es INMUTABLE tras el INSERT (la fecha propia del dato) o se
   -- reescribe en cada corrida (last_synced_at / updated_at)?
@@ -85,6 +86,22 @@ COMMENT ON COLUMN public.data_sources.campo_fecha_inmutable IS
 COMMENT ON COLUMN public.data_sources.criticidad IS
   'AIR-271. critica => una fuente stale amerita issue automático. observada => solo bandera. Existe para no repetir la fatiga de alarma de meta_organic_posts (28 días stale, correo diario, cero acción).';
 
+-- Re-aplicación sobre una base que ya tenga una versión anterior de la tabla:
+-- CREATE TABLE IF NOT EXISTS es un no-op COMPLETO, así que el CHECK de esquema
+-- no se agregaría y quedaría ausente EN SILENCIO. Esto lo repara explícitamente.
+DO $reparar$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'data_sources_esquema_check'
+       AND conrelid = 'public.data_sources'::regclass
+  ) THEN
+    ALTER TABLE public.data_sources
+      ADD CONSTRAINT data_sources_esquema_check CHECK (esquema = 'public');
+  END IF;
+END
+$reparar$;
+
 ALTER TABLE public.data_sources ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.data_sources FROM anon, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.data_sources TO service_role;
@@ -102,23 +119,55 @@ LANGUAGE plpgsql
 SET search_path = ''
 AS $$
 DECLARE
-  v_col text;
+  v_col  text;
+  v_tipo text;
 BEGIN
   IF to_regclass(format('%I.%I', NEW.esquema, NEW.tabla)) IS NULL THEN
     RAISE EXCEPTION 'data_sources[%]: la relación %.% no existe',
       NEW.fuente, NEW.esquema, NEW.tabla;
   END IF;
 
-  FOREACH v_col IN ARRAY ARRAY[NEW.campo_fecha, NEW.campo_created, NEW.campo_evento] LOOP
+  -- campo_fecha: validar EXISTENCIA y TIPO.
+  -- Validar solo el nombre no alcanza. El fallo grave no es el que revienta
+  -- sino el SILENCIOSO: declarar campo_fecha_es_tz=false sobre una columna
+  -- timestamptz hace que el motor calcule max(ts)::date en UTC y REINTRODUCE
+  -- AIR-220 sin lanzar un solo error — el bug que esta migración cierra,
+  -- reentrando por la puerta de la configuración.
+  -- Por eso el flag NO se toma de la fila: se DERIVA del catálogo. Una fila
+  -- mal escrita ya no puede desalinearlo, no solo se detecta.
+  SELECT c.data_type INTO v_tipo
+    FROM information_schema.columns c
+   WHERE c.table_schema = NEW.esquema
+     AND c.table_name   = NEW.tabla
+     AND c.column_name  = NEW.campo_fecha;
+
+  IF v_tipo IS NULL THEN
+    RAISE EXCEPTION 'data_sources[%]: la columna %.%.% no existe',
+      NEW.fuente, NEW.esquema, NEW.tabla, NEW.campo_fecha;
+  END IF;
+  IF v_tipo NOT IN ('date', 'timestamp with time zone') THEN
+    RAISE EXCEPTION 'data_sources[%]: campo_fecha %.%.% es de tipo %; solo se admiten date o timestamp with time zone',
+      NEW.fuente, NEW.esquema, NEW.tabla, NEW.campo_fecha, v_tipo;
+  END IF;
+  NEW.campo_fecha_es_tz := (v_tipo = 'timestamp with time zone');
+
+  -- campo_created / campo_evento: si vienen, deben ser timestamptz. El motor
+  -- los compara contra un corte timestamptz; un date o un text darían una
+  -- comparación con semántica distinta a la esperada.
+  FOREACH v_col IN ARRAY ARRAY[NEW.campo_created, NEW.campo_evento] LOOP
     CONTINUE WHEN v_col IS NULL;
-    IF NOT EXISTS (
-      SELECT 1 FROM information_schema.columns c
-      WHERE c.table_schema = NEW.esquema
-        AND c.table_name   = NEW.tabla
-        AND c.column_name  = v_col
-    ) THEN
+    SELECT c.data_type INTO v_tipo
+      FROM information_schema.columns c
+     WHERE c.table_schema = NEW.esquema
+       AND c.table_name   = NEW.tabla
+       AND c.column_name  = v_col;
+    IF v_tipo IS NULL THEN
       RAISE EXCEPTION 'data_sources[%]: la columna %.%.% no existe',
         NEW.fuente, NEW.esquema, NEW.tabla, v_col;
+    END IF;
+    IF v_tipo <> 'timestamp with time zone' THEN
+      RAISE EXCEPTION 'data_sources[%]: la columna %.%.% es de tipo %; campo_created y campo_evento deben ser timestamp with time zone',
+        NEW.fuente, NEW.esquema, NEW.tabla, v_col, v_tipo;
     END IF;
   END LOOP;
 
@@ -210,6 +259,7 @@ DECLARE
   v_expr_event text;
   v_where      text;
   v_reconstruible boolean;
+  v_error      boolean;
   v_ultima     date;
   v_evento     timestamptz;
 BEGIN
@@ -245,12 +295,28 @@ BEGIN
       END;
 
       -- Identificadores citados con %I y validados por trigger: sin concatenación cruda.
-      EXECUTE format('SELECT %s, %s FROM %I.%I %s',
-                     v_expr_fecha, v_expr_event, r.esquema, r.tabla, v_where)
-        INTO v_ultima, v_evento;
+      -- El EXECUTE va AISLADO por fuente: sin este bloque, una sola fila de
+      -- config rota (tabla renombrada, columna borrada, permiso revocado)
+      -- aborta la función entera y deja las 9 fuentes sin responder — y como
+      -- el dashboard hace `throw` sobre el error de esta vista y el sidebar
+      -- vive en todas las páginas, tumbaría el dashboard completo.
+      -- Un fallo aislado se reporta como estado='error' con stale=true:
+      -- conservador y VISIBLE (el correo de E_Data_Freshness_Check filtra por
+      -- stale === true, así que un stale=NULL lo volvería invisible).
+      BEGIN
+        EXECUTE format('SELECT %s, %s FROM %I.%I %s',
+                       v_expr_fecha, v_expr_event, r.esquema, r.tabla, v_where)
+          INTO v_ultima, v_evento;
+        v_error := false;
+      EXCEPTION WHEN OTHERS THEN
+        v_ultima := NULL;
+        v_evento := NULL;
+        v_error  := true;
+      END;
     ELSE
       v_ultima := NULL;
       v_evento := NULL;
+      v_error  := false;
     END IF;
 
     fuente       := r.fuente;
@@ -263,7 +329,11 @@ BEGIN
     ultima_fecha := v_ultima;
     ultimo_evento := v_evento;
 
-    IF NOT v_reconstruible THEN
+    IF v_error THEN
+      dias_desde_ultimo := NULL;
+      stale             := true;
+      estado            := 'error';
+    ELSIF NOT v_reconstruible THEN
       -- No se puede AFIRMAR nada del pasado de esta fuente. stale=NULL, no false.
       dias_desde_ultimo := NULL;
       stale             := NULL;
@@ -349,6 +419,15 @@ CREATE OR REPLACE VIEW analytics.view_dashboard_freshness AS
 COMMENT ON VIEW analytics.view_dashboard_freshness IS
   'AIR-197/AIR-213/AIR-220/AIR-271. Frescura de las fuentes marcadas en_dashboard en public.data_sources. Corrige AIR-220: dias_desde_ultimo y stale se calculan con (now() AT TIME ZONE America/Bogota)::date, no CURRENT_DATE (UTC), que desfasaba ~5h cada noche. Columnas 1-8 idénticas a la versión anterior (contrato de FreshnessRow en el dashboard).';
 
+-- CREATE OR REPLACE VIEW sin cláusula WITH BORRA las reloptions existentes
+-- (verificado: una vista con security_invoker=false explícito queda sin ninguna
+-- tras el REPLACE). Aquí el efecto neto no cambia — ausente = default = definer,
+-- que es lo que esta vista necesita porque la lee anon y anon no tiene EXECUTE
+-- sobre el motor — pero se re-declara para no perder la intención que registró
+-- AIR-196/mig 121 y para que un cambio futuro del default no mueva la semántica
+-- en silencio.
+ALTER VIEW analytics.view_dashboard_freshness SET (security_invoker = false);
+
 GRANT SELECT ON analytics.view_dashboard_freshness TO anon, service_role;
 
 -- ============================================================================
@@ -383,6 +462,9 @@ COMMENT ON FUNCTION analytics.get_freshness_asof(date) IS
 
 -- Agregado por ventana: lo que un gate necesita de verdad ("la fuente estuvo
 -- ciega N de 7 días"), no un booleano de un solo día.
+-- El RETURNS TABLE cambió respecto de versiones previas de este archivo y
+-- Postgres rechaza un CREATE OR REPLACE que altere el tipo de retorno.
+DROP FUNCTION IF EXISTS analytics.get_freshness_rango(date,date,text);
 CREATE OR REPLACE FUNCTION analytics.get_freshness_rango(
   p_desde  date,
   p_hasta  date,
@@ -451,7 +533,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION analytics.get_freshness_rango(date,date,text) IS
-  'AIR-271. Agregado de frescura por fuente en la ventana [p_desde,p_hasta] (máx 120 días). Primitivo del gate de AIR-270 ("no promuevas un learning sustentado en semanas ciegas"). CONSUMO CORRECTO: bloquear cuando veredicto <> ''limpio''. `veredicto` es TRI-ESTADO a propósito: ''stale'' (se confirmó rezago), ''desconocido'' (la ventana no es reconstruible para esta fuente) y ''limpio'' (se confirmó frescura todos los días). NO reducirlo a un booleano: colapsar ''desconocido'' a false es fail-OPEN y deja pasar exactamente a las fuentes ciegas — al 2026-08-22 eso serían klaviyo_profiles, klaviyo_campaigns e inventario. Un día desconocido nunca cuenta como fresco.';
+  'AIR-271. Agregado de frescura por fuente en la ventana [p_desde,p_hasta] (máx 120 días). Primitivo del gate de AIR-270 ("no promuevas un learning sustentado en semanas ciegas"). CONSUMO CORRECTO: bloquear cuando veredicto <> ''limpio''. `veredicto` es TRI-ESTADO a propósito: ''stale'' (se confirmó rezago), ''desconocido'' (la ventana no es reconstruible para esta fuente) y ''limpio'' (se confirmó frescura todos los días). NO reducirlo a un booleano: colapsar ''desconocido'' a false es fail-OPEN y deja pasar exactamente a las fuentes ciegas — al 2026-08-22 eso serían klaviyo_profiles, klaviyo_campaigns e inventario. Un día desconocido nunca cuenta como fresco. OJO: una fuente con activo=false NO aparece en el resultado, así que un resultado VACÍO significa "no pude verificar", nunca "limpio" — el consumidor debe tratar la ausencia de fila con el mismo criterio tri-estado.';
 
 REVOKE EXECUTE ON FUNCTION analytics.get_freshness_asof(date) FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION analytics.get_freshness_rango(date,date,text) FROM PUBLIC, anon, authenticated;
@@ -475,26 +557,71 @@ COMMENT ON COLUMN public.sync_log.filas IS
   'AIR-271. Filas efectivamente escritas por la corrida. NULL = el nodo todavía no lo reporta. Existe porque estado=ok sin conteo fue exactamente el falso-OK que ocultó 4 meses de klaviyo_flow_daily (109 corridas ok, 0 filas).';
 
 -- ============================================================================
--- ROLLBACK (probado, no teórico)
+-- ROLLBACK (ejecutable y probado end-to-end)
 -- ----------------------------------------------------------------------------
--- Las columnas nuevas se rellenan con NULL en vez de eliminarse: CREATE OR
--- REPLACE VIEW no permite quitar columnas ("cannot drop columns from view"), y
--- un DROP + CREATE perdería los GRANT. Así el rollback conserva permisos y no
--- rompe a ningún consumidor que ya lea criticidad/etiqueta/estado.
+-- Dos cosas que la primera versión de este bloque tenía mal y que el review
+-- destapó:
+--   1. Remitía a "la definición de la migración 121" — un marcador que nadie
+--      puede ejecutar a las 3 a.m. Ahora el SQL va inline y completo.
+--   2. Hacía que v_data_source_freshness dependiera de _v1, con lo que un
+--      re-apply de esta migración fallaba en su DROP VIEW no-CASCADE. Ahora
+--      el rollback NO deja dependencia: inlinea la definición de las 3 fuentes,
+--      así _v1 queda libre de borrarse.
+-- Las columnas nuevas se rellenan con NULL en vez de eliminarse (CREATE OR
+-- REPLACE VIEW no permite quitarlas) y se usa REPLACE en vez de DROP+CREATE
+-- para conservar los GRANT — incluido el de el_cerebro_reader sobre la vista
+-- del dashboard, que no está en la mig 121 y un DROP se llevaría por delante.
 --
 --   CREATE OR REPLACE VIEW public.v_data_source_freshness AS
---     SELECT v.fuente, v.tabla, v.cadencia, v.umbral_dias, v.ultima_fecha,
---            v.dias_desde_ultimo, v.stale,
---            NULL::text AS criticidad, v.fuente AS etiqueta, NULL::text AS estado
---       FROM public.v_data_source_freshness_v1 v;
+--     WITH fuentes AS (
+--       SELECT 'meta_organic_posts'::text AS fuente, 'meta_organic_posts'::text AS tabla,
+--              'semanal'::text AS cadencia, 21 AS umbral_dias,
+--              (max(m.fecha_publicacion))::date AS ultima_fecha
+--         FROM public.meta_organic_posts m
+--       UNION ALL
+--       SELECT 'meta_ads_performance'::text, 'meta_ads_performance'::text, 'diario'::text, 2,
+--              max(p.fecha) FROM public.meta_ads_performance p
+--       UNION ALL
+--       SELECT 'amplitude_daily_metrics'::text, 'amplitude_daily_metrics'::text, 'diario'::text, 2,
+--              max(a.fecha) FROM public.amplitude_daily_metrics a)
+--     SELECT fuente, tabla, cadencia, umbral_dias, ultima_fecha,
+--            (CURRENT_DATE - ultima_fecha) AS dias_desde_ultimo,
+--            CASE WHEN ultima_fecha IS NULL THEN true
+--                 WHEN (CURRENT_DATE - ultima_fecha) > umbral_dias THEN true
+--                 ELSE false END AS stale,
+--            NULL::text AS criticidad, fuente AS etiqueta, NULL::text AS estado
+--       FROM fuentes f ORDER BY fuente;
 --
 --   CREATE OR REPLACE VIEW analytics.view_dashboard_freshness AS
---     <definición de la migración 121>;   -- 4 fuentes, CURRENT_DATE
+--     WITH fuentes AS (
+--       SELECT 'ventas'::text AS fuente, 'Ventas'::text AS etiqueta,
+--              'event-driven'::text AS cadencia, 2 AS umbral_dias,
+--              (max((v.ordered_at AT TIME ZONE 'America/Bogota')))::date AS ultima_fecha,
+--              max(v.created_at) AS ultimo_evento FROM public.ventas v
+--       UNION ALL
+--       SELECT 'meta_ads_performance'::text,'Meta Ads'::text,'diario'::text,2,
+--              max(p.fecha), max(p.created_at) FROM public.meta_ads_performance p
+--       UNION ALL
+--       SELECT 'amplitude_daily_metrics'::text,'Amplitude'::text,'diario'::text,2,
+--              max(a.fecha), max(a.created_at) FROM public.amplitude_daily_metrics a
+--       UNION ALL
+--       SELECT 'weekly_snapshot'::text,'Snapshot semanal'::text,'semanal'::text,10,
+--              max(w.semana_fin), max(w.created_at) FROM public.weekly_snapshot w)
+--     SELECT fuente, etiqueta, cadencia, umbral_dias, ultima_fecha, ultimo_evento,
+--            (CURRENT_DATE - ultima_fecha) AS dias_desde_ultimo,
+--            CASE WHEN ultima_fecha IS NULL THEN true
+--                 WHEN (CURRENT_DATE - ultima_fecha) > umbral_dias THEN true
+--                 ELSE false END AS stale,
+--            NULL::text AS criticidad, NULL::text AS estado
+--       FROM fuentes f ORDER BY fuente;
+--   ALTER VIEW analytics.view_dashboard_freshness SET (security_invoker = false);
 --
+--   DROP VIEW     IF EXISTS public.v_data_source_freshness_v1;
 --   DROP FUNCTION IF EXISTS analytics.get_freshness_rango(date,date,text);
 --   DROP FUNCTION IF EXISTS analytics.get_freshness_asof(date);
---   -- freshness_snapshot y data_sources pueden quedarse: sin la vista encima
---   -- no los lee nadie, y conservarlos deja el estado listo para reintentar.
+--   DROP FUNCTION IF EXISTS analytics.freshness_snapshot(date);
+--   -- data_sources puede quedarse: sin el motor encima no la lee nadie, y
+--   -- conservarla deja el estado listo para reintentar.
 --
 -- Los cambios a sync_log NO se revierten: ampliar un CHECK y agregar una
 -- columna nullable es compatible hacia atrás y `filas` es evidencia que no
