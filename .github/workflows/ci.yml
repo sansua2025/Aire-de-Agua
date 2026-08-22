@@ -183,3 +183,106 @@ jobs:
           NEXT_PUBLIC_SUPABASE_URL: https://vnctmzsgemefgbtjctlo.supabase.co
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: npm run test -- evals/
+
+  migration-apply:
+    name: migration-apply
+    runs-on: ubuntu-latest
+    # AIR-276 — Validación POR EJECUCIÓN de las migraciones nuevas del PR.
+    #
+    # POR QUÉ EXISTE. El check `Supabase Preview` de la integración de Supabase no
+    # puede pasar NUNCA en este repo: levanta un preview branch VACÍO y reproduce
+    # supabase/migrations/ desde cero, pero ese directorio es RESPALDO de lo
+    # aplicado en PROD, no un bootstrap — ninguna migración crea las tablas base,
+    # así que muere en el archivo 1 de 151 con `relation "venta_items" does not
+    # exist`. Y cuando el cupo de preview branches concurrentes se agota, el check
+    # se SALTA en silencio (incidente documentado en AIR-162). Entre las dos cosas,
+    # ninguna migración de este repo estuvo nunca validada por ejecución antes de
+    # entrar a producción.
+    #
+    # QUÉ HACE DISTINTO. En vez de reconstruir la historia desde cero, parte del
+    # esquema ACTUAL de PROD (pg_dump --schema-only, solo lectura) y aplica encima
+    # SOLO las migraciones que el PR AGREGA. Es la pregunta que de verdad importa:
+    # "¿esto aplica sobre lo que hay en producción?".
+    #
+    # NUNCA PASA EN SILENCIO. Si falta el secreto, si el volcado sale vacío o si el
+    # baseline no carga, el job FALLA. Un gate que se salta a sí mismo es la
+    # patología que este job viene a cerrar. (Contrástese con `evals`, que hace SKIP
+    # sin secreto — ahí el riesgo se asumió a propósito; aquí no.)
+    #
+    # SECRETO REQUERIDO: SUPABASE_DB_URL (el mismo que ya usa migration-drift).
+    # Basta un rol de SOLO LECTURA: el job únicamente hace pg_dump --schema-only.
+    #
+    # PENDIENTE DE CONFIGURACIÓN MANUAL (Settings → Branches → branch protection):
+    # marcar `migration-apply` como required check, y quitar de required a
+    # `Supabase Preview`. Mientras la integración de preview branches siga activa
+    # seguirá pintando rojo permanente sin aportar señal; conviene desactivarla en
+    # Project Integrations Settings de Supabase (además ahorra ~US$0,0134/hora).
+    services:
+      pg:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # pg_dump debe ser >= al servidor (PROD es PostgreSQL 17.6); el runner trae 16.
+      - name: Instalar cliente de PostgreSQL 17
+        run: |
+          set -euo pipefail
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/pgdg.gpg
+          echo "deb https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+          pg_dump --version && psql --version
+
+      # Prueba las DOS direcciones del gate antes de confiar en su veredicto:
+      # que falla ante una migración rota (incluido el caso literal de AIR-276) y
+      # que falla —en vez de pasar— cuando no puede verificar.
+      - name: Self-test del gate de migraciones
+        env:
+          SELFTEST_DB_URL_TEMPLATE: postgresql://postgres:postgres@localhost:5432/{db}
+        run: bash scripts/agent/migration-gate.selftest.sh
+
+      - name: Volcar el esquema de PROD (solo lectura)
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SUPABASE_DB_URL:-}" ]; then
+            {
+              echo "## migration-apply: FALTA EL SECRETO"
+              echo
+              echo 'Falta `SUPABASE_DB_URL`. Sin el esquema de PROD este gate no puede'
+              echo 'afirmar que la migración aplica, así que **falla** en vez de pasar.'
+              echo 'Configurarlo en Settings → Secrets and variables → Actions.'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          pg_dump "$SUPABASE_DB_URL" \
+            --schema-only --schema=public --schema=analytics \
+            --no-owner --no-comments > /tmp/prod_schema.sql
+          echo "Volcado: $(wc -l < /tmp/prod_schema.sql) líneas."
+          test -s /tmp/prod_schema.sql
+
+      - name: Aplicar las migraciones nuevas sobre el esquema de PROD
+        run: |
+          set -euo pipefail
+          export PGPASSWORD=postgres
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -q \
+            -c "CREATE DATABASE migration_gate"
+          git fetch origin main --quiet || true
+          bash scripts/agent/migration-gate.sh \
+            --target "postgresql://postgres:postgres@localhost:5432/migration_gate" \
+            --baseline /tmp/prod_schema.sql \
+            --base-ref origin/main | tee -a "$GITHUB_STEP_SUMMARY"
