@@ -270,54 +270,68 @@ jobs:
           SELFTEST_DB_URL_TEMPLATE: postgresql://postgres:postgres@localhost:5432/{db}
         run: PSQL_BIN="$PGBIN/psql" bash scripts/agent/migration-gate.selftest.sh
 
-      - name: Volcar el esquema de PROD (solo lectura)
+      # El baseline vive en el repo y NO se vuelca aquí. Motivo: pg_dump bloquea
+      # en ACCESS SHARE todas las tablas incluso con --schema-only, así que
+      # exigiría pg_read_all_data sobre el rol del secret — y `ci_drift_reader`
+      # (migración 104) se creó DELIBERADAMENTE "sin acceso a ningún dato de
+      # negocio". Dárselo abriría la PII que AIR-203 endureció. Con el baseline
+      # versionado, CI valida migraciones sin poder leer un solo dato de negocio.
+      - name: Comprobar que el baseline existe
+        run: |
+          set -euo pipefail
+          if [ ! -s supabase/baseline/schema.sql ]; then
+            {
+              echo "## migration-apply: falta el baseline del esquema"
+              echo
+              echo 'No existe `supabase/baseline/schema.sql`, así que el gate no puede'
+              echo 'afirmar que la migración aplica: **falla** en vez de pasar.'
+              echo
+              echo 'Regenerarlo con una conexión privilegiada (no la de CI) y commitear:'
+              echo '```'
+              echo 'bash scripts/agent/migration-baseline-refresh.sh "<URL_PRIVILEGIADA>"'
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::falta supabase/baseline/schema.sql; ver el resumen del job"
+            exit 1
+          fi
+          echo "baseline: $(wc -l < supabase/baseline/schema.sql) líneas, $(grep -c . supabase/baseline/PROD_MIGRATIONS) migraciones registradas"
+
+      # Un baseline viejo es el ÚNICO modo en que este gate podría dar un falso
+      # verde (p.ej. PROD ya tiene una tabla que la migración crea). Se cierra
+      # comparando las migraciones aplicadas en PROD contra las registradas al
+      # volcar — y eso solo necesita SELECT sobre supabase_migrations.schema_migrations,
+      # que es exactamente el único privilegio que ci_drift_reader ya tiene.
+      - name: Verificar que el baseline no se quedó viejo
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
           set -euo pipefail
           if [ -z "${SUPABASE_DB_URL:-}" ]; then
+            echo "::error::falta SUPABASE_DB_URL; sin él no se puede comprobar la frescura del baseline"
+            exit 1
+          fi
+          "$PGBIN/psql" "$SUPABASE_DB_URL" -tAc \
+            "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version" \
+            > /tmp/prod_migrations.txt
+          NUEVAS="$(comm -23 <(sort -u /tmp/prod_migrations.txt) <(sort -u supabase/baseline/PROD_MIGRATIONS) | grep -c . || true)"
+          if [ "$NUEVAS" -gt 0 ]; then
             {
-              echo "## migration-apply: FALTA EL SECRETO"
+              echo "## migration-apply: el baseline se quedó viejo"
               echo
-              echo 'Falta `SUPABASE_DB_URL`. Sin el esquema de PROD este gate no puede'
-              echo 'afirmar que la migración aplica, así que **falla** en vez de pasar.'
-              echo 'Configurarlo en Settings → Secrets and variables → Actions.'
+              echo "PROD tiene **$NUEVAS** migración(es) que no estaban aplicadas cuando se volcó"
+              echo 'el baseline, así que validar contra él podría dar un falso verde.'
+              echo
+              comm -23 <(sort -u /tmp/prod_migrations.txt) <(sort -u supabase/baseline/PROD_MIGRATIONS) | sed 's/^/  - /'
+              echo
+              echo 'Regenerar y commitear:'
+              echo '```'
+              echo 'bash scripts/agent/migration-baseline-refresh.sh "<URL_PRIVILEGIADA>"'
+              echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::baseline desactualizado respecto de PROD; ver el resumen del job"
             exit 1
           fi
-          # pg_dump toma ACCESS SHARE sobre TODAS las tablas aunque solo pida el
-          # esquema, y no hay flag para evitarlo: el rol del secret necesita poder
-          # leerlas todas. Si no puede, se dice EXACTAMENTE cómo arreglarlo en vez
-          # de dejar un "permission denied" suelto. Nunca se recorta el volcado a
-          # las tablas visibles: un baseline parcial haría pasar migraciones que
-          # fallarían en PROD, que es fail-open y justo lo que este gate combate.
-          if ! "$PGBIN/pg_dump" "$SUPABASE_DB_URL" \
-               --schema-only --schema=public --schema=analytics \
-               --no-owner --no-comments > /tmp/prod_schema.sql 2>/tmp/dump_err.txt; then
-            head -5 /tmp/dump_err.txt
-            if grep -q "permission denied" /tmp/dump_err.txt; then
-              {
-                echo "## migration-apply: el rol de \`SUPABASE_DB_URL\` no puede leer todo el esquema"
-                echo
-                echo '`pg_dump` bloquea en ACCESS SHARE **todas** las tablas incluso con'
-                echo '`--schema-only`, así que el rol necesita lectura sobre todas. Arreglo'
-                echo 'de una línea, aplicado a PROD con confirmación humana:'
-                echo
-                echo '```sql'
-                echo 'GRANT pg_read_all_data TO <rol_de_SUPABASE_DB_URL>;'
-                echo '```'
-                echo
-                echo 'Es el rol predefinido de PostgreSQL 14+ para justamente esto: cubre las'
-                echo 'tablas futuras sin mantenimiento y no concede escritura. Recortar el'
-                echo 'volcado a las tablas visibles NO es alternativa: un baseline parcial'
-                echo 'deja pasar migraciones que fallarían en PROD.'
-              } >> "$GITHUB_STEP_SUMMARY"
-              echo "::error::el rol de SUPABASE_DB_URL no puede leer todas las tablas; ver el resumen del job"
-            fi
-            exit 1
-          fi
-          echo "Volcado: $(wc -l < /tmp/prod_schema.sql) líneas."
-          test -s /tmp/prod_schema.sql
+          echo "baseline al día con PROD."
 
       - name: Aplicar las migraciones nuevas sobre el esquema de PROD
         run: |
@@ -328,5 +342,5 @@ jobs:
           git fetch origin main --quiet || true
           PSQL_BIN="$PGBIN/psql" bash scripts/agent/migration-gate.sh \
             --target "postgresql://postgres:postgres@localhost:5432/migration_gate" \
-            --baseline /tmp/prod_schema.sql \
+            --baseline supabase/baseline/schema.sql \
             --base-ref origin/main | tee -a "$GITHUB_STEP_SUMMARY"
