@@ -477,12 +477,13 @@ RETURNS TABLE(
   dias_evaluados  integer,
   dias_stale      integer,
   dias_desconocidos integer,
+  dias_error      integer,
   -- Veredicto TRI-ESTADO, no booleano. Un booleano obliga a elegir un valor para
   -- "no sé", y cualquier elección es una trampa: bool_or(stale IS TRUE) colapsa
   -- 'desconocido' a false = "limpio", que es fail-OPEN — el gate dejaría pasar
   -- justo a las fuentes ciegas. Con tres valores el consumidor seguro es
   -- `veredicto <> 'limpio'`, fail-CLOSED por construcción.
-  veredicto       text,
+  veredicto       text,   -- 'error' | 'stale' | 'desconocido' | 'limpio'
   stale_todos_los_dias boolean,
   peor_dias_desde_ultimo integer
 )
@@ -515,11 +516,18 @@ BEGIN
     max(c.etiqueta)   AS etiqueta,
     max(c.criticidad) AS criticidad,
     count(*)::integer                                              AS dias_evaluados,
-    count(*) FILTER (WHERE c.stale IS TRUE)::integer                AS dias_stale,
+    -- Un día en 'error' NO se cuenta como stale: colapsarlos volvería a mezclar
+    -- estados distintos, que es justo lo que el tri-estado vino a deshacer.
+    -- Para el gate da igual (ambos bloquean); para diagnosticar POR QUÉ bloqueó,
+    -- no: "la fuente va rezagada" y "no pude leer la fuente" piden acciones
+    -- opuestas.
+    count(*) FILTER (WHERE c.stale IS TRUE AND c.estado <> 'error')::integer AS dias_stale,
     count(*) FILTER (WHERE c.stale IS NULL)::integer                AS dias_desconocidos,
+    count(*) FILTER (WHERE c.estado = 'error')::integer             AS dias_error,
     CASE
-      WHEN bool_or(c.stale IS TRUE)  THEN 'stale'
-      WHEN bool_or(c.stale IS NULL)  THEN 'desconocido'
+      WHEN bool_or(c.estado = 'error') THEN 'error'
+      WHEN bool_or(c.stale IS TRUE)    THEN 'stale'
+      WHEN bool_or(c.stale IS NULL)    THEN 'desconocido'
       ELSE 'limpio'
     END                                                             AS veredicto,
     -- Un día 'desconocido' NO cuenta como fresco: si no se puede afirmar
@@ -533,7 +541,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION analytics.get_freshness_rango(date,date,text) IS
-  'AIR-271. Agregado de frescura por fuente en la ventana [p_desde,p_hasta] (máx 120 días). Primitivo del gate de AIR-270 ("no promuevas un learning sustentado en semanas ciegas"). CONSUMO CORRECTO: bloquear cuando veredicto <> ''limpio''. `veredicto` es TRI-ESTADO a propósito: ''stale'' (se confirmó rezago), ''desconocido'' (la ventana no es reconstruible para esta fuente) y ''limpio'' (se confirmó frescura todos los días). NO reducirlo a un booleano: colapsar ''desconocido'' a false es fail-OPEN y deja pasar exactamente a las fuentes ciegas — al 2026-08-22 eso serían klaviyo_profiles, klaviyo_campaigns e inventario. Un día desconocido nunca cuenta como fresco. OJO: una fuente con activo=false NO aparece en el resultado, así que un resultado VACÍO significa "no pude verificar", nunca "limpio" — el consumidor debe tratar la ausencia de fila con el mismo criterio tri-estado.';
+  'AIR-271. Agregado de frescura por fuente en la ventana [p_desde,p_hasta] (máx 120 días). Primitivo del gate de AIR-270 ("no promuevas un learning sustentado en semanas ciegas"). CONSUMO CORRECTO: bloquear cuando veredicto <> ''limpio''. `veredicto` es TRI-ESTADO a propósito: ''error'' (no se pudo leer la fuente), ''stale'' (se confirmó rezago), ''desconocido'' (la ventana no es reconstruible para esta fuente) y ''limpio'' (se confirmó frescura todos los días). NO reducirlo a un booleano: colapsar ''desconocido'' a false es fail-OPEN y deja pasar exactamente a las fuentes ciegas — al 2026-08-22 eso serían klaviyo_profiles, klaviyo_campaigns e inventario. Un día desconocido nunca cuenta como fresco. OJO: una fuente con activo=false NO aparece en el resultado, así que un resultado VACÍO significa "no pude verificar", nunca "limpio" — el consumidor debe tratar la ausencia de fila con el mismo criterio tri-estado.';
 
 REVOKE EXECUTE ON FUNCTION analytics.get_freshness_asof(date) FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION analytics.get_freshness_rango(date,date,text) FROM PUBLIC, anon, authenticated;
@@ -572,7 +580,11 @@ COMMENT ON COLUMN public.sync_log.filas IS
 -- para conservar los GRANT — incluido el de el_cerebro_reader sobre la vista
 -- del dashboard, que no está en la mig 121 y un DROP se llevaría por delante.
 --
---   CREATE OR REPLACE VIEW public.v_data_source_freshness AS
+--   CREATE OR REPLACE VIEW public.v_data_source_freshness
+--   WITH (security_invoker = true) AS          -- <- imprescindible: sin la
+--     -- cláusula WITH el REPLACE BORRA la reloption y la vista pasa de
+--     -- invoker a definer en silencio. Es el mismo mecanismo descrito
+--     -- arriba, y en un rollback nadie lo va a notar.
 --     WITH fuentes AS (
 --       SELECT 'meta_organic_posts'::text AS fuente, 'meta_organic_posts'::text AS tabla,
 --              'semanal'::text AS cadencia, 21 AS umbral_dias,
