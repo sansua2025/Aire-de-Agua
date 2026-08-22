@@ -234,7 +234,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      # pg_dump debe ser >= al servidor (PROD es PostgreSQL 17.6); el runner trae 16.
+      # pg_dump debe ser >= al servidor (PROD es PostgreSQL 17.6) y el runner trae 16.
+      # OJO: NO basta con instalar el paquete y confiar en el PATH. En Debian/Ubuntu
+      # los binarios de /usr/bin son wrappers de postgresql-common resueltos por
+      # update-alternatives, y con las dos versiones instaladas la resolución es
+      # ASIMÉTRICA: `psql` salía 17.11 mientras `pg_dump` seguía saliendo 16.15,
+      # y pg_dump aborta con "server version mismatch". Se usan rutas ABSOLUTAS.
       - name: Instalar cliente de PostgreSQL 17
         run: |
           set -euo pipefail
@@ -244,7 +249,18 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
           sudo apt-get update -qq
           sudo apt-get install -y -qq postgresql-client-17
-          pg_dump --version && psql --version
+          echo "PGBIN=/usr/lib/postgresql/17/bin" >> "$GITHUB_ENV"
+
+      # La versión se AFIRMA, no se imprime y se espera que alguien la mire: es
+      # exactamente el fallo que se acaba de corregir.
+      - name: Verificar que el cliente sea 17
+        run: |
+          set -euo pipefail
+          for b in pg_dump psql; do
+            v="$("$PGBIN/$b" --version | grep -oE '[0-9]+' | head -1)"
+            echo "$b -> $v"
+            [ "$v" -ge 17 ] || { echo "::error::$b es $v, se requiere >= 17 (PROD es 17.6)"; exit 1; }
+          done
 
       # Prueba las DOS direcciones del gate antes de confiar en su veredicto:
       # que falla ante una migración rota (incluido el caso literal de AIR-276) y
@@ -252,7 +268,7 @@ jobs:
       - name: Self-test del gate de migraciones
         env:
           SELFTEST_DB_URL_TEMPLATE: postgresql://postgres:postgres@localhost:5432/{db}
-        run: bash scripts/agent/migration-gate.selftest.sh
+        run: PSQL_BIN="$PGBIN/psql" bash scripts/agent/migration-gate.selftest.sh
 
       - name: Volcar el esquema de PROD (solo lectura)
         env:
@@ -269,7 +285,7 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          pg_dump "$SUPABASE_DB_URL" \
+          "$PGBIN/pg_dump" "$SUPABASE_DB_URL" \
             --schema-only --schema=public --schema=analytics \
             --no-owner --no-comments > /tmp/prod_schema.sql
           echo "Volcado: $(wc -l < /tmp/prod_schema.sql) líneas."
@@ -279,10 +295,10 @@ jobs:
         run: |
           set -euo pipefail
           export PGPASSWORD=postgres
-          psql "postgresql://postgres:postgres@localhost:5432/postgres" -q \
+          "$PGBIN/psql" "postgresql://postgres:postgres@localhost:5432/postgres" -q \
             -c "CREATE DATABASE migration_gate"
           git fetch origin main --quiet || true
-          bash scripts/agent/migration-gate.sh \
+          PSQL_BIN="$PGBIN/psql" bash scripts/agent/migration-gate.sh \
             --target "postgresql://postgres:postgres@localhost:5432/migration_gate" \
             --baseline /tmp/prod_schema.sql \
             --base-ref origin/main | tee -a "$GITHUB_STEP_SUMMARY"
