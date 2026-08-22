@@ -41,7 +41,11 @@
 CREATE TABLE IF NOT EXISTS public.data_sources (
   fuente            text PRIMARY KEY,
   etiqueta          text NOT NULL,
-  esquema           text NOT NULL DEFAULT 'public',
+  -- Allowlist de esquema. El conjunto de relaciones que freshness_snapshot
+  -- puede leer como owner lo decide una FILA, no el código: acotarlo por CHECK
+  -- mantiene esa primitiva mínima. Ampliarla es una migración de una línea —
+  -- que es justo el punto: fail-closed por defecto.
+  esquema           text NOT NULL DEFAULT 'public' CHECK (esquema = 'public'),
   tabla             text NOT NULL,
   -- Columna que marca la FECHA DEL DATO (no la de la corrida).
   campo_fecha       text NOT NULL,
@@ -391,7 +395,12 @@ RETURNS TABLE(
   dias_evaluados  integer,
   dias_stale      integer,
   dias_desconocidos integer,
-  stale_algun_dia boolean,
+  -- Veredicto TRI-ESTADO, no booleano. Un booleano obliga a elegir un valor para
+  -- "no sé", y cualquier elección es una trampa: bool_or(stale IS TRUE) colapsa
+  -- 'desconocido' a false = "limpio", que es fail-OPEN — el gate dejaría pasar
+  -- justo a las fuentes ciegas. Con tres valores el consumidor seguro es
+  -- `veredicto <> 'limpio'`, fail-CLOSED por construcción.
+  veredicto       text,
   stale_todos_los_dias boolean,
   peor_dias_desde_ultimo integer
 )
@@ -426,7 +435,11 @@ BEGIN
     count(*)::integer                                              AS dias_evaluados,
     count(*) FILTER (WHERE c.stale IS TRUE)::integer                AS dias_stale,
     count(*) FILTER (WHERE c.stale IS NULL)::integer                AS dias_desconocidos,
-    bool_or(c.stale IS TRUE)                                        AS stale_algun_dia,
+    CASE
+      WHEN bool_or(c.stale IS TRUE)  THEN 'stale'
+      WHEN bool_or(c.stale IS NULL)  THEN 'desconocido'
+      ELSE 'limpio'
+    END                                                             AS veredicto,
     -- Un día 'desconocido' NO cuenta como fresco: si no se puede afirmar
     -- frescura, la ventana no se declara limpia.
     (count(*) FILTER (WHERE c.stale IS FALSE) = 0)                  AS stale_todos_los_dias,
@@ -438,7 +451,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION analytics.get_freshness_rango(date,date,text) IS
-  'AIR-271. Agregado de frescura por fuente en la ventana [p_desde,p_hasta] (máx 120 días): cuántos días estuvo stale, cuántos son irreconstruibles y el peor rezago. Es el primitivo del gate de AIR-270 ("no promuevas un learning sustentado en semanas ciegas"). Un día desconocido nunca cuenta como fresco.';
+  'AIR-271. Agregado de frescura por fuente en la ventana [p_desde,p_hasta] (máx 120 días). Primitivo del gate de AIR-270 ("no promuevas un learning sustentado en semanas ciegas"). CONSUMO CORRECTO: bloquear cuando veredicto <> ''limpio''. `veredicto` es TRI-ESTADO a propósito: ''stale'' (se confirmó rezago), ''desconocido'' (la ventana no es reconstruible para esta fuente) y ''limpio'' (se confirmó frescura todos los días). NO reducirlo a un booleano: colapsar ''desconocido'' a false es fail-OPEN y deja pasar exactamente a las fuentes ciegas — al 2026-08-22 eso serían klaviyo_profiles, klaviyo_campaigns e inventario. Un día desconocido nunca cuenta como fresco.';
 
 REVOKE EXECUTE ON FUNCTION analytics.get_freshness_asof(date) FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION analytics.get_freshness_rango(date,date,text) FROM PUBLIC, anon, authenticated;
