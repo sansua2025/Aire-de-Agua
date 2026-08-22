@@ -79,6 +79,28 @@
   entonces REAPLICAR la migracion falla, porque su `DROP VIEW IF EXISTS ..._v1` no lleva CASCADE.
   Tambien: un `<definicion de la migracion NNN>` como marcador NO es un rollback ejecutable.
 
+- AIR-271 cierre (PR #186, f310254) — DERIVAR > VALIDAR. El fix bueno a "flag de config que puede
+  contradecir al catalogo" no es validar la coherencia en el trigger sino DERIVAR el flag del
+  catalogo y descartar lo que venga en el INSERT: hace el error irrepresentable en vez de detectable.
+  Al revisar config-as-data, si una columna DUPLICA informacion que ya vive en pg_catalog /
+  information_schema, tratarla como CACHE y preguntar por su invalidacion.
+  LIMITE que queda con derivacion en ESCRITURA: un `ALTER TABLE ... ALTER COLUMN ... TYPE` posterior
+  no dispara el trigger y desalinea el flag. MEDIDO en PROD: las DOS direcciones son SILENCIOSAS
+  (corrimiento de 1 dia, sin excepcion) — date->timestamptz da +1d, y timestamptz->date NO lanza
+  error porque `date AT TIME ZONE 'x'` resuelve via cast implicito date->timestamp a
+  timezone(text,timestamp), asi que da -1d. O sea que un BEGIN/EXCEPTION NO cubre este caso.
+  Fix durable = derivar en tiempo de LECTURA (el motor consulta el tipo en su propio loop).
+  Reparacion manual si se queda en escritura: `UPDATE <config> SET pk = pk` re-dispara el trigger.
+- plpgsql: `WHEN OTHERS` NO captura QUERY_CANCELED ni ASSERT_FAILURE — un EXCEPTION por-iteracion
+  para aislar fallos NO enmascara timeouts ni cancels administrativos. Punto a favor al revisar
+  aislamiento de errores; no exigir un `WHEN OTHERS` mas fino por ese motivo.
+- Aislar con BEGIN/EXCEPTION dentro de un LOOP: verificar que la bandera de error se asigne en
+  TODAS las ramas (incluida la que ni siquiera ejecuta el bloque). Las variables plpgsql persisten
+  entre iteraciones -> una rama que no la resetea arrastra el `true` de la fuente anterior.
+- Revisar un ROLLBACK comentado: no basta leerlo. Ejecutar sus cuerpos de vista como SELECT contra
+  PROD (solo lectura, sin DDL) con pg_typeof por columna y comparar contra el contrato vigente —
+  `CREATE OR REPLACE VIEW` no puede cambiar tipos, asi que un rollback con un tipo corrido no aplica.
+  Barato y caza el fallo real antes de que alguien lo necesite a las 3am.
 
 ## Patrones de error a vigilar (graduar a regla si se repiten >=2)
 - (1x) Idempotencia de ejecutor n8n basada en `$json.length` sobre respuesta HTTP de PostgREST:
