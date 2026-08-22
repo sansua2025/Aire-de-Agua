@@ -50,6 +50,36 @@
   intactos). Para vistas que evaden RLS de tablas base: exigir `security_invoker=true` +
   `REVOKE SELECT ... FROM anon, authenticated` sobre la vista misma.
 
+- AIR-271 (PR #186) — CONFIG AS DATA que alimenta SQL dinamico: revisar DOS cosas, no una.
+  (a) Inyeccion: identificadores por %I / literales por %L, y que los %s del format() final sean
+      solo fragmentos construidos localmente (nunca texto de tabla). Aqui estaba OK.
+  (b) TIPOS: un trigger que valida que la columna EXISTE pero no su data_type deja pasar el modo
+      SILENCIOSO, que es peor que la caida. Caso real: un flag `campo_fecha_es_tz=false` sobre una
+      columna timestamptz hace `max(ts)::date` en la TZ de sesion (UTC) -> reintroduce el bug de
+      zona horaria que la propia migracion venia a cerrar, SIN error. Si el trigger ya consulta
+      information_schema.columns, exigir que traiga data_type y valide la coherencia flag<->tipo.
+  (c) RADIO DE DAÑO: un motor que itera fuentes con EXECUTE y sin BEGIN/EXCEPTION por fuente
+      convierte UNA fila de config mala en caida de TODAS las fuentes. Si ademas una vista del
+      dashboard cuelga de ahi, `queries.ts` hace `if (error) throw error` -> 500 en todas las
+      paginas. Una vista hardcodeada no es rompible por un INSERT; la de config si -> es aumento
+      real de superficie de fallo, vale como bloqueante.
+- AIR-271 — AGREGAR sobre un valor tri-estado: `bool_or(x IS TRUE)` colapsa NULL->false y es
+  FAIL-OPEN. Patron a exigir cuando el motor ya distingue "no se" por fila: NO reducir a booleano,
+  devolver un veredicto TRI-ESTADO ('stale'/'desconocido'/'limpio') y documentar el consumo seguro
+  (`veredicto <> 'limpio'`). Un booleano obliga a elegir un valor para "no se" y toda eleccion es
+  trampa. El builder lo corrigio asi en 523bcc1 y quedo mejor que el fix que yo habia propuesto
+  (NULL en booleano). Preferir esta forma al revisar gates de frescura/calidad.
+- Contratos de vista: `CREATE OR REPLACE VIEW` SIN clausula WITH emite AT_ReplaceRelOptions con
+  lista VACIA -> BORRA las reloptions existentes (security_invoker incluido). Verificar siempre
+  `pg_class.reloptions` en PROD antes de aprobar un REPLACE: si la vista tenia security_invoker
+  explicito, el REPLACE lo pierde en silencio. Agregar columnas AL FINAL si es legal; quitar,
+  renombrar o cambiar tipo, no.
+- Rollback comentado que dice "probado": verificar el ROUNDTRIP, no solo el camino de vuelta.
+  Trampa vista aqui: el rollback crea una dependencia (vista_actual -> vista_v1_congelada) y
+  entonces REAPLICAR la migracion falla, porque su `DROP VIEW IF EXISTS ..._v1` no lleva CASCADE.
+  Tambien: un `<definicion de la migracion NNN>` como marcador NO es un rollback ejecutable.
+
+
 ## Patrones de error a vigilar (graduar a regla si se repiten >=2)
 - (1x) Idempotencia de ejecutor n8n basada en `$json.length` sobre respuesta HTTP de PostgREST:
   comportamiento de array-vs-item del nodo HTTP no esta verificado en el repo; preferir Code node
@@ -59,6 +89,15 @@
   graduar a check determinista en `check-data-rules.sh`: detectar `EXECUTE` sobre una expresión que
   referencie una columna de tabla (no un literal) dentro de una función `SECURITY DEFINER` bajo
   `supabase/migrations/`.
+
+## Anclar al SHA no basta: re-verificar el head ANTES de emitir (PR #186)
+El head del PR avanzo (16fc3f5 -> 523bcc1) MIENTRAS revisaba, con un commit que resolvia uno de mis
+bloqueantes. El veredicto quedo invalido apenas publicado. Coste real: un comentario obsoleto en el PR.
+Regla: releer `headRefOid` JUSTO ANTES de publicar el veredicto y, si cambio, re-revisar el delta y
+emitir uno nuevo que ANULE explicitamente el anterior (enlazando el comment viejo) — el gate solo
+acepta el veredicto cuyo `sha:` coincide con el head. Barato de detectar (`git fetch` + comparar),
+caro de omitir.
+
 
 ---
 
