@@ -101,6 +101,26 @@
   PROD (solo lectura, sin DDL) con pg_typeof por columna y comparar contra el contrato vigente —
   `CREATE OR REPLACE VIEW` no puede cambiar tipos, asi que un rollback con un tipo corrido no aplica.
   Barato y caza el fallo real antes de que alguien lo necesite a las 3am.
+- RETURNS TABLE: `RETURN QUERY` liga por POSICION, no por nombre. Al revisar un diff que INSERTA
+  una columna EN MEDIO de un RETURNS TABLE, comparar la lista declarada contra el SELECT elemento a
+  elemento. Si los tipos vecinos son compatibles el desalineo NO falla: devuelve datos corridos en
+  silencio. En AIR-271 (b55ef2c) se metio `dias_error integer` antes de `veredicto text` y solo no
+  mintio porque integer/text son incompatibles y habria reventado. Coincidencia, no diseño.
+  Corolario: todo cambio de RETURNS TABLE exige `DROP FUNCTION IF EXISTS` antes del CREATE OR
+  REPLACE (Postgres rechaza el cambio de tipo de retorno) — y ese DROP se lleva los GRANT, asi que
+  verificar que se re-emitan despues.
+- Filtro `col <> 'valor'` dentro de un `count(*) FILTER (...)`: si `col` puede ser NULL el predicado
+  da NULL, la fila se descarta y el contador queda POR DEBAJO del real, sin error. Al aprobar un
+  agregado asi, verificar en la funcion productora que la columna se asigne en TODAS las ramas.
+  Verificado en AIR-271: las 4 ramas del IF asignan `estado`, por eso `c.estado <> 'error'` es seguro.
+- Sintaxis "rara" en un bloque de ROLLBACK comentado: antes de dudar, buscar si el MISMO constructo
+  ya existe en el camino de ida del archivo. En AIR-271 el `CREATE OR REPLACE VIEW ... WITH
+  (security_invoker=true) AS WITH cte AS (...)` (dos WITH seguidos, significados distintos) ya estaba
+  probado en la creacion de _v1 unas lineas arriba -> parsea, sin necesidad de teorizar.
+- MEDIR > RAZONAR en semantica de tipos/TZ. El hallazgo mas util de AIR-271 (que `date AT TIME ZONE`
+  NO falla, por cast implicito date->timestamp, y por tanto un BEGIN/EXCEPTION no cubre esa direccion)
+  salio de correr 4 expresiones en PROD, no de razonar sobre el catalogo. Ante cualquier duda de
+  "esto lanzaria error?", ejecutarlo en lectura antes de afirmarlo en el veredicto.
 
 ## Patrones de error a vigilar (graduar a regla si se repiten >=2)
 - (1x) Idempotencia de ejecutor n8n basada en `$json.length` sobre respuesta HTTP de PostgREST:
