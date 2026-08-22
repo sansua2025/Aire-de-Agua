@@ -285,9 +285,37 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          "$PGBIN/pg_dump" "$SUPABASE_DB_URL" \
-            --schema-only --schema=public --schema=analytics \
-            --no-owner --no-comments > /tmp/prod_schema.sql
+          # pg_dump toma ACCESS SHARE sobre TODAS las tablas aunque solo pida el
+          # esquema, y no hay flag para evitarlo: el rol del secret necesita poder
+          # leerlas todas. Si no puede, se dice EXACTAMENTE cómo arreglarlo en vez
+          # de dejar un "permission denied" suelto. Nunca se recorta el volcado a
+          # las tablas visibles: un baseline parcial haría pasar migraciones que
+          # fallarían en PROD, que es fail-open y justo lo que este gate combate.
+          if ! "$PGBIN/pg_dump" "$SUPABASE_DB_URL" \
+               --schema-only --schema=public --schema=analytics \
+               --no-owner --no-comments > /tmp/prod_schema.sql 2>/tmp/dump_err.txt; then
+            head -5 /tmp/dump_err.txt
+            if grep -q "permission denied" /tmp/dump_err.txt; then
+              {
+                echo "## migration-apply: el rol de \`SUPABASE_DB_URL\` no puede leer todo el esquema"
+                echo
+                echo '`pg_dump` bloquea en ACCESS SHARE **todas** las tablas incluso con'
+                echo '`--schema-only`, así que el rol necesita lectura sobre todas. Arreglo'
+                echo 'de una línea, aplicado a PROD con confirmación humana:'
+                echo
+                echo '```sql'
+                echo 'GRANT pg_read_all_data TO <rol_de_SUPABASE_DB_URL>;'
+                echo '```'
+                echo
+                echo 'Es el rol predefinido de PostgreSQL 14+ para justamente esto: cubre las'
+                echo 'tablas futuras sin mantenimiento y no concede escritura. Recortar el'
+                echo 'volcado a las tablas visibles NO es alternativa: un baseline parcial'
+                echo 'deja pasar migraciones que fallarían en PROD.'
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "::error::el rol de SUPABASE_DB_URL no puede leer todas las tablas; ver el resumen del job"
+            fi
+            exit 1
+          fi
           echo "Volcado: $(wc -l < /tmp/prod_schema.sql) líneas."
           test -s /tmp/prod_schema.sql
 
