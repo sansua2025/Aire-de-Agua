@@ -128,6 +128,18 @@ CUALQUIER upsert que lo infiera DEBE re-sincronizarse con el NUEVO predicado en 
 Verificar forzando un UPSERT real (INSERT que cae en conflicto → DO UPDATE) con fixtures — no basta con
 que la función compile ni con 0 filas.
 
+## `$vars` NO existe en la instancia n8n (plan sin variables) — allowlists hardcodeadas en el nodo
+El plan de n8n de esta cuenta no incluye Variables, así que `$vars` es `undefined` en runtime. Todo nodo
+que lea `$vars.X` con fallback `if (!X) return []` queda MUERTO EN SILENCIO (caso real: `Drift n8n vs repo`
+de `Sentinela_v1.json`, ciego desde el día uno). Patrón correcto = allowlist hardcodeada en el propio nodo
+(misma convención que `EXPECTED_ACTIVE` / `EXPECTED`) + rama de FALLO RUIDOSO si la lista queda vacía
+(emitir señal `needs-refinement`, nunca `return []`).
+Al espejar `n8n/workflows/` en una allowlist: la clave es `normName()` del campo **`name`** del export
+(= nombre vivo que devuelve `GET /api/v1/workflows`), NO el basename del archivo — difieren en 15 de los
+47 exports (`E5A_Loop_Weekly_Analysis.json` se llama `Loop - Weekly Analysis`). Usar el basename ahí da
+falsos positivos permanentes. Generar la lista con script, nunca a mano.
+`Sentinela_v1.json` NO tiene `activeVersion` (es `null`): no fabricarla; el check de paridad hace SKIP.
+
 (Nota de poda: la lección "check-docstring-rpc-loop falso positivo con decimales narrativos" ya está
 GRADUADA — `scripts/agent/check-docstring-rpc-loop.sh` exige operador `+`/`-`/`*` inmediato antes de contar
 un decimal como delta, ver AIR-257 en `MEMORY.md` raíz. No repetir el análisis aquí.)
