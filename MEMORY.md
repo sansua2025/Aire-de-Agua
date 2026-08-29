@@ -150,27 +150,34 @@ dentro del cuerpo del RPC (mismo patrón que `analytics.eval_recompute` mig 086,
 - **Dos nodos HTTP → un Code node: encadenarlos, no paralelizarlos.** Dos conexiones a la misma entrada de
   un Code node lo ejecutan dos veces. Patrón: `A → B → Code`, y dentro del Code leer AMBAS por referencia
   explícita `$('nombre')` (envuelta en try/catch para degradar si una no corrió), nunca por `$input`.
-- **`Drift n8n vs repo` solo cubre "activo en n8n y ausente del baseline"** (`list.filter(w => w.active)`):
-  el caso inverso —un workflow que DEBE estar prendido con `active:false`— es una señal aparte (`wf_inactive`,
-  `signal-key: inactive:<normName>`). Un workflow apagado no produce fallos que contar: el silencio ES la
-  señal, y la red de `sync_log` solo lo atrapa ~3 días tarde.
+- **La señal `drift` SE RETIRÓ del Sentinela (nodo `Drift n8n vs repo` eliminado).** No era un problema de
+  detección: `.github/workflows/n8n-drift.yml` (job nocturno, `scripts/check-n8n-repo-drift.mjs`) lleva un mes
+  cazando el drift repo↔n8n correctamente. El fallo era de ENTREGA — solo escribía en el Step Summary de
+  Actions y nadie lo mira. La versión del Sentinela era además PEOR: para saber qué está versionado
+  necesitaba un espejo manual de los 47 nombres de workflow dentro del nodo Code (se desincroniza en cuanto
+  alguien agrega un export), mientras el job de CI lee `n8n/workflows/` del disco. **Lección: antes de
+  construir un sensor nuevo, verificar si ya existe uno que detecta y solo le falta el canal de entrega.**
+  Consecuencia documentada del retiro: un issue `drift:*` abierto NO queda huérfano — deja de estar vivo en
+  toda corrida, el CANDADO 3 de `Calcular issues a cerrar` ya no lo protege y la corrida siguiente lo cierra
+  sola (era `needs-refinement`, no human-gate). Es el comportamiento deseado.
+- **`wf_inactive` (workflow que DEBE estar prendido con `active:false`) es una señal aparte**
+  (`signal-key: inactive:<normName>`), y no la cubre el job de CI de drift. Un workflow apagado no produce
+  fallos que contar: el silencio ES la señal, y la red de `sync_log` solo lo atrapa ~3 días tarde.
 - **`wf_inactive` se calcula contra una ALLOWLIST explícita (`EXPECTED_ACTIVE`), NUNCA contra
   `$vars.SENTINELA_BASELINE`.** El baseline es "lo versionado", no "lo que debe estar prendido": 31 de los 47
   exports están `active:false` por diseño (backfills, one-shots, `E6A_Copy_Generator`, `Error_Handler_Global`
   —que se invoca como `errorWorkflow` sin necesitar `active:true`—). Derivarla del baseline no solo hace ruido:
   la señal de un backfill apagado para siempre queda VIVA, el CANDADO 3 de `Calcular issues a cerrar` no la
   cierra nunca y, al ser human-gate, ningún agente puede cerrarla → **issue inmortal** que se recrea si un
-  humano lo cierra a mano. Tampoco vale reinterpretar el baseline como "los que deben estar activos": `Drift
-  n8n vs repo` compara los ACTIVOS vivos contra ESE MISMO baseline, así que las dos lecturas son mutuamente
-  excluyentes (cada activo legítimo que faltara saldría como falso positivo de drift). Convención: allowlist
-  en el propio nodo, como el `EXPECTED` de `Procesos loop estancados`.
+  humano lo cierra a mano. Convención: allowlist en el propio nodo, como el `EXPECTED` de `Procesos loop
+  estancados`.
 - **UN TOPE ACOTA LO QUE SE CREA, NUNCA LO QUE SE AVISA** (patrón de bug, cazado en el propio Sentinela).
   Meter un `slice(0, MAX)` en un sensor introduce dos fallos de SUPRESIÓN si no se blindan a la vez:
   **(1) el corte por POSICIÓN entierra la señal más grave.** El orden de llegada al merge no es el orden de
-  severidad: en `Unir candidatos` las dos señales human-gate (`draft_unpublished` idx 3, `wf_inactive` idx 5)
-  eran las ÚLTIMAS → las primeras en caerse, justo el día en que más importan (un webhook caído aporta
-  1 `exec_fail` + 1 `wf_inactive`; 10 `drift` bastan para enterrar el `wf_inactive`, y una tormenta de
-  webhooks que crashee los 5 E2 lo fabrica a voluntad — el ruido que entierra la alerta lo genera el ataque).
+  severidad: en `Unir candidatos` las dos señales human-gate (`draft_unpublished` idx 2, `wf_inactive` idx 4
+  tras retirar `drift`) son las ÚLTIMAS → las primeras en caerse, justo el día en que más importan (un
+  webhook caído aporta 1 `exec_fail` + 1 `wf_inactive`, y una tormenta que crashee los 5 E2 fabrica 5
+  `exec_fail` a voluntad — el ruido que entierra la alerta lo genera el propio incidente).
   Fix en tres capas, ninguna suficiente sola: **(a)** ordenar por severidad ANTES del slice (human-gate
   primero, luego `priority` 1→4, orden de llegada como desempate estable); **(b)** que el canal de AVISO
   (correo) se calcule sobre el conjunto COMPLETO — lo omitido viaja en un campo `overflow` adjunto al primer
@@ -203,6 +210,12 @@ dentro del cuerpo del RPC (mismo patrón que `analytics.eval_recompute` mig 086,
   (typo o rename → ese workflow queda sin vigilancia y nadie se entera). Emitir señal propia
   (`expected_missing:<wf>`) con label `needs-refinement` — **no** human-gate, para que el auto-cierre la
   limpie sola cuando el nombre reaparezca y no se convierta en un issue inmortal.
+- **`Unir candidatos` (merge append) exige índices CONTIGUOS 0..numberInputs-1.** Al quitar una señal no
+  basta con borrar el nodo: hay que bajar `numberInputs` y REASIGNAR los índices de los emisores restantes
+  sin dejar hueco. Índices vigentes (5 entradas): 0 `exec_fail`, 1 `sync_gap`, 2 `draft_unpublished`,
+  3 `loop_gap`, 4 `wf_inactive`/`expected_missing`. Ojo con lo que cuelga del merge: `Recolectar para cierre`
+  DEBE seguir leyendo la salida PRE-truncado de `Unir candidatos` (es lo que salva el auto-cierre), y el
+  orden de llegada es el desempate estable del sort de `Dedupe vs Linear`.
 - Contrato de una señal nueva del Sentinela: (1) `{senal, fuente, signalKey, titulo, descripcion}` con el
   marcador `signal-key: <k>` al final del cuerpo (lo usan dedupe Y auto-cierre); (2) entrada nueva en el
   merge `Unir candidatos` — subir `numberInputs` Y conectar al índice correcto; (3) rama en `labelsFor()` de
@@ -260,3 +273,25 @@ AIR-97, solo dispara con `--file`, nunca con `--diff` porque ya está en main).
 - `guard-prod-writes.sh` matchea SOLO `mcp__supabase__*` literal — NO intercepta nombres prefijados
   `mcp__<hash>__apply_migration`/`execute_sql` de sesiones con MCP deferred. El hook no lo cubre → disciplina
   AIR-162 a mano (preview branch para DDL, PROD solo lectura) sigue siendo responsabilidad del agente.
+
+## GitHub Actions — entregar la señal sin abrir superficie (n8n-drift fase 2)
+- **`$vars` NO EXISTE en el plan de n8n de esta cuenta.** Un nodo Code que lee `$vars.X` obtiene `undefined`
+  y, si eso deriva en `return []`, el sensor queda MUERTO EN SILENCIO. Cualquier `$vars` en un workflow del
+  repo es código muerto: hoy solo queda una MENCIÓN en un comentario de `Workflow del baseline inactivo`
+  (documenta por qué la allowlist es hardcodeada), no una lectura.
+- **Un solo issue vivo, no uno por corrida.** Clave = un LABEL fijo (`n8n-drift`), no el título (el título lo
+  edita un humano; el label sobrevive). Y el anti-spam real no es "no crear otro issue": es no COMENTAR
+  cuando nada cambió. Patrón: `sha256` del reporte embebido en el cuerpo como `<!-- drift-hash: … -->`,
+  releído con patrón estricto (`[0-9a-f]{64}`) → se actualiza el cuerpo siempre, se comenta solo si el hash
+  cambió. Editar un body NO notifica en GitHub; comentar sí. `gh label create --force` es idempotente.
+- **Texto externo hacia un issue: por ARCHIVO, jamás por línea de comando.** Nunca interpolar contenido no
+  confiable con `${{ }}` dentro de un `run:` (se sustituye ANTES de que exista el shell → inyección de
+  comandos); todo por `env:` y el reporte por `--body-file`/`cat`. La valla del bloque de código se CALCULA
+  más larga que la racha de backticks más larga del reporte, o un nombre de workflow con ``` escapa a
+  markdown/HTML.
+- **`set -euo pipefail` en un step de Actions tiene dos trampas clásicas**: (1) `grep` sin match sale 1 y
+  `pipefail` mata el paso → `{ grep …|| true; } | awk …`; (2) encadenar `head | head` hace que el segundo
+  cierre el pipe y el primero muera con SIGPIPE (141) → escribir a archivo intermedio.
+- Separar el "fallar el job" del "notificar": la notificación va en un step propio y el `exit $status` en un
+  step final `if: always()`, leyendo el status por `env:`. Así el job SIGUE en rojo con drift sin perder el
+  aviso, y un exit 2 (secrets sin configurar) NO toca el issue: el sensor no corrió, no hay nada que afirmar.

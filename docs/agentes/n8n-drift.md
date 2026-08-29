@@ -64,9 +64,16 @@ Env vars: `N8N_API_URL` (con o sin `/api/v1`, se normaliza) + `N8N_API_KEY`.
 - **Cron** `0 11 * * *` (11:00 UTC = 06:00 COT) + **`workflow_dispatch`** para
   correr a mano desde la pestaña Actions.
 - Corre el script y vuelca el reporte al **GitHub Step Summary** del run.
-- Si hay drift, el job **falla** (exit ≠ 0) → visible en Actions.
+- **Entrega el reporte a un humano** (fase 2, ver abajo): un único issue de
+  GitHub con el label `n8n-drift`.
+- Si hay drift, el job **falla** (exit ≠ 0) → visible en Actions. La
+  notificación NO lo pone en verde.
 - **No** es un required check del branch protection: es informativo nocturno, no
   debe bloquear PRs.
+- `permissions`: `contents: read` + `issues: write` (mínimo privilegio; el
+  `issues: write` es lo que permite crear/editar/comentar/cerrar el issue y
+  crear su label la primera vez). Usa el `GITHUB_TOKEN` efímero del run: **no
+  hay secrets nuevos**.
 
 ### Secrets a configurar A MANO
 
@@ -98,8 +105,52 @@ residual conocido al momento de crear el job (esperado, confirma que funciona):
 El objetivo NO es llegar a cero hoy, sino que cualquier *nuevo* drift se cace en
 el run nocturno siguiente.
 
-## TODO (fase 2)
+## Entrega de la señal (fase 2 — hecha)
 
-- Cablear notificación a **Linear** (crear/actualizar issue) y/o **Slack**
-  cuando el run detecte drift, en lugar de solo fallar el job. Hoy la señal vive
-  en la pestaña Actions + el Step Summary del run.
+El problema nunca fue la detección (lleva un mes cazando drift correctamente):
+era la **entrega**. El Step Summary de Actions no lo mira nadie. Ahora el run
+mantiene **un solo issue de GitHub vivo**, identificado por el label
+`n8n-drift` (el label es la clave, no el título: el título se puede editar a
+mano, el label no se pierde):
+
+| Estado del run | Qué hace |
+|----------------|----------|
+| drift y no hay issue abierto | lo **crea** con el reporte en el cuerpo |
+| drift y el reporte **cambió** | **actualiza** el cuerpo y **comenta** (el comentario es lo que notifica) |
+| drift y el reporte es **idéntico** | actualiza el cuerpo y **no comenta** (anti-spam) |
+| sin drift (exit 0) | **cierra** el issue con un comentario |
+| exit 2 (faltan secrets) | **no toca el issue** — el sensor no corrió, no hay nada que afirmar |
+
+La comparación "¿cambió el reporte?" se hace con un `sha256` del reporte que
+viaja en el cuerpo del issue como marcador `<!-- drift-hash: … -->` y se vuelve
+a leer con un patrón estricto (64 hex). Sin ese marcador, un drift estable
+generaría un comentario por noche.
+
+**No lo cierres a mano si el drift sigue vivo**: la corrida siguiente no vería
+issue abierto y crearía uno nuevo.
+
+### Por qué esto reemplazó la señal `drift` del Sentinela
+
+El Sentinela (`n8n/workflows/Sentinela_v1.json`) tenía una señal `drift`
+equivalente, pero **peor**: para saber qué está versionado necesitaba una lista
+manual de los 47 nombres de workflow hardcodeada dentro de un nodo Code, que se
+desincroniza en cuanto alguien agrega un export. El job de CI lee
+`n8n/workflows/` del disco: no hay lista que mantener. La señal se retiró del
+Sentinela (nodo `Drift n8n vs repo` eliminado).
+
+### Seguridad de la entrega
+
+El reporte es **texto derivado de datos externos** (nombres de workflow que
+vienen de la API de n8n). Va a un issue de GitHub, así que no hay ejecución de
+por medio, pero el paso está escrito para que un nombre de workflow malicioso no
+pueda convertirse en nada:
+
+- El reporte **jamás toca la línea de comando**: viaja siempre como archivo
+  (`--body-file` / `cat`), nunca por `echo "$var"` ni por interpolación
+  `${{ }}` dentro de un `run:`. Todos los valores del contexto de Actions
+  (`github.token`, `run_id`, el status del paso anterior) entran por `env:`.
+- El reporte se encierra en un bloque de código cuya **valla se calcula** para
+  ser más larga que la racha de backticks más larga del propio reporte: un
+  nombre con ``` ``` ``` no puede cerrar el bloque y escapar a markdown/HTML.
+- El cuerpo se recorta (400 líneas / 45 000 bytes, con `iconv -c`) para no
+  chocar con el tope de 65 536 caracteres del issue.

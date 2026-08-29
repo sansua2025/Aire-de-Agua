@@ -140,6 +140,15 @@ Al espejar `n8n/workflows/` en una allowlist: la clave es `normName()` del campo
 falsos positivos permanentes. Generar la lista con script, nunca a mano.
 `Sentinela_v1.json` NO tiene `activeVersion` (es `null`): no fabricarla; el check de paridad hace SKIP.
 
+**ACTUALIZACIÓN (2026-08-29): el caso `Drift n8n vs repo` NO se arregló con la allowlist — se BORRÓ.**
+Antes de espejar `n8n/workflows/` a mano dentro de un nodo, preguntar si ya existe un detector fuera de
+n8n: `.github/workflows/n8n-drift.yml` + `scripts/check-n8n-repo-drift.mjs` llevaba un mes cazando ese
+mismo drift, leyendo el directorio del disco (cero lista que mantener). Lo que le faltaba era el CANAL DE
+ENTREGA (solo escribía al Step Summary), no la detección. Regla: **un sensor que necesita un espejo manual
+de 47 nombres pierde contra uno que lee la fuente de verdad; antes de construir, buscar el que ya detecta y
+cablearle la entrega.** La lección de `$vars` sigue viva para las allowlists legítimas (`EXPECTED_ACTIVE`,
+`EXPECTED`), que codifican una DECISIÓN ("esto debe estar prendido") y no un espejo de un directorio.
+
 (Nota de poda: la lección "check-docstring-rpc-loop falso positivo con decimales narrativos" ya está
 GRADUADA — `scripts/agent/check-docstring-rpc-loop.sh` exige operador `+`/`-`/`*` inmediato antes de contar
 un decimal como delta, ver AIR-257 en `MEMORY.md` raíz. No repetir el análisis aquí.)
