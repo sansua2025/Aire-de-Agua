@@ -293,9 +293,10 @@ AIR-97, solo dispara con `--file`, nunca con `--diff` porque ya está en main).
   cambió. Editar un body NO notifica en GitHub; comentar sí. `gh label create --force` es idempotente.
 - **Texto externo hacia un issue: por ARCHIVO, jamás por línea de comando.** Nunca interpolar contenido no
   confiable con `${{ }}` dentro de un `run:` (se sustituye ANTES de que exista el shell → inyección de
-  comandos); todo por `env:` y el reporte por `--body-file`/`cat`. La valla del bloque de código se CALCULA
-  más larga que la racha de backticks más larga del reporte, o un nombre de workflow con ``` escapa a
-  markdown/HTML.
+  comandos); todo por `env:` y el reporte por `--body-file`/`cat`. El dato se **neutraliza una sola vez**
+  al capturarlo (`tr -d '\000'` + backtick→comilla simple) y la valla del bloque de código es **FIJA de 3**.
+  NO calcular la valla como "racha más larga del dato + 1": esa es la variante con el bug —su tamaño lo
+  elige el atacante— descrita en el patrón de bug de abajo.
 - **`set -euo pipefail` en un step de Actions tiene dos trampas clásicas**: (1) `grep` sin match sale 1 y
   `pipefail` mata el paso → `{ grep …|| true; } | awk …`; (2) encadenar `head | head` hace que el segundo
   cierre el pipe y el primero muera con SIGPIPE (141) → escribir a archivo intermedio.
@@ -318,15 +319,42 @@ AIR-97, solo dispara con `--file`, nunca con `--diff` porque ya está en main).
   (`issue edit`) ANTES de notificar (`issue comment`) entierra ese cambio para siempre si el comment falla
   (rate-limit/5xx): la corrida siguiente lo lee como "no cambió". Comentar primero → si algo falla, la huella
   publicada sigue siendo la vieja y mañana se avisa otra vez. La dirección segura del fallo es **avisar de más**.
-- **Todo paso que pueda tumbar el aviso va fail-open.** `--assignee` dentro del `create` mata el paso con un
-  login inválido (422) → llamada aparte con `|| echo`. Y `gh issue list --limit 1` deja vivo para siempre un
-  segundo issue con el label → iterar TODOS los abiertos (el más viejo es el canónico, los demás se cierran).
+- **Fail-open donde el fallo no aporta nada; fatal donde parar es la conducta correcta.** Hoy, en
+  `n8n-drift.yml`, son fail-open cuatro llamadas: `gh issue edit --add-assignee` (un login inválido devuelve
+  422 y mataría el aviso), el cierre de duplicados (que un duplicado siga abierto no impide el aviso),
+  `gh label create --force` (no-op si ya existe; si de verdad faltara, el `create --label` de después muere
+  igual) y `gh issue view` (es una LECTURA: si falla, OLD_HASH queda vacío y se COMENTA por si acaso).
+  `gh issue list`, `gh issue comment` y `gh issue edit --body-file` son FATALES a propósito: las dos últimas
+  SON la notificación —si fallan no hay degradación posible, y parar deja publicada la huella vieja, así que
+  mañana se vuelve a avisar—; y en el listado, seguir con una lista incompleta rompería la elección del
+  canónico y crearía un issue duplicado por noche. El bucle de cierre del caso "sin drift" también es fatal:
+  ahí no hay aviso que entregar, y fallar en rojo es la señal correcta. Lo que sí se degrada es el CUERPO: el mínimo (sin
+  reporte) se escribe ANTES y el armado del completo va aislado en un subshell, así que un fallo ahí avisa
+  con menos detalle en vez de no avisar. Y `gh issue list --limit 1` dejaba vivo para siempre un segundo
+  issue con el label → iterar TODOS los abiertos (el más viejo es el canónico, los demás se cierran).
 - **Un marcador releído del propio cuerpo se envenena por POSICIÓN**: el bloque de datos se renderiza ANTES
   del marcador real, así que `head -n 1` se lo queda un nombre hostil con `drift-hash: <64 hex>`. Anclar al
   comentario HTML completo y tomar `tail -n 1`.
 - **Lo que se hashea hay que ORDENARLO.** El reporte se hashea para decidir si se comenta, y sus secciones se
   construían iterando la respuesta de la API de n8n (orden no garantizado) → hash inestable → comentario cada
-  noche. `sort` determinista (y `readdirSync().sort()`) antes de imprimir.
+  noche. `sort` determinista (y `readdirSync().sort()`) antes de imprimir. Y el comparador tiene que dar orden
+  TOTAL: `localeCompare` sin locale depende del ICU del runner y su colación IGNORA separadores como `\u0000`
+  (`("AB\u0000" + "1").localeCompare("A\u0000" + "B1") === 0`), así que los empates caen otra vez al orden de la
+  API. Comparar por codepoint (`x < y ? -1 : x > y ? 1 : 0`), y desempatar por un id único antes de tomar `[0]`.
+- **La red de seguridad tiene que estar ANTES del punto que puede morir.** El "cuerpo mínimo" del aviso estaba
+  23 líneas DEBAJO de un `head -c … | iconv -c` bajo `pipefail`: `iconv -c` omite caracteres inválidos EN MEDIO
+  del stream pero SALE 1 ante una secuencia cortada AL FINAL —justo lo que produce `head -c`— así que el paso
+  moría antes de la red (glibc 2.39 = ubuntu-latest; el relleno que alinea el corte lo elige quien nombra el
+  nodo → determinista, no azar). Dos correcciones, no una: (1) el saneo del corte NO puede fallar —retroceder
+  al último byte de arranque UTF-8 con aritmética de bytes, o como mínimo `|| true`—; (2) escribir PRIMERO el
+  cuerpo mínimo y armar el completo aislado (subshell con su propio `set -euo pipefail`, lanzado FUERA de una
+  condición: en bash un `if ( … )` o un `… || x` desactiva el errexit de dentro). Así el peor caso es "avisar
+  con menos detalle", nunca "no avisar".
+- **Una afirmación factual corregida en una línea sigue viva en sus hermanas.** Dos bloqueantes de la ronda 5
+  fueron la misma frase falsa ("la mayoría de los exports están `active:false`") sin corregir en el nodo de
+  abajo y una regla de MEMORY.md que prescribía el bug ya eliminado. Al cerrar un hallazgo sobre un HECHO:
+  grepear el repo entero por las otras redacciones antes de darlo por cerrado, y poner **procedencia** a toda
+  cifra sobre el repo ("conteo sobre el repo, YYYY-MM-DD") — sin procedencia la cifra caduca en silencio.
 - **Un reporte capturado con `2>&1` acaba publicado**: el enmascarado de secrets de Actions NO aplica al
   cuerpo de un issue creado por API, y Node emite `Failed to parse URL from <URL>` ante una URL malformada.
   El script redacta URL y API key de sus mensajes fatales.

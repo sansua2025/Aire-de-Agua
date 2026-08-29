@@ -94,6 +94,18 @@ async function listLiveWorkflows() {
   return all;
 }
 
+// Comparador de orden TOTAL por codepoint. NO se usa `localeCompare`: (1) sin
+// locale explícito depende del ICU del runner, y (2) su colación IGNORA caracteres
+// como el separador `\u0000` con el que se componen las claves compuestas de abajo
+// —verificado: `("AB\u0000" + "1").localeCompare("A\u0000" + "B1") === 0`—, así que
+// no da orden total: los empates caen al orden de la respuesta de la API y el hash
+// del reporte flapea, que es justo lo que este orden existe para evitar.
+const by = (key) => (a, b) => {
+  const x = String(key(a));
+  const y = String(key(b));
+  return x < y ? -1 : x > y ? 1 : 0;
+};
+
 // --- Normalización para comparación de contenido ---
 // Compara la "forma funcional" de cada nodo: name, type y parameters (incluye
 // jsCode). Las CREDENCIALES se ignoran POR COMPLETO: el repo usa
@@ -113,9 +125,7 @@ function normalizeNode(node) {
 function normalizeGraph(wf) {
   const nodes = Array.isArray(wf.nodes) ? wf.nodes : [];
   // Ordenar por nombre para que el orden del array no genere falsos positivos.
-  const normNodes = nodes
-    .map(normalizeNode)
-    .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  const normNodes = nodes.map(normalizeNode).sort(by((n) => n.name));
   return {
     nodes: normNodes,
     connections: wf.connections ?? {},
@@ -222,10 +232,15 @@ async function main() {
     const liveMatches = liveByName.get(name);
     if (!liveMatches) continue;
     // Si hay duplicados de un mismo lado, lo dejamos explícito y comparamos 1:1
-    // contra la primera coincidencia viva (orden de la API).
+    // contra la primera coincidencia viva. Cuál es "la primera" NO puede salir del
+    // orden de la respuesta de la API (no está garantizado): con dos workflows
+    // vivos que comparten `name` (caso `ambiguousLive`) el mismo drift hashearía
+    // distinto cada noche y el issue recibiría un comentario por corrida. Se ordena
+    // por `id`, que es único y estable.
+    const liveSorted = [...liveMatches].sort(by((w) => w.id));
     for (const entry of entries) {
       if (!entry.wf) continue;
-      const liveWf = liveMatches[0];
+      const liveWf = liveSorted[0];
       if (graphHash(entry.wf) !== graphHash(liveWf)) {
         const d = nodeDiffSummary(entry.wf, liveWf);
         drift.contenido.push({
@@ -271,7 +286,6 @@ async function main() {
   // si COMENTA el issue: sin un orden determinista el hash cambiaría sin que cambie
   // el drift y el issue recibiría un comentario cada noche — justo el ruido que el
   // anti-spam existe para evitar.
-  const by = (key) => (a, b) => String(key(a)).localeCompare(String(key(b)));
   drift.parseErrors.sort(by((e) => e.file));
   drift.liveSinRepo.sort(by((w) => `${w.name}\u0000${w.id}`));
   drift.repoSinLive.sort(by((w) => w.name));

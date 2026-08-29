@@ -174,10 +174,20 @@ pueda convertirse en nada:
 - El cuerpo tiene un **tope duro calculado**, no una constante adivinada: la
   cabecera y el cierre se escriben primero y se **miden** (`wc -c`), y el reporte
   solo puede ocupar `65536 - |cabecera| - |cierre| - 256` bytes (además del corte
-  editorial de 400 líneas / 45 000 bytes, con `iconv -c`). Se acota en bytes y el
+  editorial de 400 líneas / 45 000 bytes). Se acota en bytes y el
   tope de GitHub es en caracteres: en UTF-8 bytes ≥ caracteres, así que acotar
-  bytes acota caracteres. Si aun así el cuerpo se pasara, se envía un cuerpo
-  mínimo sin reporte en vez de dejar morir el aviso.
+  bytes acota caracteres.
+- **La red de seguridad va ANTES del punto que puede morir.** El cuerpo mínimo
+  (sin un byte del reporte) se escribe *primero*, y el cuerpo completo se arma
+  aislado en un subshell con su propio `set -euo pipefail`; solo reemplaza al
+  mínimo si se armó entero. Así, si falla el recorte, un `wc` o el tope, el aviso
+  sale **con menos detalle**, nunca deja de salir. Antes el "cuerpo mínimo"
+  estaba 23 líneas por debajo de un `head -c … | iconv -c`: `iconv -c` omite
+  caracteres inválidos *en medio* del stream pero **sale 1** ante una secuencia
+  cortada *al final* —justo lo que produce `head -c`— y bajo `pipefail` eso
+  mataba el paso antes de crear, comentar o editar nada. Hoy el corte por bytes
+  se sanea retrocediendo al último byte de arranque UTF-8 con aritmética de
+  bytes: no queda ningún proceso que pueda fallar por el corte.
 - **Se COMENTA antes de editar el cuerpo.** Al revés, un comentario fallido
   (rate-limit, 5xx) dejaba el hash NUEVO ya publicado y la corrida siguiente lo
   leía como "no cambió" → ese drift no se notificaba nunca más. Con este orden,
