@@ -170,3 +170,44 @@ solo en `MEMORY.md` (raíz) para no duplicar.
 `get_memoria_activa(null,...)` ignora el filtro de dominio y devuelve los top-10 `vigente`
 de TODOS los dominios al prompt E5. Insertar learnings de ingeniería/proceso ahí contaminaría
 el contexto analítico del agente E5. La memoria de proceso vive en MEMORY.md (este archivo).
+
+
+---
+
+# Security-reviewer (red-team) - memoria
+
+## Vector: amplificacion de valla en bloques de codigo Markdown (n8n-drift.yml, sha 771ccd7)
+Cuando se encierra texto externo en un bloque de codigo cuya valla se calcula como
+"racha de backticks mas larga del dato + 1", la valla queda ATADA al dato hostil y es
+ILIMITADA aunque el contenido este truncado. Con cuerpo ~= preambulo + 2*(RUN_MAX+1) + trim
+y tope de 65536 chars en un issue de GitHub, basta RUN_MAX ~= 21600 para pasarse
+(verificado: 22000 backticks -> 66243 chars). gh issue create devuelve 422,
+"set -euo pipefail" tumba el paso y EL CANAL DE AVISO MUERE. Regla: la valla debe tener
+TOPE (p.ej. min(RUN_MAX+1, 12)) y el presupuesto de truncado debe RESTAR 2*FENCE_LEN;
+mejor aun: neutralizar los backticks del dato y usar valla fija.
+
+## Vector: grep declara "binary file matches" y devuelve 0 rachas
+grep -oE sobre un archivo con un byte NUL manda el aviso a STDERR y deja stdout VACIO
+(GNU grep 3.11, verificado) -> RUN_MAX=0 -> la valla colapsa a 3 backticks aunque el
+contenido traiga vallas de 3+. Todo escaner defensivo hecho con grep sobre datos externos
+necesita -a / --binary-files=text. Alcance real limitado si el dato pasa por Postgres
+(json/jsonb rechazan U+0000), pero no si viene de un archivo del repo.
+
+## Vector: envenenar un marcador de dedupe releido del propio cuerpo
+grep -oE 'drift-hash: [0-9a-f]{64}' | head -n 1 toma la PRIMERA coincidencia; el dato
+externo se renderiza ANTES del marcador real, asi que un nombre hostil con
+"drift-hash: <64 hex>" gana. NO logra suprimir (haria falta un punto fijo de SHA-256: el
+hash cubre el propio texto inyectado) - solo fuerza comentario cada noche (ruido).
+Fix: tail -n 1, o anclar el patron al comentario HTML completo.
+
+## Superficie GitHub Actions - que revisar cuando un job gana issues:write
+Verificado OK en 771ccd7: cero interpolacion de expresiones dentro de run: (todo por env:),
+reporte siempre por --body-file (nunca linea de comando), trigger schedule+workflow_dispatch
+(no pull_request_target), checkout de la rama default, secrets del sensor AUSENTES del paso
+que escribe el issue. OJO: el enmascarado de secrets de Actions NO aplica al cuerpo de un
+issue - si el script imprime "Failed to parse URL from <N8N_BASE_URL>" (mensaje real de Node
+ante URL malformada), el secret acaba publicado.
+
+## activeVersion puede ser null (Sentinela_v1.json)
+La paridad AIR-140 es vacua cuando w.activeVersion === null: hay una sola copia del grafo.
+Confirmar el valor antes de reportar divergencia o de darla por comprobada.
