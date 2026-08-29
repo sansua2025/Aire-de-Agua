@@ -208,6 +208,14 @@ que escribe el issue. OJO: el enmascarado de secrets de Actions NO aplica al cue
 issue - si el script imprime "Failed to parse URL from <N8N_BASE_URL>" (mensaje real de Node
 ante URL malformada), el secret acaba publicado.
 
+## Estado de esos 3 vectores (cerrados en la rama sentinela-auto-detection)
+Valla FIJA sobre dato NEUTRALIZADO (`tr -d '\000' | tr` backtick→comilla simple, una sola vez tras capturar
+el reporte) + tope del cuerpo CALCULADO midiendo cabecera/cierre con `wc -c`; ya no hay `grep` sobre el dato,
+así que el vector del byte NUL desaparece en vez de mitigarse. Marcador de dedupe anclado al comentario HTML
+completo con `tail -n 1`. Mensajes fatales del script redactan URL y API key. Al revisar de nuevo: el
+invariante a atacar es "¿existe algún dato del reporte que impida que el aviso salga?" — incluido el ORDEN
+(se comenta ANTES de publicar la huella nueva) y los pasos fail-open (`--add-assignee` aparte).
+
 ## activeVersion puede ser null (Sentinela_v1.json)
 La paridad AIR-140 es vacua cuando w.activeVersion === null: hay una sola copia del grafo.
 Confirmar el valor antes de reportar divergencia o de darla por comprobada.

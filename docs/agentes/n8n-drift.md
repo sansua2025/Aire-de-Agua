@@ -111,14 +111,17 @@ El problema nunca fue la detección (lleva un mes cazando drift correctamente):
 era la **entrega**. El Step Summary de Actions no lo mira nadie. Ahora el run
 mantiene **un solo issue de GitHub vivo**, identificado por el label
 `n8n-drift` (el label es la clave, no el título: el título se puede editar a
-mano, el label no se pierde):
+mano, el label no se pierde) y **asignado explícitamente** (sin asignado la
+entrega dependía de la config de watch del repo; la asignación va en una llamada
+aparte y fail-open, para que un login inválido no pueda matar el aviso):
 
 | Estado del run | Qué hace |
 |----------------|----------|
 | drift y no hay issue abierto | lo **crea** con el reporte en el cuerpo |
-| drift y el reporte **cambió** | **actualiza** el cuerpo y **comenta** (el comentario es lo que notifica) |
+| drift y el reporte **cambió** | **comenta** (el comentario es lo que notifica) y DESPUÉS actualiza el cuerpo |
 | drift y el reporte es **idéntico** | actualiza el cuerpo y **no comenta** (anti-spam) |
-| sin drift (exit 0) | **cierra** el issue con un comentario |
+| drift y hay **más de un** issue abierto con el label | el más viejo es el canónico; los demás se cierran como duplicados |
+| sin drift (exit 0) | **cierra** el issue con un comentario (todos los abiertos con el label) |
 | exit 2 (faltan secrets) | **no toca el issue** — el sensor no corrió, no hay nada que afirmar |
 
 La comparación "¿cambió el reporte?" se hace con un `sha256` del reporte que
@@ -132,11 +135,21 @@ issue abierto y crearía uno nuevo.
 ### Por qué esto reemplazó la señal `drift` del Sentinela
 
 El Sentinela (`n8n/workflows/Sentinela_v1.json`) tenía una señal `drift`
-equivalente, pero **peor**: para saber qué está versionado necesitaba una lista
-manual de los 47 nombres de workflow hardcodeada dentro de un nodo Code, que se
-desincroniza en cuanto alguien agrega un export. El job de CI lee
-`n8n/workflows/` del disco: no hay lista que mantener. La señal se retiró del
-Sentinela (nodo `Drift n8n vs repo` eliminado).
+equivalente que **no era "peor": estaba MUERTA en producción desde el día uno**.
+Su nodo Code leía `$vars.SENTINELA_BASELINE` y hacía `if (!BASELINE) return out;`
+— el plan de n8n de esta cuenta **no incluye Variables**, así que `$vars` era
+`undefined` y la señal nunca emitió nada. Un fallback silencioso es
+indistinguible de "todo OK": el sensor llevaba meses en verde sin mirar nada. (La
+variante que sí funcionaba, con una lista de 47 nombres hardcodeada dentro del
+nodo, solo existió en el commit `0bd5db6` y se revirtió.)
+
+El job de CI lee `n8n/workflows/` del disco: no hay lista que mantener y, si el
+sensor no puede correr, sale con exit 2 y lo dice — no se calla. La señal se
+retiró del Sentinela (nodo `Drift n8n vs repo` eliminado).
+
+**Lección transferible:** un sensor con fallback silencioso (`return []`,
+`if (!X) return`) es indistinguible de "todo OK". Todo camino de fallo de un
+sensor tiene que ser RUIDOSO.
 
 ### Seguridad de la entrega
 
@@ -149,8 +162,34 @@ pueda convertirse en nada:
   (`--body-file` / `cat`), nunca por `echo "$var"` ni por interpolación
   `${{ }}` dentro de un `run:`. Todos los valores del contexto de Actions
   (`github.token`, `run_id`, el status del paso anterior) entran por `env:`.
-- El reporte se encierra en un bloque de código cuya **valla se calcula** para
-  ser más larga que la racha de backticks más larga del propio reporte: un
-  nombre con ``` ``` ``` no puede cerrar el bloque y escapar a markdown/HTML.
-- El cuerpo se recorta (400 líneas / 45 000 bytes, con `iconv -c`) para no
-  chocar con el tope de 65 536 caracteres del issue.
+- El dato se **neutraliza una sola vez**, justo tras correr el script: se le
+  quitan los bytes NUL y **todo backtick se sustituye por comilla simple**. A
+  partir de ahí el reporte no puede contener ``` ``` ```, así que la valla del
+  bloque de código (en el issue y en el Step Summary) es **fija de 3 backticks**.
+  Antes la valla se calculaba como "racha más larga del dato + 1": quedaba atada
+  al atacante y era ilimitada — 22 000 backticks en un nombre de nodo daban un
+  cuerpo de 66 243 caracteres, `gh` respondía 422, `set -euo pipefail` mataba el
+  paso y **el canal de aviso moría para siempre** (el único rastro era una
+  corrida roja, que es el estado normal cuando hay drift).
+- El cuerpo tiene un **tope duro calculado**, no una constante adivinada: la
+  cabecera y el cierre se escriben primero y se **miden** (`wc -c`), y el reporte
+  solo puede ocupar `65536 - |cabecera| - |cierre| - 256` bytes (además del corte
+  editorial de 400 líneas / 45 000 bytes, con `iconv -c`). Se acota en bytes y el
+  tope de GitHub es en caracteres: en UTF-8 bytes ≥ caracteres, así que acotar
+  bytes acota caracteres. Si aun así el cuerpo se pasara, se envía un cuerpo
+  mínimo sin reporte en vez de dejar morir el aviso.
+- **Se COMENTA antes de editar el cuerpo.** Al revés, un comentario fallido
+  (rate-limit, 5xx) dejaba el hash NUEVO ya publicado y la corrida siguiente lo
+  leía como "no cambió" → ese drift no se notificaba nunca más. Con este orden,
+  un fallo deja la huella vieja publicada y mañana se vuelve a avisar: la
+  dirección segura del fallo es *notificar de más*.
+- La huella `<!-- drift-hash: … -->` se relee anclada al **comentario HTML
+  completo** y tomando la **última** coincidencia: el bloque de datos va antes
+  del marcador real, así que con `head -n 1` un nombre de workflow que
+  contuviera `drift-hash: <64 hex>` ganaba y forzaba ruido cada noche.
+- El script **redacta** la URL de la instancia y la API key de sus mensajes de
+  error fatales: el reporte se captura con `2>&1` y acaba en el cuerpo de un
+  issue creado por API, donde el enmascarado de secrets de Actions **no aplica**.
+- El reporte se **ordena** antes de imprimirse (`scripts/check-n8n-repo-drift.mjs`):
+  las secciones (a)/(d)/(e) se construyen iterando la respuesta de la API, cuyo
+  orden no está garantizado, y el hash es lo que decide si se comenta.
