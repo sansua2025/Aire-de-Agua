@@ -56,6 +56,18 @@ const API_BASE = (() => {
   return raw.endsWith('/api/v1') ? raw : `${raw}/api/v1`;
 })();
 
+// Redacción para lo que pueda acabar PUBLICADO. El reporte se captura con 2>&1 y
+// viaja al CUERPO de un issue creado por API, donde el enmascarado de secrets de
+// GitHub Actions NO aplica. Node emite "Failed to parse URL from <API_BASE>" ante
+// una URL malformada: sin esto, N8N_BASE_URL quedaría publicado en el issue.
+function redact(text) {
+  let out = String(text ?? '');
+  for (const s of [API_BASE, N8N_API_URL, N8N_API_URL.replace(/\/$/, ''), N8N_API_KEY]) {
+    if (s && String(s).length >= 4) out = out.split(String(s)).join('<redactado>');
+  }
+  return out;
+}
+
 async function apiFetch(path) {
   const res = await fetch(`${API_BASE}${path}`, {
     headers: { 'X-N8N-API-KEY': N8N_API_KEY, 'Accept': 'application/json' },
@@ -82,6 +94,18 @@ async function listLiveWorkflows() {
   return all;
 }
 
+// Comparador de orden TOTAL por codepoint. NO se usa `localeCompare`: (1) sin
+// locale explícito depende del ICU del runner, y (2) su colación IGNORA caracteres
+// como el separador `\u0000` con el que se componen las claves compuestas de abajo
+// —verificado: `("AB\u0000" + "1").localeCompare("A\u0000" + "B1") === 0`—, así que
+// no da orden total: los empates caen al orden de la respuesta de la API y el hash
+// del reporte flapea, que es justo lo que este orden existe para evitar.
+const by = (key) => (a, b) => {
+  const x = String(key(a));
+  const y = String(key(b));
+  return x < y ? -1 : x > y ? 1 : 0;
+};
+
 // --- Normalización para comparación de contenido ---
 // Compara la "forma funcional" de cada nodo: name, type y parameters (incluye
 // jsCode). Las CREDENCIALES se ignoran POR COMPLETO: el repo usa
@@ -101,9 +125,7 @@ function normalizeNode(node) {
 function normalizeGraph(wf) {
   const nodes = Array.isArray(wf.nodes) ? wf.nodes : [];
   // Ordenar por nombre para que el orden del array no genere falsos positivos.
-  const normNodes = nodes
-    .map(normalizeNode)
-    .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  const normNodes = nodes.map(normalizeNode).sort(by((n) => n.name));
   return {
     nodes: normNodes,
     connections: wf.connections ?? {},
@@ -142,7 +164,9 @@ function nodeDiffSummary(repoWf, liveWf) {
 
 // --- Carga de workflows del repo ---
 function loadRepoWorkflows() {
-  const files = readdirSync(REPO_DIR).filter((f) => f.endsWith('.json'));
+  // `.sort()`: el orden de readdirSync depende del FS. El reporte se hashea para
+  // decidir si se notifica; un orden inestable cambiaría el hash sin cambiar el drift.
+  const files = readdirSync(REPO_DIR).filter((f) => f.endsWith('.json')).sort();
   const out = [];
   for (const file of files) {
     let wf;
@@ -208,10 +232,15 @@ async function main() {
     const liveMatches = liveByName.get(name);
     if (!liveMatches) continue;
     // Si hay duplicados de un mismo lado, lo dejamos explícito y comparamos 1:1
-    // contra la primera coincidencia viva (orden de la API).
+    // contra la primera coincidencia viva. Cuál es "la primera" NO puede salir del
+    // orden de la respuesta de la API (no está garantizado): con dos workflows
+    // vivos que comparten `name` (caso `ambiguousLive`) el mismo drift hashearía
+    // distinto cada noche y el issue recibiría un comentario por corrida. Se ordena
+    // por `id`, que es único y estable.
+    const liveSorted = [...liveMatches].sort(by((w) => w.id));
     for (const entry of entries) {
       if (!entry.wf) continue;
-      const liveWf = liveMatches[0];
+      const liveWf = liveSorted[0];
       if (graphHash(entry.wf) !== graphHash(liveWf)) {
         const d = nodeDiffSummary(entry.wf, liveWf);
         drift.contenido.push({
@@ -250,6 +279,20 @@ async function main() {
     drift.contenido.length +
     drift.errorWorkflowFantasma.length +
     drift.draftNeqRunning.length;
+
+  // ORDEN ESTABLE DEL REPORTE. Las secciones (a), (d) y (e) se construyen iterando
+  // la respuesta de `GET /workflows`, cuyo orden la API no garantiza. El consumidor
+  // del reporte (.github/workflows/n8n-drift.yml) lo hashea con sha256 para decidir
+  // si COMENTA el issue: sin un orden determinista el hash cambiaría sin que cambie
+  // el drift y el issue recibiría un comentario cada noche — justo el ruido que el
+  // anti-spam existe para evitar.
+  drift.parseErrors.sort(by((e) => e.file));
+  drift.liveSinRepo.sort(by((w) => `${w.name}\u0000${w.id}`));
+  drift.repoSinLive.sort(by((w) => w.name));
+  for (const r of drift.repoSinLive) r.files.sort();
+  drift.contenido.sort(by((d) => `${d.name}\u0000${d.file}\u0000${d.liveId}`));
+  drift.errorWorkflowFantasma.sort(by((w) => `${w.name}\u0000${w.id}`));
+  drift.draftNeqRunning.sort(by((w) => `${w.name}\u0000${w.id}`));
 
   if (JSON_OUT) {
     console.log(JSON.stringify({ total, counts: countsOf(drift), drift }, null, 2));
@@ -327,6 +370,6 @@ function printReport(drift, meta) {
 }
 
 main().catch((err) => {
-  console.error('Fatal:', err.message);
+  console.error('Fatal:', redact(err && err.message ? err.message : err));
   process.exit(2);
 });

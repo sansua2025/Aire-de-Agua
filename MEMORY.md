@@ -134,6 +134,123 @@ dentro del cuerpo del RPC (mismo patrón que `analytics.eval_recompute` mig 086,
   el literal, no relajar el check. `\broas\b` de R5 no matchea `roas_meta`/`roas_margen_atribuido` (`_` es
   word-char) — esas columnas son seguras.
 
+## Sentinela — puntos ciegos del sensor y contrato de señales
+- **`?status=` de la API REST v1 de n8n acepta UN SOLO valor** → un nodo HTTP por estado. `error` y
+  `crashed` son estados DISTINTOS: una ejecución `crashed` muere ANTES de correr ningún nodo (`runData:{}`,
+  `startedAt: null`, **sin `resultData`**). Los misses que dejaron pasar la caída de E2 (2026-08-10) fueron
+  EXACTAMENTE DOS: (1) el sensor solo pedía `?status=error`, así que las `crashed` ni se traían; (2) el filtro
+  exigía `data.resultData.error.message`, que una `crashed` nunca tiene. **La ventana de recencia NO fue un
+  miss**: verificado contra PROD, las 23 ejecuciones `crashed` de `DQ4tVkCbtnp4KDX4` traen `stoppedAt`
+  POBLADO (solo `startedAt` es null), así que `stoppedAt||startedAt` las habría dejado pasar. El fallback a
+  `createdAt` se mantiene como defensa extra, no como parte del fix — y no está garantizado por contrato: el
+  schema `execution` del OpenAPI de la instancia no declara `createdAt`. Reglas: mensaje sintético cuando no
+  hay `resultData`, dedupe por `execution.id` al unir dos respuestas, y **un solo criterio de timestamp para
+  todas las ejecuciones** (mezclar `stoppedAt` de unas con `createdAt` de otras deja que un `success` viejo
+  gane el slot de "más reciente" y suprima una señal viva).
+- **Dos nodos HTTP → un Code node: encadenarlos, no paralelizarlos.** Dos conexiones a la misma entrada de
+  un Code node lo ejecutan dos veces. Patrón: `A → B → Code`, y dentro del Code leer AMBAS por referencia
+  explícita `$('nombre')` (envuelta en try/catch para degradar si una no corrió), nunca por `$input`.
+- **La señal `drift` SE RETIRÓ del Sentinela (nodo `Drift n8n vs repo` eliminado).** No era un problema de
+  detección: `.github/workflows/n8n-drift.yml` (job nocturno, `scripts/check-n8n-repo-drift.mjs`) lleva un mes
+  cazando el drift repo↔n8n correctamente. El fallo era de ENTREGA — solo escribía en el Step Summary de
+  Actions y nadie lo mira. La versión del Sentinela no era "redundante y peor": estaba **MUERTA en
+  producción desde el día uno**. Su nodo Code leía `$vars.SENTINELA_BASELINE` y hacía
+  `if (!BASELINE) return out;`, y el plan de n8n de esta cuenta NO incluye Variables → `$vars` es
+  `undefined` y la señal nunca emitió nada, indistinguible de "todo OK". La variante con la lista de
+  nombres hardcodeada dentro del nodo solo existió en `0bd5db6` y este PR la revirtió. **Lección: un
+  sensor con fallback silencioso es indistinguible de "todo OK"** — y antes de construir un sensor
+  nuevo, verificar si ya existe uno que detecta y solo le falta el canal de entrega.
+  Consecuencia documentada del retiro: un issue `drift:*` abierto NO queda huérfano — deja de estar vivo en
+  toda corrida, el CANDADO 3 de `Calcular issues a cerrar` ya no lo protege y la corrida siguiente lo cierra
+  sola (era `needs-refinement`, no human-gate). Es el comportamiento deseado.
+- **`wf_inactive` (workflow que DEBE estar prendido con `active:false`) es una señal aparte**
+  (`signal-key: inactive:<normName>`), y no la cubre el job de CI de drift. Un workflow apagado no produce
+  fallos que contar: el silencio ES la señal, y la red de `sync_log` solo lo atrapa ~3 días tarde.
+- **`wf_inactive` se calcula contra una ALLOWLIST explícita (`EXPECTED_ACTIVE`), NUNCA contra el baseline
+  versionado** (ni contra `$vars.SENTINELA_BASELINE`, que además no existe). El baseline es "lo versionado",
+  no "lo que debe estar prendido", y **ni siquiera puede responder esa pregunta**: de los 47 exports de
+  `n8n/workflows/` solo **16 declaran `active:true`, 6 declaran `active:false` y 25 NO traen el campo
+  `active`** (conteo sobre el repo, 2026-08-29). El estado que manda es el VIVO en n8n, y el export no lo
+  refleja de forma fiable. Súmese que buena parte del directorio son backfills, one-shots,
+  `E6A_Copy_Generator` o `Error_Handler_Global` —que se invoca como `errorWorkflow` sin necesitar
+  `active:true`—. Derivarla del baseline no solo hace ruido:
+  la señal de un backfill apagado para siempre queda VIVA, el CANDADO 3 de `Calcular issues a cerrar` no la
+  cierra nunca y, al ser human-gate, ningún agente puede cerrarla → **issue inmortal** que se recrea si un
+  humano lo cierra a mano. Convención: allowlist en el propio nodo, como el `EXPECTED` de `Procesos loop
+  estancados`.
+- **UN TOPE ACOTA LO QUE SE CREA, NUNCA LO QUE SE AVISA** (patrón de bug, cazado en el propio Sentinela).
+  Meter un `slice(0, MAX)` en un sensor introduce dos fallos de SUPRESIÓN si no se blindan a la vez:
+  **(1) el corte por POSICIÓN entierra la señal más grave.** El orden de llegada al merge no es el orden de
+  severidad: en `Unir candidatos` las dos señales human-gate (`draft_unpublished` idx 2, `wf_inactive` idx 4
+  tras retirar `drift`) son las ÚLTIMAS → las primeras en caerse, justo el día en que más importan (un
+  webhook caído aporta 1 `exec_fail` + 1 `wf_inactive`, y una tormenta que crashee los 5 E2 fabrica 5
+  `exec_fail` a voluntad — el ruido que entierra la alerta lo genera el propio incidente).
+  Fix en tres capas, ninguna suficiente sola: **(a)** ordenar por severidad ANTES del slice (human-gate
+  primero, luego `priority` 1→4, orden de llegada como desempate estable); **(b)** que el canal de AVISO
+  (correo) se calcule sobre el conjunto COMPLETO — lo omitido viaja en un campo `overflow` adjunto al primer
+  item enviado y sale en el correo marcado "omitida, sin issue", así que 6 human-gate no vuelven a esconder
+  la sexta; **(c)** `priority` explícita en cada señal (sin ella, `wf_inactive` caía al default 3/Medium y
+  perdía contra un `exec_fail` 1/Urgent).
+  **(2) todo overflow necesita un SUMIDERO GARANTIZADO.** El `if (!yaHayResumen) {…push(resumen)…}` descartaba
+  `resto` SIN RASTRO en el día 2 de una saturación: el resumen del día 1 sigue abierto (no lleva `signal-key`,
+  solo lo cierra un humano), su cuerpo es estático y el correo leía `omitidas` de un candidato que nunca se
+  empujaba → 0. Fix: si ya hay resumen abierto se le **comenta** la lista nueva (`Linear - Crear issue`
+  conmuta a `commentCreate` cuando el candidato trae `comentarIssueId`; el comentario no toca la
+  `description`, así que el resumen sigue sin marcador y el auto-cierre sigue sin poder tocarlo), y el conteo
+  viaja al correo por un camino que NO depende de ese candidato.
+  **Predicado de dedupe del resumen: patrón COMPLETO, no prefijo.** `/^triage:/` matchea también el título de
+  un `exec_fail` de un workflow llamado `triage: x` → suprimiría todo resumen futuro para siempre. Usar
+  `/^triage: \d+ señales pendientes$/`.
+  Al armar la lista del resumen: los items de esa salida son `{json:{…}}` → `c.json.titulo`, no `c.titulo`
+  (el bug hacía que la lista saliera vacía: `- — señal ``, clave ```).
+- **El correo human-gate no puede afirmar "creó N issues" leyendo los candidatos**: Linear responde los
+  errores de GraphQL con **HTTP 200** y `issueCreate.success:false` (rate-limit ante una ráfaga, label id
+  inválido), así que el nodo HTTP no falla. Hay que leer el resultado real; dentro de un `splitInBatches`,
+  `$('Linear - Crear issue').all()` devuelve SOLO la última corrida → recorrer `all(0, runIndex)` en bucle
+  con try/catch. **Correlacionar por `signalKey`, no por posición**: los candidatos se leen de la salida
+  PRE-IF de `Dedupe vs Linear` mientras el loop consume la salida del IF — el día que el IF filtre algo, el
+  índice atribuye la creación al candidato equivocado. La clave de cada run se lee del item que el loop
+  entregó (`$('Loop crear issues').all(1, runIndex)`, salida 1 = rama `loop`); si hay claves y la de un
+  candidato NO aparece, ese candidato NO se creó → se reporta como fallido, jamás se hereda el resultado
+  del vecino.
+- **Una allowlist que hace `continue` cuando la clave no resuelve es ceguera PERMANENTE y silenciosa**
+  (typo o rename → ese workflow queda sin vigilancia y nadie se entera). Emitir señal propia
+  (`expected_missing:<wf>`) con label `needs-refinement` — **no** human-gate, para que el auto-cierre la
+  limpie sola cuando el nombre reaparezca y no se convierta en un issue inmortal.
+- **`Unir candidatos` (merge append) exige índices CONTIGUOS 0..numberInputs-1.** Al quitar una señal no
+  basta con borrar el nodo: hay que bajar `numberInputs` y REASIGNAR los índices de los emisores restantes
+  sin dejar hueco. Índices vigentes (5 entradas): 0 `exec_fail`, 1 `sync_gap`, 2 `draft_unpublished`,
+  3 `loop_gap`, 4 `wf_inactive`/`expected_missing`. Ojo con lo que cuelga del merge: `Recolectar para cierre`
+  DEBE seguir leyendo la salida PRE-truncado de `Unir candidatos` (es lo que salva el auto-cierre), y el
+  orden de llegada es el desempate estable del sort de `Dedupe vs Linear`.
+- Contrato de una señal nueva del Sentinela: (1) `{senal, fuente, signalKey, titulo, descripcion}` con el
+  marcador `signal-key: <k>` al final del cuerpo (lo usan dedupe Y auto-cierre); (2) entrada nueva en el
+  merge `Unir candidatos` — subir `numberInputs` Y conectar al índice correcto; (3) rama en `labelsFor()` de
+  `Dedupe vs Linear` (`human-gate` cuando el fix NO es código: publicar draft, reactivar workflow);
+  (4) `sanitize()` sobre todo texto que venga de la API de n8n; (5) `priority` explícita (1=Urgent … 4=Low)
+  — es lo que ordena el corte del tope, y omitirla degrada la señal a 3/Medium.
+- Aviso por email de señales human-gate: rama `done` (output **0**) de `Loop crear issues` → Code que lee
+  `$('Dedupe vs Linear').all()` y filtra por el **label id human-gate** (no por una segunda lista de nombres
+  de señal, que se desincronizaría) → nodo `n8n-nodes-base.gmail` v2.2. Credencial Gmail existente en la
+  instancia: `Gmail account` (`gmailOAuth2`); en el repo va SIEMPRE como `{"id":"PLACEHOLDER","name":"Gmail
+  account"}` (convención de los 9 workflows que ya mandan correo). Devolver `[]` del Code = el nodo Gmail no
+  corre (no hace falta IF).
+- **NINGÚN export de `n8n/workflows/*.json` tiene hoy `activeVersion` como objeto** (`Sentinela_v1.json` trae
+  la CLAVE pero con valor `null`) → `check-n8n-graph-parity.sh` sale "paridad N/A" para todo el directorio.
+  La regla AIR-140 de doble edición no aplica al JSON de git; la paridad real vive en la instancia y la
+  verifica el orquestador tras el publish.
+
+## n8n Cloud — NO existe control de concurrencia por workflow (verificado 2026-08-10)
+El `workflowSettings` del propio OpenAPI de la instancia (`GET /api/v1/openapi.yml`) tiene
+`additionalProperties: false` y sus únicas claves son: `saveExecutionProgress`, `saveManualExecutions`,
+`saveDataErrorExecution`, `saveDataSuccessExecution`, `executionTimeout`, `errorWorkflow`, `timezone`,
+`executionOrder`, `binaryMode`, `callerPolicy`, `callerIds`, `timeSavedMode`, `timeSavedPerExecution`,
+`redactionPolicy`, `availableInMCP`, `customTelemetryTags`. Cero ocurrencias de "concurren"/"throttle" en
+todo el spec, y el `setWorkflowSettings` del MCP oficial expone el mismo set. La concurrencia en n8n es
+**instancia** (`N8N_CONCURRENCY_PRODUCTION_LIMIT`, fijado por el plan en Cloud), no por workflow → ante una
+ráfaga de webhooks NO hay parámetro de encolado que poner en el JSON; meter una clave inventada la ignora
+la API en silencio. Palancas reales: subir plan/worker, o rediseñar la ingesta (webhook → cola → consumidor).
+
 ## n8n "slim" de payload Shopify → RPC — verificar contrato completo (AIR-43)
 Cuando un nodo Code recorta el payload de Shopify a un whitelist de campos antes de mandarlo a un RPC, el
 whitelist puede desincronizarse del contrato real del RPC **sin error visible**: el campo no llega, el RPC
@@ -163,3 +280,81 @@ AIR-97, solo dispara con `--file`, nunca con `--diff` porque ya está en main).
 - `guard-prod-writes.sh` matchea SOLO `mcp__supabase__*` literal — NO intercepta nombres prefijados
   `mcp__<hash>__apply_migration`/`execute_sql` de sesiones con MCP deferred. El hook no lo cubre → disciplina
   AIR-162 a mano (preview branch para DDL, PROD solo lectura) sigue siendo responsabilidad del agente.
+
+## GitHub Actions — entregar la señal sin abrir superficie (n8n-drift fase 2)
+- **`$vars` NO EXISTE en el plan de n8n de esta cuenta.** Un nodo Code que lee `$vars.X` obtiene `undefined`
+  y, si eso deriva en `return []`, el sensor queda MUERTO EN SILENCIO. Cualquier `$vars` en un workflow del
+  repo es código muerto: hoy solo queda una MENCIÓN en un comentario de `Workflow del baseline inactivo`
+  (documenta por qué la allowlist es hardcodeada), no una lectura.
+- **Un solo issue vivo, no uno por corrida.** Clave = un LABEL fijo (`n8n-drift`), no el título (el título lo
+  edita un humano; el label sobrevive). Y el anti-spam real no es "no crear otro issue": es no COMENTAR
+  cuando nada cambió. Patrón: `sha256` del reporte embebido en el cuerpo como `<!-- drift-hash: … -->`,
+  releído con patrón estricto (`[0-9a-f]{64}`) → se actualiza el cuerpo siempre, se comenta solo si el hash
+  cambió. Editar un body NO notifica en GitHub; comentar sí. `gh label create --force` es idempotente.
+- **Texto externo hacia un issue: por ARCHIVO, jamás por línea de comando.** Nunca interpolar contenido no
+  confiable con `${{ }}` dentro de un `run:` (se sustituye ANTES de que exista el shell → inyección de
+  comandos); todo por `env:` y el reporte por `--body-file`/`cat`. El dato se **neutraliza una sola vez**
+  al capturarlo (`tr -d '\000'` + backtick→comilla simple) y la valla del bloque de código es **FIJA de 3**.
+  NO calcular la valla como "racha más larga del dato + 1": esa es la variante con el bug —su tamaño lo
+  elige el atacante— descrita en el patrón de bug de abajo.
+- **`set -euo pipefail` en un step de Actions tiene dos trampas clásicas**: (1) `grep` sin match sale 1 y
+  `pipefail` mata el paso → `{ grep …|| true; } | awk …`; (2) encadenar `head | head` hace que el segundo
+  cierre el pipe y el primero muera con SIGPIPE (141) → escribir a archivo intermedio.
+- Separar el "fallar el job" del "notificar": la notificación va en un step propio y el `exit $status` en un
+  step final `if: always()`, leyendo el status por `env:`. Así el job SIGUE en rojo con drift sin perder el
+  aviso, y un exit 2 (secrets sin configurar) NO toca el issue: el sensor no corrió, no hay nada que afirmar.
+
+### Patrón de bug: lo que puede reducir a CERO un canal de aviso (n8n-drift, 3 rondas de review)
+- **Una defensa cuyo TAMAÑO lo elige el atacante es un amplificador.** La valla del bloque de código valía
+  `racha_más_larga_de_backticks_del_dato + 1` (ilimitada) y NO se descontaba del presupuesto de recorte:
+  22 000 backticks en un nombre de nodo → cuerpo de 66 243 chars → 422 en `gh` → `set -euo pipefail` mata el
+  paso → **el aviso desaparece para siempre**, con una corrida roja como único rastro (y rojo es el estado
+  NORMAL cuando hay drift). Invariante correcto: **neutralizar el dato una sola vez** justo tras capturarlo
+  (`tr -d '\000' | tr` backtick→comilla simple, que además preserva el largo en bytes) y **valla FIJA**; el
+  tope del cuerpo se CALCULA midiendo cabecera y cierre con `wc -c` (`|reporte| ≤ 65536 − |cabecera| −
+  |cierre| − 256`), en BYTES porque en UTF-8 bytes ≥ caracteres. Neutralizar vale más que endurecer el
+  escáner: elimina el `grep` sobre el dato y con él el bug de "binary file matches" (un byte NUL manda el
+  aviso a stderr y deja stdout VACÍO → el escaneo colapsa; si hay que grepear datos externos, `grep -a`).
+- **En un canal de aviso el ORDEN de las llamadas decide la dirección del fallo.** Publicar la huella nueva
+  (`issue edit`) ANTES de notificar (`issue comment`) entierra ese cambio para siempre si el comment falla
+  (rate-limit/5xx): la corrida siguiente lo lee como "no cambió". Comentar primero → si algo falla, la huella
+  publicada sigue siendo la vieja y mañana se avisa otra vez. La dirección segura del fallo es **avisar de más**.
+- **Fail-open donde el fallo no aporta nada; fatal donde parar es la conducta correcta.** Hoy, en
+  `n8n-drift.yml`, son fail-open cuatro llamadas: `gh issue edit --add-assignee` (un login inválido devuelve
+  422 y mataría el aviso), el cierre de duplicados (que un duplicado siga abierto no impide el aviso),
+  `gh label create --force` (no-op si ya existe; si de verdad faltara, el `create --label` de después muere
+  igual) y `gh issue view` (es una LECTURA: si falla, OLD_HASH queda vacío y se COMENTA por si acaso).
+  `gh issue list`, `gh issue comment` y `gh issue edit --body-file` son FATALES a propósito: las dos últimas
+  SON la notificación —si fallan no hay degradación posible, y parar deja publicada la huella vieja, así que
+  mañana se vuelve a avisar—; y en el listado, seguir con una lista incompleta rompería la elección del
+  canónico y crearía un issue duplicado por noche. El bucle de cierre del caso "sin drift" también es fatal:
+  ahí no hay aviso que entregar, y fallar en rojo es la señal correcta. Lo que sí se degrada es el CUERPO: el mínimo (sin
+  reporte) se escribe ANTES y el armado del completo va aislado en un subshell, así que un fallo ahí avisa
+  con menos detalle en vez de no avisar. Y `gh issue list --limit 1` dejaba vivo para siempre un segundo
+  issue con el label → iterar TODOS los abiertos (el más viejo es el canónico, los demás se cierran).
+- **Un marcador releído del propio cuerpo se envenena por POSICIÓN**: el bloque de datos se renderiza ANTES
+  del marcador real, así que `head -n 1` se lo queda un nombre hostil con `drift-hash: <64 hex>`. Anclar al
+  comentario HTML completo y tomar `tail -n 1`.
+- **Lo que se hashea hay que ORDENARLO.** El reporte se hashea para decidir si se comenta, y sus secciones se
+  construían iterando la respuesta de la API de n8n (orden no garantizado) → hash inestable → comentario cada
+  noche. `sort` determinista (y `readdirSync().sort()`) antes de imprimir. Y el comparador tiene que dar orden
+  TOTAL: `localeCompare` sin locale depende del ICU del runner y su colación IGNORA separadores como `\u0000`
+  (`("AB\u0000" + "1").localeCompare("A\u0000" + "B1") === 0`), así que los empates caen otra vez al orden de la
+  API. Comparar por codepoint (`x < y ? -1 : x > y ? 1 : 0`), y desempatar por un id único antes de tomar `[0]`.
+- **La red de seguridad tiene que estar ANTES del punto que puede morir.** El "cuerpo mínimo" del aviso estaba
+  23 líneas DEBAJO de un `head -c … | iconv -c` bajo `pipefail`: `iconv -c` omite caracteres inválidos EN MEDIO
+  del stream pero SALE 1 ante una secuencia cortada AL FINAL —justo lo que produce `head -c`— así que el paso
+  moría antes de la red (glibc 2.39 = ubuntu-latest; el relleno que alinea el corte lo elige quien nombra el
+  nodo → determinista, no azar). Dos correcciones, no una: (1) el saneo del corte NO puede fallar —retroceder
+  al último byte de arranque UTF-8 con aritmética de bytes, o como mínimo `|| true`—; (2) escribir PRIMERO el
+  cuerpo mínimo y armar el completo aislado (subshell con su propio `set -euo pipefail`, lanzado FUERA de una
+  condición: en bash un `if ( … )` o un `… || x` desactiva el errexit de dentro). Así el peor caso es "avisar
+  con menos detalle", nunca "no avisar".
+- **Una afirmación factual corregida en una línea sigue viva en sus hermanas.** Dos bloqueantes de la ronda 5
+  fueron la misma frase falsa ("la mayoría de los exports están `active:false`") sin corregir en el nodo de
+  abajo y una regla de MEMORY.md que prescribía el bug ya eliminado. Al cerrar un hallazgo sobre un HECHO:
+  grepear el repo entero por las otras redacciones antes de darlo por cerrado, y poner **procedencia** a toda
+  cifra sobre el repo ("conteo sobre el repo, YYYY-MM-DD") — sin procedencia la cifra caduca en silencio.
+- **Un reporte capturado con `2>&1` acaba publicado**: el enmascarado de secrets de Actions NO aplica al
+  cuerpo de un issue creado por API, y Node emite `Failed to parse URL from <URL>` ante una URL malformada.
+  El script redacta URL y API key de sus mensajes fatales.

@@ -64,9 +64,16 @@ Env vars: `N8N_API_URL` (con o sin `/api/v1`, se normaliza) + `N8N_API_KEY`.
 - **Cron** `0 11 * * *` (11:00 UTC = 06:00 COT) + **`workflow_dispatch`** para
   correr a mano desde la pestaña Actions.
 - Corre el script y vuelca el reporte al **GitHub Step Summary** del run.
-- Si hay drift, el job **falla** (exit ≠ 0) → visible en Actions.
+- **Entrega el reporte a un humano** (fase 2, ver abajo): un único issue de
+  GitHub con el label `n8n-drift`.
+- Si hay drift, el job **falla** (exit ≠ 0) → visible en Actions. La
+  notificación NO lo pone en verde.
 - **No** es un required check del branch protection: es informativo nocturno, no
   debe bloquear PRs.
+- `permissions`: `contents: read` + `issues: write` (mínimo privilegio; el
+  `issues: write` es lo que permite crear/editar/comentar/cerrar el issue y
+  crear su label la primera vez). Usa el `GITHUB_TOKEN` efímero del run: **no
+  hay secrets nuevos**.
 
 ### Secrets a configurar A MANO
 
@@ -98,8 +105,101 @@ residual conocido al momento de crear el job (esperado, confirma que funciona):
 El objetivo NO es llegar a cero hoy, sino que cualquier *nuevo* drift se cace en
 el run nocturno siguiente.
 
-## TODO (fase 2)
+## Entrega de la señal (fase 2 — hecha)
 
-- Cablear notificación a **Linear** (crear/actualizar issue) y/o **Slack**
-  cuando el run detecte drift, en lugar de solo fallar el job. Hoy la señal vive
-  en la pestaña Actions + el Step Summary del run.
+El problema nunca fue la detección (lleva un mes cazando drift correctamente):
+era la **entrega**. El Step Summary de Actions no lo mira nadie. Ahora el run
+mantiene **un solo issue de GitHub vivo**, identificado por el label
+`n8n-drift` (el label es la clave, no el título: el título se puede editar a
+mano, el label no se pierde) y **asignado explícitamente** (sin asignado la
+entrega dependía de la config de watch del repo; la asignación va en una llamada
+aparte y fail-open, para que un login inválido no pueda matar el aviso):
+
+| Estado del run | Qué hace |
+|----------------|----------|
+| drift y no hay issue abierto | lo **crea** con el reporte en el cuerpo |
+| drift y el reporte **cambió** | **comenta** (el comentario es lo que notifica) y DESPUÉS actualiza el cuerpo |
+| drift y el reporte es **idéntico** | actualiza el cuerpo y **no comenta** (anti-spam) |
+| drift y hay **más de un** issue abierto con el label | el más viejo es el canónico; los demás se cierran como duplicados |
+| sin drift (exit 0) | **cierra** el issue con un comentario (todos los abiertos con el label) |
+| exit 2 (faltan secrets) | **no toca el issue** — el sensor no corrió, no hay nada que afirmar |
+
+La comparación "¿cambió el reporte?" se hace con un `sha256` del reporte que
+viaja en el cuerpo del issue como marcador `<!-- drift-hash: … -->` y se vuelve
+a leer con un patrón estricto (64 hex). Sin ese marcador, un drift estable
+generaría un comentario por noche.
+
+**No lo cierres a mano si el drift sigue vivo**: la corrida siguiente no vería
+issue abierto y crearía uno nuevo.
+
+### Por qué esto reemplazó la señal `drift` del Sentinela
+
+El Sentinela (`n8n/workflows/Sentinela_v1.json`) tenía una señal `drift`
+equivalente que **no era "peor": estaba MUERTA en producción desde el día uno**.
+Su nodo Code leía `$vars.SENTINELA_BASELINE` y hacía `if (!BASELINE) return out;`
+— el plan de n8n de esta cuenta **no incluye Variables**, así que `$vars` era
+`undefined` y la señal nunca emitió nada. Un fallback silencioso es
+indistinguible de "todo OK": el sensor llevaba meses en verde sin mirar nada. (La
+variante que sí funcionaba, con una lista de 47 nombres hardcodeada dentro del
+nodo, solo existió en el commit `0bd5db6` y se revirtió.)
+
+El job de CI lee `n8n/workflows/` del disco: no hay lista que mantener y, si el
+sensor no puede correr, sale con exit 2 y lo dice — no se calla. La señal se
+retiró del Sentinela (nodo `Drift n8n vs repo` eliminado).
+
+**Lección transferible:** un sensor con fallback silencioso (`return []`,
+`if (!X) return`) es indistinguible de "todo OK". Todo camino de fallo de un
+sensor tiene que ser RUIDOSO.
+
+### Seguridad de la entrega
+
+El reporte es **texto derivado de datos externos** (nombres de workflow que
+vienen de la API de n8n). Va a un issue de GitHub, así que no hay ejecución de
+por medio, pero el paso está escrito para que un nombre de workflow malicioso no
+pueda convertirse en nada:
+
+- El reporte **jamás toca la línea de comando**: viaja siempre como archivo
+  (`--body-file` / `cat`), nunca por `echo "$var"` ni por interpolación
+  `${{ }}` dentro de un `run:`. Todos los valores del contexto de Actions
+  (`github.token`, `run_id`, el status del paso anterior) entran por `env:`.
+- El dato se **neutraliza una sola vez**, justo tras correr el script: se le
+  quitan los bytes NUL y **todo backtick se sustituye por comilla simple**. A
+  partir de ahí el reporte no puede contener ``` ``` ```, así que la valla del
+  bloque de código (en el issue y en el Step Summary) es **fija de 3 backticks**.
+  Antes la valla se calculaba como "racha más larga del dato + 1": quedaba atada
+  al atacante y era ilimitada — 22 000 backticks en un nombre de nodo daban un
+  cuerpo de 66 243 caracteres, `gh` respondía 422, `set -euo pipefail` mataba el
+  paso y **el canal de aviso moría para siempre** (el único rastro era una
+  corrida roja, que es el estado normal cuando hay drift).
+- El cuerpo tiene un **tope duro calculado**, no una constante adivinada: la
+  cabecera y el cierre se escriben primero y se **miden** (`wc -c`), y el reporte
+  solo puede ocupar `65536 - |cabecera| - |cierre| - 256` bytes (además del corte
+  editorial de 400 líneas / 45 000 bytes). Se acota en bytes y el
+  tope de GitHub es en caracteres: en UTF-8 bytes ≥ caracteres, así que acotar
+  bytes acota caracteres.
+- **La red de seguridad va ANTES del punto que puede morir.** El cuerpo mínimo
+  (sin un byte del reporte) se escribe *primero*, y el cuerpo completo se arma
+  aislado en un subshell con su propio `set -euo pipefail`; solo reemplaza al
+  mínimo si se armó entero. Así, si falla el recorte, un `wc` o el tope, el aviso
+  sale **con menos detalle**, nunca deja de salir. Antes el "cuerpo mínimo"
+  estaba 23 líneas por debajo de un `head -c … | iconv -c`: `iconv -c` omite
+  caracteres inválidos *en medio* del stream pero **sale 1** ante una secuencia
+  cortada *al final* —justo lo que produce `head -c`— y bajo `pipefail` eso
+  mataba el paso antes de crear, comentar o editar nada. Hoy el corte por bytes
+  se sanea retrocediendo al último byte de arranque UTF-8 con aritmética de
+  bytes: no queda ningún proceso que pueda fallar por el corte.
+- **Se COMENTA antes de editar el cuerpo.** Al revés, un comentario fallido
+  (rate-limit, 5xx) dejaba el hash NUEVO ya publicado y la corrida siguiente lo
+  leía como "no cambió" → ese drift no se notificaba nunca más. Con este orden,
+  un fallo deja la huella vieja publicada y mañana se vuelve a avisar: la
+  dirección segura del fallo es *notificar de más*.
+- La huella `<!-- drift-hash: … -->` se relee anclada al **comentario HTML
+  completo** y tomando la **última** coincidencia: el bloque de datos va antes
+  del marcador real, así que con `head -n 1` un nombre de workflow que
+  contuviera `drift-hash: <64 hex>` ganaba y forzaba ruido cada noche.
+- El script **redacta** la URL de la instancia y la API key de sus mensajes de
+  error fatales: el reporte se captura con `2>&1` y acaba en el cuerpo de un
+  issue creado por API, donde el enmascarado de secrets de Actions **no aplica**.
+- El reporte se **ordena** antes de imprimirse (`scripts/check-n8n-repo-drift.mjs`):
+  las secciones (a)/(d)/(e) se construyen iterando la respuesta de la API, cuyo
+  orden no está garantizado, y el hash es lo que decide si se comenta.
