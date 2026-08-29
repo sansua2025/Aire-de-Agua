@@ -219,3 +219,37 @@ invariante a atacar es "¿existe algún dato del reporte que impida que el aviso
 ## activeVersion puede ser null (Sentinela_v1.json)
 La paridad AIR-140 es vacua cuando w.activeVersion === null: hay una sola copia del grafo.
 Confirmar el valor antes de reportar divergencia o de darla por comprobada.
+
+## Vector: `head -c` + `iconv -c` bajo `set -euo pipefail` (n8n-drift.yml, sha 1ee086d) — RONDA 4
+`iconv -c` NO cubre "incomplete character or shift sequence at end of buffer": `-c` solo omite
+caracteres INVALIDOS EN MEDIO del stream; una secuencia UTF-8 CORTADA AL FINAL (exactamente lo
+que produce `head -c N`) hace que glibc iconv salga 1. Verificado en glibc 2.39 (= ubuntu-latest):
+`bash -c 'set -euo pipefail; head -c 101 mb.txt | iconv -c -f utf-8 -t utf-8 > out'` → exit 1.
+Con `pipefail` el paso MUERE ahí, ANTES de cualquier red de seguridad posterior (el "cuerpo minimo"
+del canal de aviso estaba 23 lineas mas abajo y nunca se alcanza).
+Explotacion: nombre de nodo/workflow en n8n con ~30 000 chars multibyte; el atacante ALINEA el corte
+con 1 byte ASCII de relleno (pad=0 sobrevive, pad=1 mata — verificado). Deterministico, no 50/50.
+Regla: todo recorte por BYTES de dato externo necesita una etapa de saneo que NO PUEDA FALLAR
+(`iconv ... || true`, `iconv -c ... ; true`, o mejor cortar por caracteres/`awk`/`perl -CS`).
+Corolario general: en una cadena de defensas, la red de seguridad tiene que estar ANTES del punto
+que puede morir, no despues. Y un `| iconv` es un comando mas del pipeline: `pipefail` lo convierte
+en superficie de denegacion.
+Nota: el propio reporte lleva `↔ · — ⚠ ≠ →` (multibyte) => tambien es bug de fiabilidad sin atacante.
+
+## Cerrado y verificado en 1ee086d (no re-probar sin motivo)
+- Valla fija de 3 sobre dato con backticks neutralizados (`tr '\`' "'"`): un bloque cercado por
+  backticks SOLO cierra con backticks; `~~~`, `<!-- -->` y entidades no escapan. OK.
+- Tope del cuerpo: HEAD_B=729, TAIL_B=224, BUDGET=64327, LIMIT=45000 => cuerpo max 45 954 bytes.
+  Aritmetica correcta y conservadora (bytes >= chars UTF-8 y >= unidades UTF-16). No hay TOCTOU:
+  drift-report.txt se escribe en el paso anterior y no se reescribe.
+- `drift-hash`: patron anclado al comentario HTML completo + `tail -n 1`; el dato va SIEMPRE antes
+  del marcador real => no envenenable. Suprimir exigiria punto fijo de SHA-256.
+- Duplicados: canonico = `head -n 1` de `sort -n` (el mas viejo); los extras salen de `tail -n +2`,
+  asi que el canonico NUNCA entra al bucle. Bucle finito, `</dev/null` en cada `gh`.
+- `--add-assignee` en llamada aparte con `|| echo`: `errexit` no aplica a la izquierda de `||`. OK.
+- `check-n8n-repo-drift.mjs`: los `sort()` se aplican DESPUES de calcular `total` y solo reordenan
+  => deteccion intacta. `redact()` cubre el unico camino que publica (main().catch), y ese camino
+  sale con status 2, que el paso de notificacion ignora. Cero `${{ }}` dentro de `run:`.
+  `permissions: contents:read + issues:write`. El job sigue fallando con drift (`exit "${STATUS:-2}"`).
+- Sentinela_v1.json: `activeVersion === null` en main y en HEAD => paridad AIR-140 vacua. Sin nodos
+  Claude/Anthropic. El nodo Gmail tiene destinatario fijo (no controlable por el dato).
