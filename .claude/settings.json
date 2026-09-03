@@ -66,7 +66,7 @@
         ]
       },
       {
-        "matcher": "^mcp__.*__(merge_branch|create_branch|delete_branch|reset_branch|rebase_branch|deploy_edge_function|pause_project|restore_project)",
+        "matcher": "^mcp__.*__(merge_branch|create_branch|delete_branch|reset_branch|rebase_branch|deploy_edge_function|pause_project|restore_project|create_project|confirm_cost)",
         "hooks": [
           {
             "type": "command",

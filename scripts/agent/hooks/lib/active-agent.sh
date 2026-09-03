@@ -39,16 +39,47 @@
 #      el hook `log-subagent.sh` en SubagentStart/Stop. Solo hay agente "activo"
 #      si la última transición fue un `start`.
 #
-# LÍMITE CONOCIDO
-#   La capa 3 no distingue subagentes ANIDADOS ni concurrentes: el log es una
-#   pila aplanada y solo se mira la última línea. Con dos subagentes en vuelo
-#   puede atribuir el tool al agente equivocado (en cualquiera de las dos
-#   direcciones). Por eso la capa 1 existe y tiene prioridad.
+# LÍMITE CONOCIDO (a) — la capa 3 no distingue subagentes anidados
+#   El log es una pila aplanada y solo se mira la última línea. Con dos
+#   subagentes en vuelo puede atribuir el tool al agente equivocado (en
+#   cualquiera de las dos direcciones). Por eso la capa 1 existe y tiene
+#   prioridad.
+#
+# LÍMITE CONOCIDO (b) — EN PRODUCCIÓN LA IDENTIFICACIÓN DESCANSA EN LA CAPA 3
+#   (Decisión humana AIR-285: se DOCUMENTA como límite del modelo de amenaza; NO
+#   se cambia el mecanismo.)
+#   Las tres capas parecen defensa en profundidad, pero medido en este repo:
+#     - Capa 1 NO opera hoy: ni `ADEA_ACTIVE_AGENT` ni `CLAUDE_AGENT_NAME` se
+#       exportan en NINGÚN punto del repo (`grep -rn` no encuentra un solo
+#       `export`). Existe para los tests y por si el orquestador la exporta algún
+#       día; en una corrida real está vacía.
+#     - Capa 2 NO está garantizada: PreToolUse no promete traer `agent_type` /
+#       `subagent_type` en su input, así que es oportunista.
+#     - Capa 3 es, de hecho, LA ÚNICA que responde en producción.
+#   Y la capa 3 lee `.claude/logs/subagents.log`, que está GITIGNORED, vive
+#   DENTRO del working tree y es ESCRIBIBLE por los propios agentes vigilados.
+#   Medido: añadir una línea `<ts>\tstart\tbuilder` al log hace que un agente
+#   read-only pase los dos guards.
+#   CONSECUENCIA, dicha sin adornos: estos guards protegen contra el ERROR de un
+#   agente (el read-only que "se pasa de listo" y toca PROD sin querer), NO
+#   contra un agente COMPROMETIDO — y el agente comprometido por prompt
+#   injection es amenaza DECLARADA en `CLAUDE.md` § Seguridad. Contra eso la
+#   defensa es otra capa: el `ask` de `guard-prod-writes.sh` (humano en el
+#   bucle), RLS en Supabase y el alcance de las credenciales.
+#   Regla general que se deriva: NADA que viva dentro del working tree puede ser
+#   raíz de confianza, porque el agente vigilado puede escribirlo.
 #
 # TESTS
 #   No tiene self-test propio: la cubren los self-tests de sus consumidores
-#   (`guard-verify-readonly.test.sh` y `guard-readonly-agents.test.sh`), que
-#   ejercitan las tres capas a través de los hooks reales.
+#   (`guard-verify-readonly.test.sh` y `guard-readonly-agents.test.sh`) a través
+#   de los hooks reales. COBERTURA REAL, sin adornos:
+#     - Capa 1 (env var): la ejercitan casi todos los casos, porque el helper
+#       `run()` de ambos tests fija `ADEA_ACTIVE_AGENT`.
+#     - Capa 3 (subagents.log): la ejercitan los casos "capa 3" de ambos tests,
+#       que montan un `CLAUDE_PROJECT_DIR` de fixture con un `subagents.log`
+#       sintético y corren SIN env var.
+#     - Capa 2 (campo del input): NO está cubierta por ningún caso. Es
+#       oportunista y no la produce ningún entorno controlable desde el test.
 
 # active_agent <json_del_hook> -> imprime el nombre del agente activo, o "".
 active_agent() {
