@@ -19,6 +19,8 @@
 #     - exit 2 + stderr    -> BLOQUEAR; Claude Code devuelve el stderr al modelo.
 #
 # IDENTIFICACIÓN DEL AGENTE `verify` (en capas, fail-open)
+#   Implementada en `lib/active-agent.sh` (compartida con guard-readonly-agents.sh
+#   desde AIR-285; antes estaba duplicada aquí). Resumen de las capas:
 #   El input de PreToolUse de Claude Code NO garantiza el nombre del subagente
 #   activo. Por eso se usan varias señales, de más a menos fiable, y si NINGUNA
 #   identifica a verify, el hook PASA (fail-open) — así nunca rompe a builder/fixer.
@@ -60,34 +62,15 @@ fi
 [ -z "$CMD" ] && exit 0
 
 # --- ¿el agente activo es verify? --------------------------------------------
-active_agent() {
-  # 1) Env var explícita (máxima prioridad, determinista, testeable).
-  if [ -n "${ADEA_ACTIVE_AGENT:-}" ]; then printf '%s' "$ADEA_ACTIVE_AGENT"; return; fi
-  if [ -n "${CLAUDE_AGENT_NAME:-}" ]; then printf '%s' "$CLAUDE_AGENT_NAME"; return; fi
-  # 2) Campo del input del hook (oportunista; no garantizado en PreToolUse).
-  if command -v jq >/dev/null 2>&1; then
-    local a
-    a="$(printf '%s' "$INPUT" | jq -r '.agent_type // .subagent_type // .tool_input.subagent_type // empty' 2>/dev/null)"
-    if [ -n "$a" ]; then printf '%s' "$a"; return; fi
-  fi
-  # 3) Marcador de la última transición SubagentStart/Stop (log-subagent.sh).
-  local log="${CLAUDE_PROJECT_DIR:-.}/.claude/logs/subagents.log"
-  if [ -f "$log" ]; then
-    # Formato TSV: <ts>\t<start|stop>\t<agent>. Última línea start/stop.
-    local last event agent
-    last="$(grep -aE "$(printf '\t')(start|stop)$(printf '\t')" "$log" 2>/dev/null | tail -1)"
-    if [ -n "$last" ]; then
-      event="$(printf '%s' "$last" | cut -f2)"
-      agent="$(printf '%s' "$last" | cut -f3)"
-      # Solo hay agente "activo" si la última transición fue un start.
-      [ "$event" = "start" ] && { printf '%s' "$agent"; return; }
-    fi
-  fi
-  # No identificado.
-  printf ''
-}
+# La lógica de identificación vive en lib/active-agent.sh (AIR-285): la comparten
+# este hook y guard-readonly-agents.sh. Estaba duplicada aquí; dos copias de
+# "quién corre" divergen en silencio y dejan un guard fallando ABIERTO.
+# Firma: active_agent "$INPUT" — recibe el JSON por ARGUMENTO porque el stdin
+# del hook ya fue consumido arriba por `INPUT="$(cat)"`.
+# shellcheck source=lib/active-agent.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/active-agent.sh"
 
-AGENT="$(active_agent)"
+AGENT="$(active_agent "$INPUT")"
 # Fail-open: si no es verify (o no se pudo identificar), no nos incumbe.
 [ "$AGENT" = "verify" ] || exit 0
 

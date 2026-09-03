@@ -6,9 +6,17 @@ disallowedTools: NotebookEdit
 model: opus
 color: green
 memory: project
+# OJO — `mcpServers` NO RESTRINGE en entorno remoto (MEDIDO, AIR-285): en Claude Code
+# on the web los conectores de claude.ai llegan igual, se declaren o no, y con OTRO
+# prefijo (`mcp__Supabase__*` en Mayúscula, no `mcp__supabase__*`). Esta lista es una
+# pista de eficiencia de contexto, NO un boundary. La restricción real la dan
+# `disallowedTools` (literales exactos, sin comodines -> por eso van los DOS prefijos)
+# y los hooks guard-readonly-agents.sh / guard-prod-writes.sh (regex + sufijo ancho).
+# `n8n-mcp` se eliminó de esta lista (AIR-285): era un nombre HUÉRFANO — no existe
+# en `.mcp.json` ni como conector, y un servidor inexistente se ignora en silencio
+# (solo deja un warning en el debug log), así que nunca aportó nada.
 mcpServers:
   - supabase
-  - n8n-mcp
   - n8n
 hooks:
   PreToolUse:

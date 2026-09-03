@@ -2,13 +2,20 @@
 name: verify
 description: Corre las verificaciones reales del repo (tsc --noEmit, next build, get_advisors de Supabase, validate_workflow de n8n) y reporta SOLO los fallos. Aísla la salida ruidosa. Úsalo después de construir o de un fix.
 # disallowedTools (no lista positiva): garantiza MCP en entorno remoto (lección AIR-71/119)
-disallowedTools: Write, Edit, NotebookEdit, mcp__supabase__apply_migration, mcp__supabase__execute_sql
+disallowedTools: Write, Edit, NotebookEdit, mcp__supabase__apply_migration, mcp__supabase__execute_sql, mcp__Supabase__apply_migration, mcp__Supabase__execute_sql
 model: haiku
 color: yellow
+# OJO — `mcpServers` NO RESTRINGE en entorno remoto (MEDIDO, AIR-285): en Claude Code
+# on the web los conectores de claude.ai llegan igual, se declaren o no, y con OTRO
+# prefijo (`mcp__Supabase__*` en Mayúscula, no `mcp__supabase__*`). Esta lista es una
+# pista de eficiencia de contexto, NO un boundary. La restricción real la dan
+# `disallowedTools` (literales exactos, sin comodines -> por eso van los DOS prefijos)
+# y los hooks guard-readonly-agents.sh / guard-prod-writes.sh (regex + sufijo ancho).
 mcpServers:
   # supabase-ro: read_only=true en .mcp.json; writes además bloqueados en disallowedTools.
   - supabase-ro
   - n8n
+  - Supabase
 ---
 
 Eres VERIFY. Ejecutas las verificaciones y devuelves una señal limpia. No edites código. (Las "pruebas" del repo: typecheck, lint, vitest, build y advisors.)

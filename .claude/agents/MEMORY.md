@@ -73,6 +73,53 @@ limpio al terminar) pero boundary crossing real. Recomendación (NO aplicada —
 requiere aprobación humana): prohibición explícita en `verify.md` de escribir/editar por CUALQUIER vía
 en Bash, y evaluar hook PreToolUse que bloquee patrones de escritura (`sed -i`,`>`,`tee`) en su Bash.
 
+## El prefijo MCP cambia entre local y remoto -> todo literal falla ABIERTO (AIR-285, continuacion de AIR-242/258)
+MEDIDO lanzando `verify` y pidiendole su lista de tools en Claude Code on the web:
+- Los conectores de claude.ai llegan como `mcp__Supabase__*` / `mcp__Linear__*` (MAYUSCULA). Los de
+  `.mcp.json` (`mcp__supabase__*`, `mcp__supabase-ro__*`) en remoto NI SIQUIERA AUTENTICAN.
+- `mcpServers:` del frontmatter **NO RESTRINGE en remoto**: verify declara `[supabase-ro, n8n]` y tenia
+  ~14 servidores mas disponibles, incluidos `mcp__Supabase__apply_migration` y `..._execute_sql`. Los
+  conectores entran se declaren o no. Es una pista de eficiencia de contexto, NO un boundary.
+- Sus `disallowedTools` en minuscula NO casaban con el prefijo real -> un agente read-only PODIA
+  aplicar DDL a PROD. Y `disallowedTools` NO admite comodines ni regex (doc oficial sub-agents.md):
+  solo literales exactos o `mcp__<server>`. El `matcher` de hooks en settings.json SI admite regex.
+Misma clase de fallo que el incidente del 11-ago-2026 en `guard-prod-writes.sh`: **todo matching por
+literal atado a un prefijo falla ABIERTO** — sin error, sin log, solo un guard que deja de dispararse.
+Regla: para un boundary de seguridad, nunca literales; regex en el `matcher` + glob por SUFIJO ANCHO
+en el `case`. La cobertura real es la INTERSECCION de las dos capas, nunca la union.
+Fix: `scripts/agent/hooks/guard-readonly-agents.sh` (exit 2, bloqueo duro) + `lib/active-agent.sh`
+(identificacion compartida, antes duplicada en `guard-verify-readonly.sh`: dos copias de "quien corre"
+divergen en silencio y dejan un guard sin disparar).
+LECCION DE PROCESO: este trabajo nacio etiquetado con un numero de issue INVENTADO que ya estaba
+OCUPADO por otro issue cerrado, y hubo que renumerar 20 ocurrencias en 13 archivos. Antes de etiquetar
+un trabajo, VERIFICAR el ultimo numero real del team (`list_issues` ordenado por creacion) y crear el
+issue; asumir "el siguiente numero" sin comprobar colisiona con issues existentes y vincula el PR a un
+issue ajeno. El numero correcto aqui es AIR-285.
+
+## Fail-open vs fail-closed: son DOS preguntas, no una politica (AIR-285)
+En `guard-readonly-agents.sh` las dos preguntas reciben respuestas OPUESTAS a proposito:
+- "¿QUIEN corre?" sin respuesta -> **PASAR** (fail-open). Equivocarse tranca a builder/fixer a mitad
+  de un issue sin humano que desbloquee.
+- "¿QUE hace esta query?" sin respuesta, con el agente YA identificado como read-only -> **BLOQUEAR**
+  (fail-closed). Bloquear a un read-only no tranca nada: reporta y builder lo aplica por la via normal.
+El error a evitar: aplicar "fail-open" como politica global del hook. En la primera version la rama
+`execute_sql` con `QUERY` vacio caia al `exit 0` final — un `execute_sql` no inspeccionable PASABA en
+un agente read-only. El reviewer lo cazo. Corolario mas general: **un comentario que promete una
+garantia que el codigo no da es peor que no tener el comentario** (falsa confianza al auditar); si
+documentas una asimetria, verifica a mano las dos ramas antes de reportar.
+
+## Sesgo hacia lo seguro tiene precio, y hay que documentarlo (AIR-285)
+Los verbos ampliados `COPY|CALL|LOCK|REFRESH` (los que la cabecera de `guard-prod-writes.sh` documenta
+como NO cubiertos) son palabras comunes: `where estado = 'copy'` o una columna `lock` disparan bloqueo
+en un SELECT legitimo. Aceptable SOLO porque el agente es read-only (coste bajo); por eso
+`guard-prod-writes.sh` NO los amplia — alli hay agentes que escriben y costaria un `ask` de mas.
+Regla: al endurecer un check, anota el falso positivo esperado y que hacer con el, no solo lo que caza.
+
+## Nombres huerfanos en `mcpServers` se ignoran EN SILENCIO (AIR-285)
+`builder.md` y `fixer.md` declaraban `n8n-mcp`, que no existe ni en `.mcp.json` ni como conector. Un
+servidor inexistente no da error: solo un warning en el debug log. Nunca aporto nada y nadie lo noto.
+Al auditar frontmatters, cruzar cada nombre contra `.mcp.json` + la lista real de conectores.
+
 ---
 
 # Issue-analyst — memoria

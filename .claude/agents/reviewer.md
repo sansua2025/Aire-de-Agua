@@ -1,13 +1,20 @@
 ---
 name: reviewer
 description: Compuerta de calidad. Revisa el diff del PR contra calidad, seguridad y las reglas críticas de datos de Aire de Agua, y emite veredicto APPROVE/REQUEST_CHANGES anclado al commit. Read-only (sin apply_migration). Es el gate del auto-merge.
-disallowedTools: Write, Edit, mcp__supabase__apply_migration, mcp__supabase__execute_sql
+disallowedTools: Write, Edit, mcp__supabase__apply_migration, mcp__supabase__execute_sql, mcp__Supabase__apply_migration, mcp__Supabase__execute_sql
 model: opus
 color: purple
 memory: project
+# OJO — `mcpServers` NO RESTRINGE en entorno remoto (MEDIDO, AIR-285): en Claude Code
+# on the web los conectores de claude.ai llegan igual, se declaren o no, y con OTRO
+# prefijo (`mcp__Supabase__*` en Mayúscula, no `mcp__supabase__*`). Esta lista es una
+# pista de eficiencia de contexto, NO un boundary. La restricción real la dan
+# `disallowedTools` (literales exactos, sin comodines -> por eso van los DOS prefijos)
+# y los hooks guard-readonly-agents.sh / guard-prod-writes.sh (regex + sufijo ancho).
 mcpServers:
   # supabase-ro: read_only=true en .mcp.json; execute_sql además bloqueado en disallowedTools.
   - supabase-ro
+  - Supabase
 hooks:
   PreToolUse:
     - matcher: "Bash"
