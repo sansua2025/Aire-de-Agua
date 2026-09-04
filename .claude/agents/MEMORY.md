@@ -174,6 +174,53 @@ limpio al terminar) pero boundary crossing real. Recomendación (NO aplicada —
 requiere aprobación humana): prohibición explícita en `verify.md` de escribir/editar por CUALQUIER vía
 en Bash, y evaluar hook PreToolUse que bloquee patrones de escritura (`sed -i`,`>`,`tee`) en su Bash.
 
+## El prefijo MCP cambia entre local y remoto -> todo literal falla ABIERTO (AIR-285, continuacion de AIR-242/258)
+MEDIDO lanzando `verify` y pidiendole su lista de tools en Claude Code on the web:
+- Los conectores de claude.ai llegan como `mcp__Supabase__*` / `mcp__Linear__*` (MAYUSCULA). Los de
+  `.mcp.json` (`mcp__supabase__*`, `mcp__supabase-ro__*`) en remoto NI SIQUIERA AUTENTICAN.
+- `mcpServers:` del frontmatter **NO RESTRINGE en remoto**: verify declara `[supabase-ro, n8n]` y tenia
+  ~14 servidores mas disponibles, incluidos `mcp__Supabase__apply_migration` y `..._execute_sql`. Los
+  conectores entran se declaren o no. Es una pista de eficiencia de contexto, NO un boundary.
+- Sus `disallowedTools` en minuscula NO casaban con el prefijo real -> un agente read-only PODIA
+  aplicar DDL a PROD. Y `disallowedTools` NO admite comodines ni regex (doc oficial sub-agents.md):
+  solo literales exactos o `mcp__<server>`. El `matcher` de hooks en settings.json SI admite regex.
+Misma clase de fallo que el incidente del 11-ago-2026 en `guard-prod-writes.sh`: **todo matching por
+literal atado a un prefijo falla ABIERTO** — sin error, sin log, solo un guard que deja de dispararse.
+Regla: para un boundary de seguridad, nunca literales; regex en el `matcher` + glob por SUFIJO ANCHO
+en el `case`. La cobertura real es la INTERSECCION de las dos capas, nunca la union.
+Fix: `scripts/agent/hooks/guard-readonly-agents.sh` (exit 2, bloqueo duro) + `lib/active-agent.sh`
+(identificacion compartida, antes duplicada en `guard-verify-readonly.sh`: dos copias de "quien corre"
+divergen en silencio y dejan un guard sin disparar).
+LECCION DE PROCESO: este trabajo nacio etiquetado con un numero de issue INVENTADO que ya estaba
+OCUPADO por otro issue cerrado, y hubo que renumerar 20 ocurrencias en 13 archivos. Antes de etiquetar
+un trabajo, VERIFICAR el ultimo numero real del team (`list_issues` ordenado por creacion) y crear el
+issue; asumir "el siguiente numero" sin comprobar colisiona con issues existentes y vincula el PR a un
+issue ajeno. El numero correcto aqui es AIR-285.
+
+## Fail-open vs fail-closed: son DOS preguntas, no una politica (AIR-285)
+En `guard-readonly-agents.sh` las dos preguntas reciben respuestas OPUESTAS a proposito:
+- "¿QUIEN corre?" sin respuesta -> **PASAR** (fail-open). Equivocarse tranca a builder/fixer a mitad
+  de un issue sin humano que desbloquee.
+- "¿QUE hace esta query?" sin respuesta, con el agente YA identificado como read-only -> **BLOQUEAR**
+  (fail-closed). Bloquear a un read-only no tranca nada: reporta y builder lo aplica por la via normal.
+El error a evitar: aplicar "fail-open" como politica global del hook. En la primera version la rama
+`execute_sql` con `QUERY` vacio caia al `exit 0` final — un `execute_sql` no inspeccionable PASABA en
+un agente read-only. El reviewer lo cazo. Corolario mas general: **un comentario que promete una
+garantia que el codigo no da es peor que no tener el comentario** (falsa confianza al auditar); si
+documentas una asimetria, verifica a mano las dos ramas antes de reportar.
+
+## Sesgo hacia lo seguro tiene precio, y hay que documentarlo (AIR-285)
+Los verbos ampliados `COPY|CALL|LOCK|REFRESH` (los que la cabecera de `guard-prod-writes.sh` documenta
+como NO cubiertos) son palabras comunes: `where estado = 'copy'` o una columna `lock` disparan bloqueo
+en un SELECT legitimo. Aceptable SOLO porque el agente es read-only (coste bajo); por eso
+`guard-prod-writes.sh` NO los amplia — alli hay agentes que escriben y costaria un `ask` de mas.
+Regla: al endurecer un check, anota el falso positivo esperado y que hacer con el, no solo lo que caza.
+
+## Nombres huerfanos en `mcpServers` se ignoran EN SILENCIO (AIR-285)
+`builder.md` y `fixer.md` declaraban `n8n-mcp`, que no existe ni en `.mcp.json` ni como conector. Un
+servidor inexistente no da error: solo un warning en el debug log. Nunca aporto nada y nadie lo noto.
+Al auditar frontmatters, cruzar cada nombre contra `.mcp.json` + la lista real de conectores.
+
 ---
 
 # Issue-analyst — memoria
@@ -229,6 +276,27 @@ CUALQUIER upsert que lo infiera DEBE re-sincronizarse con el NUEVO predicado en 
 Verificar forzando un UPSERT real (INSERT que cae en conflicto → DO UPDATE) con fixtures — no basta con
 que la función compile ni con 0 filas.
 
+## `$vars` NO existe en la instancia n8n (plan sin variables) — allowlists hardcodeadas en el nodo
+El plan de n8n de esta cuenta no incluye Variables, así que `$vars` es `undefined` en runtime. Todo nodo
+que lea `$vars.X` con fallback `if (!X) return []` queda MUERTO EN SILENCIO (caso real: `Drift n8n vs repo`
+de `Sentinela_v1.json`, ciego desde el día uno). Patrón correcto = allowlist hardcodeada en el propio nodo
+(misma convención que `EXPECTED_ACTIVE` / `EXPECTED`) + rama de FALLO RUIDOSO si la lista queda vacía
+(emitir señal `needs-refinement`, nunca `return []`).
+Al espejar `n8n/workflows/` en una allowlist: la clave es `normName()` del campo **`name`** del export
+(= nombre vivo que devuelve `GET /api/v1/workflows`), NO el basename del archivo — difieren en 15 de los
+47 exports (`E5A_Loop_Weekly_Analysis.json` se llama `Loop - Weekly Analysis`). Usar el basename ahí da
+falsos positivos permanentes. Generar la lista con script, nunca a mano.
+`Sentinela_v1.json` NO tiene `activeVersion` (es `null`): no fabricarla; el check de paridad hace SKIP.
+
+**ACTUALIZACIÓN (2026-08-29): el caso `Drift n8n vs repo` NO se arregló con la allowlist — se BORRÓ.**
+Antes de espejar `n8n/workflows/` a mano dentro de un nodo, preguntar si ya existe un detector fuera de
+n8n: `.github/workflows/n8n-drift.yml` + `scripts/check-n8n-repo-drift.mjs` llevaba un mes cazando ese
+mismo drift, leyendo el directorio del disco (cero lista que mantener). Lo que le faltaba era el CANAL DE
+ENTREGA (solo escribía al Step Summary), no la detección. Regla: **un sensor que necesita un espejo manual
+de 47 nombres pierde contra uno que lee la fuente de verdad; antes de construir, buscar el que ya detecta y
+cablearle la entrega.** La lección de `$vars` sigue viva para las allowlists legítimas (`EXPECTED_ACTIVE`,
+`EXPECTED`), que codifican una DECISIÓN ("esto debe estar prendido") y no un espejo de un directorio.
+
 (Nota de poda: la lección "check-docstring-rpc-loop falso positivo con decimales narrativos" ya está
 GRADUADA — `scripts/agent/check-docstring-rpc-loop.sh` exige operador `+`/`-`/`*` inmediato antes de contar
 un decimal como delta, ver AIR-257 en `MEMORY.md` raíz. No repetir el análisis aquí.)
@@ -250,3 +318,86 @@ solo en `MEMORY.md` (raíz) para no duplicar.
 `get_memoria_activa(null,...)` ignora el filtro de dominio y devuelve los top-10 `vigente`
 de TODOS los dominios al prompt E5. Insertar learnings de ingeniería/proceso ahí contaminaría
 el contexto analítico del agente E5. La memoria de proceso vive en MEMORY.md (este archivo).
+
+
+---
+
+# Security-reviewer (red-team) - memoria
+
+## Vector: amplificacion de valla en bloques de codigo Markdown (n8n-drift.yml, sha 771ccd7)
+Cuando se encierra texto externo en un bloque de codigo cuya valla se calcula como
+"racha de backticks mas larga del dato + 1", la valla queda ATADA al dato hostil y es
+ILIMITADA aunque el contenido este truncado. Con cuerpo ~= preambulo + 2*(RUN_MAX+1) + trim
+y tope de 65536 chars en un issue de GitHub, basta RUN_MAX ~= 21600 para pasarse
+(verificado: 22000 backticks -> 66243 chars). gh issue create devuelve 422,
+"set -euo pipefail" tumba el paso y EL CANAL DE AVISO MUERE. Regla: la valla debe tener
+TOPE (p.ej. min(RUN_MAX+1, 12)) y el presupuesto de truncado debe RESTAR 2*FENCE_LEN;
+mejor aun: neutralizar los backticks del dato y usar valla fija.
+
+## Vector: grep declara "binary file matches" y devuelve 0 rachas
+grep -oE sobre un archivo con un byte NUL manda el aviso a STDERR y deja stdout VACIO
+(GNU grep 3.11, verificado) -> RUN_MAX=0 -> la valla colapsa a 3 backticks aunque el
+contenido traiga vallas de 3+. Todo escaner defensivo hecho con grep sobre datos externos
+necesita -a / --binary-files=text. Alcance real limitado si el dato pasa por Postgres
+(json/jsonb rechazan U+0000), pero no si viene de un archivo del repo.
+
+## Vector: envenenar un marcador de dedupe releido del propio cuerpo
+grep -oE 'drift-hash: [0-9a-f]{64}' | head -n 1 toma la PRIMERA coincidencia; el dato
+externo se renderiza ANTES del marcador real, asi que un nombre hostil con
+"drift-hash: <64 hex>" gana. NO logra suprimir (haria falta un punto fijo de SHA-256: el
+hash cubre el propio texto inyectado) - solo fuerza comentario cada noche (ruido).
+Fix: tail -n 1, o anclar el patron al comentario HTML completo.
+
+## Superficie GitHub Actions - que revisar cuando un job gana issues:write
+Verificado OK en 771ccd7: cero interpolacion de expresiones dentro de run: (todo por env:),
+reporte siempre por --body-file (nunca linea de comando), trigger schedule+workflow_dispatch
+(no pull_request_target), checkout de la rama default, secrets del sensor AUSENTES del paso
+que escribe el issue. OJO: el enmascarado de secrets de Actions NO aplica al cuerpo de un
+issue - si el script imprime "Failed to parse URL from <N8N_BASE_URL>" (mensaje real de Node
+ante URL malformada), el secret acaba publicado.
+
+## Estado de esos 3 vectores (cerrados en la rama sentinela-auto-detection)
+Valla FIJA sobre dato NEUTRALIZADO (`tr -d '\000' | tr` backtick→comilla simple, una sola vez tras capturar
+el reporte) + tope del cuerpo CALCULADO midiendo cabecera/cierre con `wc -c`; ya no hay `grep` sobre el dato,
+así que el vector del byte NUL desaparece en vez de mitigarse. Marcador de dedupe anclado al comentario HTML
+completo con `tail -n 1`. Mensajes fatales del script redactan URL y API key. Al revisar de nuevo: el
+invariante a atacar es "¿existe algún dato del reporte que impida que el aviso salga?" — incluido el ORDEN
+(se comenta ANTES de publicar la huella nueva) y los pasos fail-open (`--add-assignee` aparte).
+
+## activeVersion puede ser null (Sentinela_v1.json)
+La paridad AIR-140 es vacua cuando w.activeVersion === null: hay una sola copia del grafo.
+Confirmar el valor antes de reportar divergencia o de darla por comprobada.
+
+## Vector: `head -c` + `iconv -c` bajo `set -euo pipefail` (n8n-drift.yml, sha 1ee086d) — RONDA 4
+`iconv -c` NO cubre "incomplete character or shift sequence at end of buffer": `-c` solo omite
+caracteres INVALIDOS EN MEDIO del stream; una secuencia UTF-8 CORTADA AL FINAL (exactamente lo
+que produce `head -c N`) hace que glibc iconv salga 1. Verificado en glibc 2.39 (= ubuntu-latest):
+`bash -c 'set -euo pipefail; head -c 101 mb.txt | iconv -c -f utf-8 -t utf-8 > out'` → exit 1.
+Con `pipefail` el paso MUERE ahí, ANTES de cualquier red de seguridad posterior (el "cuerpo minimo"
+del canal de aviso estaba 23 lineas mas abajo y nunca se alcanza).
+Explotacion: nombre de nodo/workflow en n8n con ~30 000 chars multibyte; el atacante ALINEA el corte
+con 1 byte ASCII de relleno (pad=0 sobrevive, pad=1 mata — verificado). Deterministico, no 50/50.
+Regla: todo recorte por BYTES de dato externo necesita una etapa de saneo que NO PUEDA FALLAR
+(`iconv ... || true`, `iconv -c ... ; true`, o mejor cortar por caracteres/`awk`/`perl -CS`).
+Corolario general: en una cadena de defensas, la red de seguridad tiene que estar ANTES del punto
+que puede morir, no despues. Y un `| iconv` es un comando mas del pipeline: `pipefail` lo convierte
+en superficie de denegacion.
+Nota: el propio reporte lleva `↔ · — ⚠ ≠ →` (multibyte) => tambien es bug de fiabilidad sin atacante.
+
+## Cerrado y verificado en 1ee086d (no re-probar sin motivo)
+- Valla fija de 3 sobre dato con backticks neutralizados (`tr '\`' "'"`): un bloque cercado por
+  backticks SOLO cierra con backticks; `~~~`, `<!-- -->` y entidades no escapan. OK.
+- Tope del cuerpo: HEAD_B=729, TAIL_B=224, BUDGET=64327, LIMIT=45000 => cuerpo max 45 954 bytes.
+  Aritmetica correcta y conservadora (bytes >= chars UTF-8 y >= unidades UTF-16). No hay TOCTOU:
+  drift-report.txt se escribe en el paso anterior y no se reescribe.
+- `drift-hash`: patron anclado al comentario HTML completo + `tail -n 1`; el dato va SIEMPRE antes
+  del marcador real => no envenenable. Suprimir exigiria punto fijo de SHA-256.
+- Duplicados: canonico = `head -n 1` de `sort -n` (el mas viejo); los extras salen de `tail -n +2`,
+  asi que el canonico NUNCA entra al bucle. Bucle finito, `</dev/null` en cada `gh`.
+- `--add-assignee` en llamada aparte con `|| echo`: `errexit` no aplica a la izquierda de `||`. OK.
+- `check-n8n-repo-drift.mjs`: los `sort()` se aplican DESPUES de calcular `total` y solo reordenan
+  => deteccion intacta. `redact()` cubre el unico camino que publica (main().catch), y ese camino
+  sale con status 2, que el paso de notificacion ignora. Cero `${{ }}` dentro de `run:`.
+  `permissions: contents:read + issues:write`. El job sigue fallando con drift (`exit "${STATUS:-2}"`).
+- Sentinela_v1.json: `activeVersion === null` en main y en HEAD => paridad AIR-140 vacua. Sin nodos
+  Claude/Anthropic. El nodo Gmail tiene destinatario fijo (no controlable por el dato).

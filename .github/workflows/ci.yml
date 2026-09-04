@@ -75,12 +75,18 @@ jobs:
       # semanas en silencio. Un self-test que nadie ejecuta no es un gate.
       #   - guard-prod-writes: confirmación humana ante writes/DDL a PROD.
       #   - guard-verify-readonly: el rol verify no escribe.
-      # Ambos usan jq, presente por defecto en ubuntu-latest; guard-prod-writes
+      #   - guard-readonly-agents (AIR-285): los agentes de rol read-only no
+      #     escriben en Supabase con NINGÚN prefijo MCP. Va aquí por el mismo
+      #     motivo del comentario de arriba: es justo el tipo de guard que falla
+      #     ABIERTO en silencio si nadie ejercita sus casos de prefijo.
+      # Los tres usan jq, presente por defecto en ubuntu-latest; guard-prod-writes
       # además ejercita su propio fallback SIN jq (PATH mínimo).
       - name: Guard de writes a PROD (self-test)
         run: bash scripts/agent/hooks/guard-prod-writes.test.sh
       - name: Guard de verify read-only (self-test)
         run: bash scripts/agent/hooks/guard-verify-readonly.test.sh
+      - name: Guard de agentes read-only (self-test)
+        run: bash scripts/agent/hooks/guard-readonly-agents.test.sh
 
   n8n-sync:
     name: n8n-sync

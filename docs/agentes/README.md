@@ -34,6 +34,8 @@ El backlog se alimenta solo con el agente `sentinel` (señales → issues Linear
 | retro | sonnet | claude_ai_Supabase, claude_ai_Linear | memoria + poda; `disallowedTools` |
 | sentinel | sonnet | claude_ai_Linear, claude_ai_n8n, supabase-ro | señales → issues `agent-ready`; dedupe; máx 5/corrida; por cron |
 
+> La columna MCP es **descriptiva, no restrictiva**: `mcpServers` del frontmatter no limita nada en remoto (ver "Prefijos MCP" más abajo). Quién puede escribir en Supabase lo deciden `guard-readonly-agents.sh` y `guard-prod-writes.sh`.
+
 ## MCP vs CLI+skill (juicio de la charla, aplicado a TU repo)
 La charla recomienda preferir un CLI+skill cuando ya existe un CLI. Aplicado aquí:
 - **Supabase → MCP** (no CLI): no hay `supabase/config.toml`; tu camino establecido es el MCP (`apply_migration`, `get_advisors`, `create_branch`). Se queda en MCP.
@@ -55,6 +57,37 @@ La línea de AIR-127: cuando un fallo se repite en review, deja de vivir en un p
 - **`data-rules`** (`scripts/agent/check-data-rules.sh`) — reglas críticas de datos. FAIL: R1 revenue (`valor_compras`), R2 hora Bogotá, R3 joins de producto, R5 columnas GENERATED STORED en INSERT/UPSERT (bloque por tabla), R7 numeración de migraciones. WARN: R6a `ciudad` sin `JOIN clientes`, R6b `margen` sin `cobertura_cogs`.
 - **`prompt-hygiene`** (`scripts/agent/check-prompt-hygiene.sh`) — gradúa el patrón AIR-94: en nodos críticos de n8n (ambas copias, `nodes` y `activeVersion.nodes`) exige `sanitize()` con strip total `<[^>]*>`, system prompt defensivo con "Ignora", y prohíbe el antipatrón "reporta lo sospechoso". Con selftest y allowlist ratchet (`prompt-hygiene-allowlist.txt`).
 - **`docstring-rpc-loop`** (`scripts/agent/check-docstring-rpc-loop.sh`) — detecta **drift entre el docstring-cabecera y el cuerpo SQL** de las RPCs del loop de insights (`close_insight_loop`, `upsert_insight`). Por cada `.sql` en alcance, extrae los deltas de `score_confianza` declarados en los comentarios `--` antes de `AS $$` (p.ej. `+0.10`, `-0.15 (refutado)`, `(1 - actual) * 0.15`) y verifica que cada uno aparezca también en el cuerpo. Si un delta documentado no está implementado → FAIL. **Disparador:** AIR-97 descubrió que `033_analytics_close_insight_loop.sql` documentaba una penalización `refutado -0.15` que el cuerpo nunca aplicó, degradando el aprendizaje en silencio (insights refutados no perdían confianza). Es exactamente el tipo de drift silencioso que AIR-127 manda convertir en guardrail. Corre en `pull_request` con `--diff origin/main`.
+
+## Prefijos MCP: local ≠ remoto, y qué mecanismo protege qué (AIR-285)
+
+**El hallazgo (medido, no teórico).** El prefijo de los servidores MCP **cambia según el entorno**. En local, los servidores de `.mcp.json` llegan como `mcp__supabase__*` / `mcp__supabase-ro__*` / `mcp__n8n__*`. En **remoto** (Claude Code on the web) los que llegan son los **conectores de claude.ai**, con otro nombre y otra caja: `mcp__Supabase__*`, `mcp__Linear__*` (Mayúscula) — y los de `.mcp.json` ahí ni siquiera autentican. En el entorno remoto también aparece la variante con UUID (`mcp__<uuid>__…`), que es la que ya rompió `guard-prod-writes.sh` el 11-ago-2026.
+
+Lanzando el subagente `verify` y pidiéndole su lista de herramientas se comprobaron dos cosas:
+
+1. **`mcpServers:` del frontmatter NO RESTRINGE en remoto.** `verify` declara `[supabase-ro, n8n]` y aun así tenía disponibles ~14 servidores más, entre ellos `mcp__Supabase__apply_migration` y `mcp__Supabase__execute_sql`. Los conectores entran se declaren o no: `mcpServers` es una **pista de eficiencia de contexto**, no un boundary de seguridad.
+2. **Los `disallowedTools` en minúscula no casaban con el prefijo real** → un agente declarado read-only podía aplicar DDL a PROD. Y por doc oficial, `disallowedTools` **no admite comodines ni regex**: solo literales exactos o el patrón a nivel servidor (`mcp__<server>`). El `matcher` de hooks en `settings.json` **sí** admite regex.
+
+Es la misma clase de fallo que la cabecera de `guard-prod-writes.sh` ya documenta: **todo matching por literal atado a un prefijo falla ABIERTO** — sin error, sin log, solo un guard que deja de dispararse.
+
+**Qué protege qué (capas, de más débil a más fuerte).**
+
+| Mecanismo | Qué hace | Fuerza real |
+|---|---|---|
+| `mcpServers:` (frontmatter) | Lista de servidores esperados | **Ninguna en remoto.** Solo eficiencia de contexto |
+| `disallowedTools:` (frontmatter) | Bloquea tools por nombre | Literal exacto, **sin comodines** → hay que enumerar *todos* los prefijos (minúscula y Mayúscula). Defensa en profundidad, no garantía. **Solo tools inequívocamente de escritura** (`apply_migration`): corta antes que el hook y sin ver el contenido, así que los tools DUALES como `execute_sql` NO van aquí — los gobierna el hook |
+| `matcher` de `hooks.PreToolUse` | Selecciona qué tools pasan por un hook | **Regex** (`^mcp__.*__execute_sql`) → cubre cualquier prefijo |
+| `guard-readonly-agents.sh` | **exit 2** (bloqueo duro) a writes de Supabase si el agente activo es read-only | Sufijo ancho, cubre prefijos futuros. Fail-open si no identifica al agente |
+| `guard-prod-writes.sh` | `ask` (confirmación humana) para quien **sí** puede escribir (builder/fixer) | Sufijo ancho. Fail-open ante RPC que escriben |
+
+**Regla operativa.** La cobertura del sistema es siempre la **intersección** de la regex del `matcher` y los globs del script, nunca la unión: si añades un guard, ancla el matcher al inicio (`^mcp__.*__…`) y deja el glob del `case` abierto por los dos lados (`*execute_sql*`).
+
+**Agentes read-only** (bloqueados por `guard-readonly-agents.sh`): `verify`, `reviewer`, `security-reviewer`, `sentinel`, `issue-analyst`. **Fuera de la lista a propósito:** `retro` (escribe legítimamente en `insights`), `builder` y `fixer` (construyen; sus writes pasan por `guard-prod-writes.sh`), y el `orchestrator` — que **no** es read-only: `MEMORY.md` §Builder/Orchestrator le exige ejecutar él mismo las operaciones MCP (probar migraciones), y con `exit 2` no habría override humano posible. `execute_sql` con un `SELECT` puro **sí pasa** — el reviewer necesita leer PROD para validar datos, y bloqueárselo entero lo dejaría revisando a ciegas.
+
+**Límite conocido, sin adornos.** La detección de writes en `execute_sql` es **por verbo SQL**, no por efecto: un RPC que escribe es sintácticamente un `SELECT` (`select public.ingest_refund(...)`, la vía canónica de escritura en este repo) y **no se detecta**. Ninguno de los dos guards es hermético; `apply_migration` y los diez tools de branch/proyecto (los ocho de branch más `create_project` y `confirm_cost`) sí son fail-closed de verdad porque bloquean sin mirar el cuerpo. Y ampliar la lista de verbos **no cierra la clase de hueco**: la concatenación de cadenas (`do $$ begin execute 'INS'||'ERT …'; end $$`) derrota cualquier detección por verbo — es un límite estructural del enfoque, no un caso pendiente. Los tools de escritura de n8n (`update_workflow`, `delete_workflow`, `activate_workflow`) siguen **sin cubrir**, en un issue aparte.
+
+**Identificación del agente:** `scripts/agent/hooks/lib/active-agent.sh`, compartida por los dos hooks de rol (env var → campo del input → última transición de `.claude/logs/subagents.log`). Es una sola implementación a propósito: dos copias de "quién corre" divergen en silencio y dejan un guard sin disparar. **Contrato de fallo: fail-open** — si no identifica al agente, deja pasar, para no trancar a builder/fixer sin humano delante. **Excepción, fail-CLOSED:** si la propia lib falta o está corrupta, ambos hooks hacen `exit 2` (acotado a las escrituras). Sin eso, borrar un archivo desactivaba los dos guards en silencio.
+
+**Límite del modelo de amenaza (AIR-285, decisión humana: se documenta, no se persigue).** Las tres capas parecen defensa en profundidad, pero en producción manda la capa 3: `ADEA_ACTIVE_AGENT`/`CLAUDE_AGENT_NAME` no se exportan en ningún punto del repo y PreToolUse no garantiza el campo del input. Y `.claude/logs/subagents.log` está gitignored, vive dentro del working tree y es escribible por los propios agentes vigilados — añadir una línea `<ts>\tstart\tbuilder` hace que un read-only pase. **Estos guards protegen contra el ERROR de un agente, no contra uno comprometido** (p. ej. por prompt injection, amenaza declarada en `CLAUDE.md`); contra eso la defensa es el `ask` de `guard-prod-writes.sh`, RLS y el alcance de las credenciales. Nada que viva dentro del working tree puede ser raíz de confianza.
 
 ## Worktrees permanentes (no cherry-picking)
 Patrón de la charla: un repo · N worktrees · N Claudes, cada uno con una rama de tracking de larga vida; tras mergear, reset a `origin/main` conservando identidad.
