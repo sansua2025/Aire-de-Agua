@@ -189,3 +189,338 @@ jobs:
           NEXT_PUBLIC_SUPABASE_URL: https://vnctmzsgemefgbtjctlo.supabase.co
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: npm run test -- evals/
+
+  # AIR-276 — PARTE 1 DE 2: la única que toca el secreto de PROD.
+  #
+  # POR QUÉ ESTÁ SEPARADA. La versión anterior corría `migration-gate.selftest.sh`
+  # —un archivo CONTROLADO POR EL PR— en el MISMO job que después exponía
+  # `SUPABASE_DB_URL`. Un proceso lanzado en segundo plano desde el self-test
+  # sobrevive al final del paso y sigue vivo cuando llega el secreto. Encima la
+  # cadena de conexión viajaba por argv, legible en /proc/<pid>/cmdline por
+  # cualquier proceso del runner.
+  #
+  # ALCANCE REAL DE LA SEPARACIÓN, SIN VENDERLA DE MÁS: este job ya no ejecuta
+  # NINGÚN script del repo —ni el self-test ni el gate—, solo lee dos archivos y
+  # hace un SELECT. Lo que NO consigue: en un evento `pull_request` los propios
+  # bloques `run:` se toman del head del PR, así que quien abre el PR sigue
+  # controlando qué corre en el job que tiene el secreto. Eso es inherente a
+  # GitHub Actions y no lo arregla ningún split; lo que sí se reduce, y mucho, es
+  # la superficie: el secreto ya no convive con miles de líneas de script del PR,
+  # y cualquier cambio a estos `run:` sale en el diff a la vista del revisor.
+  #
+  # SECRETO REQUERIDO: SUPABASE_DB_URL (el mismo que usa migration-drift).
+  # PRIVILEGIO NECESARIO: SELECT sobre supabase_migrations.schema_migrations, y
+  # nada más. Es exactamente lo que `ci_drift_reader` (migración 104) ya tiene.
+  # NO hace falta pg_read_all_data ni ningún acceso a datos de negocio: este job
+  # NO vuelca el esquema — el baseline vive versionado en el repo (ver abajo).
+  migration-baseline-freshness:
+    name: migration-baseline-freshness
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # persist-credentials: false — si no, el GITHUB_TOKEN queda escrito en
+      # .git/config del workspace y cualquier cosa que corra después lo lee.
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      # Este job hace SOLO lo que exige credenciales. La comprobación de que
+      # `supabase/baseline/schema.sql` existe NO las necesita, así que vive en
+      # `migration-apply` (y allí, antes de ejecutar nada del PR). Moverla aquí
+      # fue el error que dejó a `migration-apply` en `skipped` — ver abajo.
+      # Lo único que se guarda aquí es la precondición del propio cotejo.
+      - name: Comprobar que hay contra qué cotejar
+        run: |
+          set -euo pipefail
+          # "No existe" y "se quedó viejo" son diagnósticos distintos y hay que
+          # decirlos distintos: sin este guardia, el `sort -u` de un archivo
+          # ausente sale vacío, TODO PROD aparece como "nuevo" y el job manda a
+          # regenerar un baseline que nunca existió.
+          if [ ! -s supabase/baseline/PROD_MIGRATIONS ]; then
+            {
+              echo "## migration-baseline-freshness: el baseline no existe todavía"
+              echo
+              echo 'No hay `supabase/baseline/PROD_MIGRATIONS`, así que no es que el baseline'
+              echo 'esté **viejo**: es que **no se ha generado nunca**. Hay que crearlo, con una'
+              echo 'conexión privilegiada (no la de CI):'
+              echo '```'
+              echo 'bash scripts/agent/migration-baseline-refresh.sh   # lee la URL de stdin'
+              echo '```'
+              echo
+              echo 'Genera `schema.sql` y `PROD_MIGRATIONS`; hay que commitear los dos.'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::no existe supabase/baseline/PROD_MIGRATIONS (no es que esté viejo: no se ha generado nunca); ver el resumen del job"
+            exit 1
+          fi
+          echo "PROD_MIGRATIONS: $(grep -c . supabase/baseline/PROD_MIGRATIONS) migraciones registradas"
+
+      # Un baseline VIEJO es un falso verde posible (p.ej. PROD ya tiene una
+      # tabla que la migración crea). Se cierra comparando las migraciones
+      # aplicadas en PROD contra las registradas al volcar. Eso solo necesita
+      # SELECT sobre supabase_migrations.schema_migrations.
+      #
+      # RIESGO RESIDUAL, ANOTADO A PROPÓSITO: `PROD_MIGRATIONS` es un archivo del
+      # repo y por tanto lo controla el PR; añadirle líneas inventadas ocultaría
+      # una desactualización real. La comprobación detecta el descuido, no a un
+      # autor hostil; para eso está la revisión humana del diff del baseline.
+      - name: Verificar que el baseline no se quedó viejo
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SUPABASE_DB_URL:-}" ]; then
+            echo "::error::falta SUPABASE_DB_URL; sin él no se puede comprobar la frescura del baseline"
+            exit 1
+          fi
+          command -v psql >/dev/null || sudo apt-get install -y -qq postgresql-client
+          # La cadena de conexión NO pasa por argv (/proc/<pid>/cmdline es
+          # legible por cualquier proceso del runner): se descompone en
+          # variables PG* y la contraseña va a un .pgpass con modo 0600.
+          # La versión del cliente da igual aquí: esto es un SELECT, no un
+          # pg_dump (pg_dump es el que exige cliente >= servidor).
+          umask 077
+          python3 - <<'PY' > "$RUNNER_TEMP/pgenv.sh"
+          import os, pathlib, shlex, urllib.parse as up
+          u = up.urlparse(os.environ["SUPABASE_DB_URL"])
+          q = dict(up.parse_qsl(u.query))
+          host = u.hostname or ""
+          port = str(u.port or 5432)
+          user = up.unquote(u.username or "")
+          pw   = up.unquote(u.password or "")
+          db   = up.unquote((u.path or "").lstrip("/")) or "postgres"
+          esc  = lambda s: s.replace("\\", "\\\\").replace(":", "\\:")
+          pgpass = pathlib.Path(os.environ["RUNNER_TEMP"]) / ".pgpass"
+          pgpass.write_text("%s:%s:%s:%s:%s\n" % (esc(host), port, esc(db), esc(user), esc(pw)))
+          pgpass.chmod(0o600)
+          env = {"PGHOST": host, "PGPORT": port, "PGUSER": user, "PGDATABASE": db,
+                 "PGSSLMODE": q.get("sslmode", "require"), "PGPASSFILE": str(pgpass)}
+          print("\n".join("export %s=%s" % (k, shlex.quote(v)) for k, v in env.items()))
+          PY
+          chmod 600 "$RUNNER_TEMP/pgenv.sh"
+          # shellcheck disable=SC1091
+          . "$RUNNER_TEMP/pgenv.sh"
+          psql -tAc "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version" \
+            > "$RUNNER_TEMP/prod_migrations.txt"
+          rm -f "$RUNNER_TEMP/pgenv.sh" "$PGPASSFILE"
+          NUEVAS="$(comm -23 <(sort -u "$RUNNER_TEMP/prod_migrations.txt") <(sort -u supabase/baseline/PROD_MIGRATIONS) | grep -c . || true)"
+          if [ "$NUEVAS" -gt 0 ]; then
+            {
+              echo "## migration-apply: el baseline se quedó viejo"
+              echo
+              echo "PROD tiene **$NUEVAS** migración(es) que no estaban aplicadas cuando se volcó"
+              echo 'el baseline, así que validar contra él podría dar un falso verde.'
+              echo
+              comm -23 <(sort -u "$RUNNER_TEMP/prod_migrations.txt") <(sort -u supabase/baseline/PROD_MIGRATIONS) | sed 's/^/  - /'
+              echo
+              echo 'Regenerar y commitear:'
+              echo '```'
+              echo 'bash scripts/agent/migration-baseline-refresh.sh   # lee la URL de stdin'
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::baseline desactualizado respecto de PROD; ver el resumen del job"
+            exit 1
+          fi
+          echo "baseline al día con PROD."
+
+  migration-apply:
+    name: migration-apply
+    runs-on: ubuntu-latest
+    # AIR-276 — PARTE 2 DE 2: ejecuta el SQL del PR. SIN NINGÚN SECRETO.
+    #
+    # POR QUÉ EXISTE. El check `Supabase Preview` de la integración de Supabase no
+    # puede pasar NUNCA en este repo: levanta un preview branch VACÍO y reproduce
+    # supabase/migrations/ desde cero, pero ese directorio es RESPALDO de lo
+    # aplicado en PROD, no un bootstrap — ninguna migración crea las tablas base,
+    # así que muere en el archivo 1 de 151 con `relation "venta_items" does not
+    # exist`. Y cuando el cupo de preview branches concurrentes se agota, el check
+    # se SALTA en silencio (incidente documentado en AIR-162). Entre las dos cosas,
+    # ninguna migración de este repo estuvo nunca validada por ejecución antes de
+    # entrar a producción.
+    #
+    # QUÉ HACE DISTINTO. En vez de reconstruir la historia desde cero, carga el
+    # BASELINE VERSIONADO del esquema de PROD (`supabase/baseline/schema.sql`,
+    # regenerado a mano con migration-baseline-refresh.sh) en un Postgres 17
+    # efímero, y aplica encima SOLO las migraciones que el PR AGREGA. Es la
+    # pregunta que de verdad importa: "¿esto aplica sobre lo que hay en
+    # producción?". Este job NO hace pg_dump y NO se conecta a PROD: no recibe
+    # ningún secreto, precisamente porque aquí sí corre código del PR.
+    #
+    # NUNCA PASA EN SILENCIO. Si falta el baseline, si no carga, si el base-ref no
+    # resuelve o si un archivo declarado añadido no está en el árbol, el job FALLA.
+    # Un gate que se salta a sí mismo es la patología que este job viene a cerrar.
+    # (Contrástese con `evals`, que hace SKIP sin secreto — ahí el riesgo se asumió
+    # a propósito; aquí no.)
+    #
+    # ORDEN DE LOS PASOS, A PROPÓSITO: la comprobación del baseline va ANTES del
+    # self-test y del gate. Mientras `supabase/baseline/schema.sql` no exista, el
+    # job muere sin haber pasado un solo byte del PR por `psql`.
+    #
+    # PENDIENTE DE CONFIGURACIÓN MANUAL (Settings → Branches → branch protection):
+    # marcar `migration-apply` Y `migration-baseline-freshness` como required
+    # checks, y quitar de required a `Supabase Preview`. Mientras la integración de
+    # preview branches siga activa seguirá pintando rojo permanente sin aportar
+    # señal; conviene desactivarla en Project Integrations Settings de Supabase
+    # (además ahorra ~US$0,0134/hora).
+    #
+    # CÓMO SE VERIFICA QUE ESTO SIGUE BIEN (hoy ningún check del repo lo detecta:
+    # un job que pasa a `skipped` no lo ve nadie automáticamente). En una corrida
+    # con el baseline AUSENTE, la conclusión de cada job debe ser:
+    #   · migration-baseline-freshness -> failure   (no puede cotejar)
+    #   · migration-apply              -> failure   (NO `skipped`)
+    # Si `migration-apply` sale `skipped`, el `if: !cancelled()` o el paso guardia
+    # se han perdido y el check está abierto. Se comprueba en la pestaña Actions,
+    # o con: gh run view <run-id> --json jobs -q '.jobs[]|"\(.name) \(.conclusion)"'
+    #
+    # OJO, MISMA TRAMPA POR OTRA VÍA: `scripts/agent/merge-gate.sh` [1/6] usa
+    # `gh pr checks`, que trata un check `skipped` como NO fallido y por tanto lo
+    # deja pasar. Aquí ya no importa (este job no puede quedar en skipped), pero
+    # cualquier job futuro con `needs:` sin `if:` reabre el agujero por ahí.
+    needs: migration-baseline-freshness
+    # `if: !cancelled()` — SIN ESTO EL GATE SE ABRE POR LA PUERTA DE ATRÁS.
+    # Un `needs:` a secas degrada este job a `skipped` cuando el de arriba falla,
+    # y `skipped` NO es `failure`: en la corrida 33832661262 el baseline no
+    # existía, `migration-baseline-freshness` salió en rojo y `migration-apply`
+    # —el nombre que este mismo PR manda marcar como required— salió `skipped`,
+    # que branch protection no distingue de "no había nada que hacer". Es
+    # exactamente el fail-open que el gate viene a cerrar, reintroducido en la
+    # capa de orquestación (y el mismo patrón que el caso 6 del self-test viejo:
+    # confundir "no había nada" con "no pude verificar").
+    #
+    # El arreglo NO se apoya en cómo interprete GitHub un `skipped`: este job
+    # SIEMPRE corre (salvo cancelación) y su primer paso comprueba el resultado
+    # del job del que depende, así que el veredicto es `failure` — nunca
+    # `skipped`, nunca `success`— siempre que el gate no haya podido verificar.
+    if: ${{ !cancelled() }}
+    permissions:
+      contents: read
+    services:
+      pg:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      # VA EL PRIMERO, antes incluso del checkout: si la frescura del baseline no
+      # se pudo verificar, este job debe morir EN ROJO y no quedarse en skipped.
+      - name: La frescura del baseline tiene que haberse verificado
+        if: needs.migration-baseline-freshness.result != 'success'
+        run: |
+          {
+            echo "## migration-apply: no se ejecutó el gate"
+            echo
+            echo "\`migration-baseline-freshness\` terminó en **${{ needs.migration-baseline-freshness.result }}**,"
+            echo 'así que no consta que el baseline esté al día con PROD y validar contra él'
+            echo 'podría dar un falso verde. Este check falla **a propósito**: prefiere rojo'
+            echo 'a un `skipped` que branch protection podría leer como aprobado.'
+            echo
+            echo 'Arregla primero ese job (normalmente: regenerar y commitear el baseline con'
+            echo '`bash scripts/agent/migration-baseline-refresh.sh`) y vuelve a lanzar el CI.'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::migration-baseline-freshness terminó en '${{ needs.migration-baseline-freshness.result }}'; el gate no corre y este check queda en FAILURE, no en skipped"
+          exit 1
+
+      - uses: actions/checkout@v5
+        with:
+          # fetch-depth: 0 deja los refs remotos (origin/main) ya en el clon, así
+          # que NO hace falta un `git fetch … || true` después — y ese `|| true`
+          # era justamente lo que enmascaraba un base-ref irresoluble. Si aun así
+          # faltara, el gate muere con un mensaje accionable en vez de anunciar
+          # "nada que validar".
+          fetch-depth: 0
+          persist-credentials: false
+
+      # El cliente psql del runner sirve, pero se fija la versión 17 para que el
+      # cliente no vaya por detrás del servidor efímero (pgvector:pg17).
+      - name: Instalar cliente de PostgreSQL 17
+        run: |
+          set -euo pipefail
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/pgdg.gpg
+          echo "deb https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+          echo "PGBIN=/usr/lib/postgresql/17/bin" >> "$GITHUB_ENV"
+
+      # El SQL DEL PR no se aplica con psql (interpreta \!, \copy, \i… desde el
+      # archivo: ejecución de código del autor del PR en el runner). Se aplica con
+      # scripts/agent/sql-apply.py, que habla el protocolo de Postgres y no tiene
+      # capa de metacomandos. Sin este paquete el gate FALLA; no cae de vuelta a
+      # psql -f, que es justo la vía que se viene a cerrar.
+      - name: Instalar el driver del aplicador (sin capa de metacomandos)
+        run: |
+          set -euo pipefail
+          # `update` propio: este paso no debe depender de que el anterior lo
+          # haya hecho ni del orden en que estén escritos.
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq python3-psycopg2
+          python3 -c 'import psycopg2; print("psycopg2", psycopg2.__version__)'
+
+      # La versión se AFIRMA, no se imprime y se espera que alguien la mire.
+      # OJO: en Debian/Ubuntu los binarios de /usr/bin son wrappers de
+      # postgresql-common resueltos por update-alternatives y con dos versiones
+      # instaladas la resolución es ASIMÉTRICA; por eso se usan rutas ABSOLUTAS.
+      - name: Verificar que el cliente sea 17
+        run: |
+          set -euo pipefail
+          v="$("$PGBIN/psql" --version | grep -oE '[0-9]+' | head -1)"
+          echo "psql -> $v"
+          [ "$v" -ge 17 ] || { echo "::error::psql es $v, se requiere >= 17 (PROD es 17.6)"; exit 1; }
+
+      # ANTES de ejecutar nada del PR: sin baseline no hay gate, y sin gate no se
+      # ejecuta SQL del PR en el runner. No necesita credenciales, por eso vive
+      # aquí y no en el job del secreto.
+      #
+      # El baseline vive en el repo y NO se vuelca en CI. Motivo: pg_dump bloquea
+      # en ACCESS SHARE todas las tablas incluso con --schema-only, así que
+      # exigiría pg_read_all_data sobre el rol del secret — y `ci_drift_reader`
+      # (migración 104) se creó DELIBERADAMENTE "sin acceso a ningún dato de
+      # negocio". Dárselo abriría la PII que AIR-203 endureció.
+      - name: Comprobar que el baseline existe
+        run: |
+          set -euo pipefail
+          if [ ! -s supabase/baseline/schema.sql ]; then
+            {
+              echo "## migration-apply: falta el baseline del esquema"
+              echo
+              echo 'No existe `supabase/baseline/schema.sql`, así que el gate no puede'
+              echo 'afirmar que la migración aplica: **falla** en vez de pasar.'
+              echo
+              echo 'Regenerarlo con una conexión privilegiada (no la de CI) y commitear:'
+              echo '```'
+              echo 'bash scripts/agent/migration-baseline-refresh.sh   # lee la URL de stdin'
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::falta supabase/baseline/schema.sql; ver el resumen del job"
+            exit 1
+          fi
+          echo "baseline: $(wc -l < supabase/baseline/schema.sql) líneas"
+
+      # Prueba las DOS direcciones del gate antes de confiar en su veredicto: que
+      # falla ante una migración rota (incluido el caso literal de AIR-276), que
+      # falla —en vez de pasar— cuando no puede verificar (base-ref irresoluble,
+      # archivo ausente del árbol, sin directorio de migraciones), y que rechaza
+      # sin ejecutar los dos canales de ejecución de código del PR (metacomandos
+      # de psql y COPY … TO PROGRAM).
+      - name: Self-test del gate de migraciones
+        env:
+          SELFTEST_DB_URL_TEMPLATE: postgresql://postgres:postgres@localhost:5432/{db}
+        run: PSQL_BIN="$PGBIN/psql" bash scripts/agent/migration-gate.selftest.sh
+
+      - name: Aplicar las migraciones nuevas sobre el esquema de PROD
+        run: |
+          set -euo pipefail
+          export PGPASSWORD=postgres
+          "$PGBIN/psql" "postgresql://postgres:postgres@localhost:5432/postgres" -q \
+            -c "CREATE DATABASE migration_gate"
+          PSQL_BIN="$PGBIN/psql" bash scripts/agent/migration-gate.sh \
+            --target "postgresql://postgres:postgres@localhost:5432/migration_gate" \
+            --baseline supabase/baseline/schema.sql \
+            --base-ref origin/main | tee -a "$GITHUB_STEP_SUMMARY"
