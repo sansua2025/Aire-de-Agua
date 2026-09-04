@@ -36,6 +36,23 @@
 -- │ que hay. Los ocho slugs quedan bendecidos en migration-drift-baseline.txt. │
 -- └───────────────────────────────────────────────────────────────────────────┘
 --
+-- ┌─ ALCANCE DE LO QUE ESTE ARCHIVO GARANTIZA (y de lo que NO) ───────────────┐
+-- │ · La identidad "verificada por md5" que cita migration-drift-baseline.txt  │
+-- │   se comprobó en TRES dimensiones —definición de vista, columnas y         │
+-- │   constraints— y SOLO en esas tres. NO cubre `reloptions` (fillfactor,     │
+-- │   parámetros de autovacuum) ni las ACLs/grants de las tablas, que pueden   │
+-- │   diferir entre PROD y una base reconstruida desde git sin que ninguna     │
+-- │   comprobación de este repo lo note.                                       │
+-- │ · Este archivo NO arregla el ORDEN DE REPLAY. `143_air203_rls_direcciones_ │
+-- │   web_pii.sql` sigue haciendo ALTER TABLE sobre `direcciones_web_geocoded` │
+-- │   ANTES de que la 148 la cree, así que reproducir supabase/migrations/     │
+-- │   desde cero y en orden sigue muriendo en la 143. Renumerar rompería la    │
+-- │   correspondencia con lo aplicado en PROD (AIR-90), así que se deja como   │
+-- │   está: la 148 reconcilia git↔PROD, no convierte el directorio en un       │
+-- │   bootstrap — que es exactamente por lo que el gate parte de un baseline   │
+-- │   del esquema de PROD y no de un replay (AIR-276).                         │
+-- └───────────────────────────────────────────────────────────────────────────┘
+--
 -- NOTA DE SEGURIDAD (no se toca aquí, es fiel al estado actual): ambas tablas
 -- conservan los grants POR DEFECTO de Supabase a anon/authenticated (SELECT,
 -- INSERT, UPDATE, DELETE). Hoy no son explotables porque AIR-203 dejó RLS
