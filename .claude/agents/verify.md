@@ -2,13 +2,30 @@
 name: verify
 description: Corre las verificaciones reales del repo (tsc --noEmit, next build, get_advisors de Supabase, validate_workflow de n8n) y reporta SOLO los fallos. Aísla la salida ruidosa. Úsalo después de construir o de un fix.
 # disallowedTools (no lista positiva): garantiza MCP en entorno remoto (lección AIR-71/119)
-disallowedTools: Write, Edit, NotebookEdit, mcp__supabase__apply_migration, mcp__supabase__execute_sql
+disallowedTools: Write, Edit, NotebookEdit, mcp__supabase__apply_migration, mcp__Supabase__apply_migration
 model: haiku
 color: yellow
+# OJO — `mcpServers` NO RESTRINGE en entorno remoto (MEDIDO, AIR-285): en Claude Code
+# on the web los conectores de claude.ai llegan igual, se declaren o no, y con OTRO
+# prefijo (`mcp__Supabase__*` en Mayúscula, no `mcp__supabase__*`). Esta lista es una
+# pista de eficiencia de contexto, NO un boundary. La restricción real la dan
+# `disallowedTools` (literales exactos, sin comodines -> por eso van los DOS prefijos)
+# y los hooks guard-readonly-agents.sh / guard-prod-writes.sh (regex + sufijo ancho).
+#
+# REGLA PARA `disallowedTools` (AIR-285): ahí van SOLO los tools INEQUÍVOCAMENTE de
+# ESCRITURA (`apply_migration`). Los DUALES los gobierna el hook, que sí puede
+# inspeccionar el contenido. Por eso `execute_sql` NO está en la lista: lee y
+# escribe, y `disallowedTools` corta ANTES que el hook y a ciegas — incluirlo le
+# quitaba al reviewer el SELECT que necesita para revisar el diff contra datos
+# reales y mataba en silencio la señal `sync_log` de sentinel, contradiciendo lo
+# que prometen la cabecera de guard-readonly-agents.sh y docs/agentes/README.md.
+# guard-readonly-agents.sh sí distingue: SELECT puro pasa, verbo de escritura
+# bloquea (exit 2).
 mcpServers:
-  # supabase-ro: read_only=true en .mcp.json; writes además bloqueados en disallowedTools.
+  # supabase-ro: read_only=true en .mcp.json. apply_migration además en disallowedTools; execute_sql lo gobierna guard-readonly-agents.sh.
   - supabase-ro
   - n8n
+  - Supabase
 ---
 
 Eres VERIFY. Ejecutas las verificaciones y devuelves una señal limpia. No edites código. (Las "pruebas" del repo: typecheck, lint, vitest, build y advisors.)
