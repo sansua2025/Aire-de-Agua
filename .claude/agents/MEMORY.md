@@ -50,6 +50,98 @@
   intactos). Para vistas que evaden RLS de tablas base: exigir `security_invoker=true` +
   `REVOKE SELECT ... FROM anon, authenticated` sobre la vista misma.
 
+- AIR-271 (PR #186) — CONFIG AS DATA que alimenta SQL dinamico: revisar DOS cosas, no una.
+  (a) Inyeccion: identificadores por %I / literales por %L, y que los %s del format() final sean
+      solo fragmentos construidos localmente (nunca texto de tabla). Aqui estaba OK.
+  (b) TIPOS: un trigger que valida que la columna EXISTE pero no su data_type deja pasar el modo
+      SILENCIOSO, que es peor que la caida. Caso real: un flag `campo_fecha_es_tz=false` sobre una
+      columna timestamptz hace `max(ts)::date` en la TZ de sesion (UTC) -> reintroduce el bug de
+      zona horaria que la propia migracion venia a cerrar, SIN error. Si el trigger ya consulta
+      information_schema.columns, exigir que traiga data_type y valide la coherencia flag<->tipo.
+  (c) RADIO DE DAÑO: un motor que itera fuentes con EXECUTE y sin BEGIN/EXCEPTION por fuente
+      convierte UNA fila de config mala en caida de TODAS las fuentes. Si ademas una vista del
+      dashboard cuelga de ahi, `queries.ts` hace `if (error) throw error` -> 500 en todas las
+      paginas. Una vista hardcodeada no es rompible por un INSERT; la de config si -> es aumento
+      real de superficie de fallo, vale como bloqueante.
+- AIR-271 — AGREGAR sobre un valor tri-estado: `bool_or(x IS TRUE)` colapsa NULL->false y es
+  FAIL-OPEN. Patron a exigir cuando el motor ya distingue "no se" por fila: NO reducir a booleano,
+  devolver un veredicto TRI-ESTADO ('stale'/'desconocido'/'limpio') y documentar el consumo seguro
+  (`veredicto <> 'limpio'`). Un booleano obliga a elegir un valor para "no se" y toda eleccion es
+  trampa. El builder lo corrigio asi en 523bcc1 y quedo mejor que el fix que yo habia propuesto
+  (NULL en booleano). Preferir esta forma al revisar gates de frescura/calidad.
+- Contratos de vista: `CREATE OR REPLACE VIEW` SIN clausula WITH emite AT_ReplaceRelOptions con
+  lista VACIA -> BORRA las reloptions existentes (security_invoker incluido). Verificar siempre
+  `pg_class.reloptions` en PROD antes de aprobar un REPLACE: si la vista tenia security_invoker
+  explicito, el REPLACE lo pierde en silencio. Agregar columnas AL FINAL si es legal; quitar,
+  renombrar o cambiar tipo, no.
+- Rollback comentado que dice "probado": verificar el ROUNDTRIP, no solo el camino de vuelta.
+  Trampa vista aqui: el rollback crea una dependencia (vista_actual -> vista_v1_congelada) y
+  entonces REAPLICAR la migracion falla, porque su `DROP VIEW IF EXISTS ..._v1` no lleva CASCADE.
+  Tambien: un `<definicion de la migracion NNN>` como marcador NO es un rollback ejecutable.
+
+- AIR-271 cierre (PR #186, f310254) — DERIVAR > VALIDAR. El fix bueno a "flag de config que puede
+  contradecir al catalogo" no es validar la coherencia en el trigger sino DERIVAR el flag del
+  catalogo y descartar lo que venga en el INSERT: hace el error irrepresentable en vez de detectable.
+  Al revisar config-as-data, si una columna DUPLICA informacion que ya vive en pg_catalog /
+  information_schema, tratarla como CACHE y preguntar por su invalidacion.
+  LIMITE que queda con derivacion en ESCRITURA: un `ALTER TABLE ... ALTER COLUMN ... TYPE` posterior
+  no dispara el trigger y desalinea el flag. MEDIDO en PROD: las DOS direcciones son SILENCIOSAS
+  (corrimiento de 1 dia, sin excepcion) — date->timestamptz da +1d, y timestamptz->date NO lanza
+  error porque `date AT TIME ZONE 'x'` resuelve via cast implicito date->timestamp a
+  timezone(text,timestamp), asi que da -1d. O sea que un BEGIN/EXCEPTION NO cubre este caso.
+  Fix durable = derivar en tiempo de LECTURA (el motor consulta el tipo en su propio loop).
+  Reparacion manual si se queda en escritura: `UPDATE <config> SET pk = pk` re-dispara el trigger.
+- plpgsql: `WHEN OTHERS` NO captura QUERY_CANCELED ni ASSERT_FAILURE — un EXCEPTION por-iteracion
+  para aislar fallos NO enmascara timeouts ni cancels administrativos. Punto a favor al revisar
+  aislamiento de errores; no exigir un `WHEN OTHERS` mas fino por ese motivo.
+- Aislar con BEGIN/EXCEPTION dentro de un LOOP: verificar que la bandera de error se asigne en
+  TODAS las ramas (incluida la que ni siquiera ejecuta el bloque). Las variables plpgsql persisten
+  entre iteraciones -> una rama que no la resetea arrastra el `true` de la fuente anterior.
+- Revisar un ROLLBACK comentado: no basta leerlo. Ejecutar sus cuerpos de vista como SELECT contra
+  PROD (solo lectura, sin DDL) con pg_typeof por columna y comparar contra el contrato vigente —
+  `CREATE OR REPLACE VIEW` no puede cambiar tipos, asi que un rollback con un tipo corrido no aplica.
+  Barato y caza el fallo real antes de que alguien lo necesite a las 3am.
+- RETURNS TABLE: `RETURN QUERY` liga por POSICION, no por nombre. Al revisar un diff que INSERTA
+  una columna EN MEDIO de un RETURNS TABLE, comparar la lista declarada contra el SELECT elemento a
+  elemento. Si los tipos vecinos son compatibles el desalineo NO falla: devuelve datos corridos en
+  silencio. En AIR-271 (b55ef2c) se metio `dias_error integer` antes de `veredicto text` y solo no
+  mintio porque integer/text son incompatibles y habria reventado. Coincidencia, no diseño.
+  Corolario: todo cambio de RETURNS TABLE exige `DROP FUNCTION IF EXISTS` antes del CREATE OR
+  REPLACE (Postgres rechaza el cambio de tipo de retorno) — y ese DROP se lleva los GRANT, asi que
+  verificar que se re-emitan despues.
+- Filtro `col <> 'valor'` dentro de un `count(*) FILTER (...)`: si `col` puede ser NULL el predicado
+  da NULL, la fila se descarta y el contador queda POR DEBAJO del real, sin error. Al aprobar un
+  agregado asi, verificar en la funcion productora que la columna se asigne en TODAS las ramas.
+  Verificado en AIR-271: las 4 ramas del IF asignan `estado`, por eso `c.estado <> 'error'` es seguro.
+- Sintaxis "rara" en un bloque de ROLLBACK comentado: antes de dudar, buscar si el MISMO constructo
+  ya existe en el camino de ida del archivo. En AIR-271 el `CREATE OR REPLACE VIEW ... WITH
+  (security_invoker=true) AS WITH cte AS (...)` (dos WITH seguidos, significados distintos) ya estaba
+  probado en la creacion de _v1 unas lineas arriba -> parsea, sin necesidad de teorizar.
+- MEDIR > RAZONAR en semantica de tipos/TZ. El hallazgo mas util de AIR-271 (que `date AT TIME ZONE`
+  NO falla, por cast implicito date->timestamp, y por tanto un BEGIN/EXCEPTION no cubre esa direccion)
+  salio de correr 4 expresiones en PROD, no de razonar sobre el catalogo. Ante cualquier duda de
+  "esto lanzaria error?", ejecutarlo en lectura antes de afirmarlo en el veredicto.
+- MCP Linear: hay DOS entradas y solo una autoriza. `linear` (minuscula) pide OAuth y falla en
+  sesiones no interactivas; **`Linear` (mayuscula) SI funciona** -> usar `mcp__Linear__get_issue`.
+  Antes de reportar "no pude leer el issue", probar la variante en mayuscula. (PR #186: di por
+  perdido el acceso durante 4 rondas por no probarla.)
+- LEER EL ISSUE NO ES OPCIONAL, y hacerlo tarde cuesta. En PR #186 el codigo estaba impecable tras
+  4 rondas, pero al leer AIR-271 aparecio que el criterio 5 (Sentinela abre issue ante fuente
+  critica stale) NO estaba implementado mientras el cuerpo del PR decia `Closes AIR-271`. Chequeo
+  obligatorio del reviewer, barato y que ningun check automatico hace:
+    (a) recorrer los criterios de aceptacion UNO A UNO contra el diff;
+    (b) si alguno no esta, verificar que el cuerpo NO diga `Closes` (usar `Part of`) — al mergear,
+        la integracion de Linear cierra el issue y el criterio no cumplido DESAPARECE;
+    (c) revisar tambien el criterio de VERIFICACION literal del issue: en AIR-220 pedia 0 matches
+        de CURRENT_DATE en el archivo nuevo, y sobrevive como SQL vivo en la copia congelada de
+        rollback (_v1) — legitimo, pero rompe la futura regla que el mismo issue propone graduar.
+  Señal de alarma: un PR que ABRE issues de seguimiento por "cerrar por silencio y no por criterio"
+  (AIR-275) y a la vez se cierra a si mismo por entrega parcial.
+- Desviarse de la solucion que PROPONE el issue es correcto si el PR deja escrito el porque. En
+  AIR-271 el issue pedia derivar el historico de sync_log; el PR lo rechaza con evidencia (109
+  corridas 'ok' con 0 filas). Al revisar: no exigir fidelidad literal al issue, exigir que la
+  desviacion este ARGUMENTADA y verificada.
+
 ## Patrones de error a vigilar (graduar a regla si se repiten >=2)
 - (1x) Idempotencia de ejecutor n8n basada en `$json.length` sobre respuesta HTTP de PostgREST:
   comportamiento de array-vs-item del nodo HTTP no esta verificado en el repo; preferir Code node
@@ -59,6 +151,15 @@
   graduar a check determinista en `check-data-rules.sh`: detectar `EXECUTE` sobre una expresión que
   referencie una columna de tabla (no un literal) dentro de una función `SECURITY DEFINER` bajo
   `supabase/migrations/`.
+
+## Anclar al SHA no basta: re-verificar el head ANTES de emitir (PR #186)
+El head del PR avanzo (16fc3f5 -> 523bcc1) MIENTRAS revisaba, con un commit que resolvia uno de mis
+bloqueantes. El veredicto quedo invalido apenas publicado. Coste real: un comentario obsoleto en el PR.
+Regla: releer `headRefOid` JUSTO ANTES de publicar el veredicto y, si cambio, re-revisar el delta y
+emitir uno nuevo que ANULE explicitamente el anterior (enlazando el comment viejo) — el gate solo
+acepta el veredicto cuyo `sha:` coincide con el head. Barato de detectar (`git fetch` + comparar),
+caro de omitir.
+
 
 ---
 
