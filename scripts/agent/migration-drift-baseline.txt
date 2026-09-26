@@ -120,3 +120,29 @@ upsert_shopify_journey_drop_and_recreate
 ventas_add_payment_fields
 vista_atribucion_web_v3_full_channels
 vista_atribucion_web_v4_bulletproof
+
+# ── AIR-279 (2026-08-22) — bloque de geocoding del 2026-07-12 ────────────────
+# Ocho migraciones aplicadas a PROD fuera de un PR, detectadas por este mismo
+# job (seis corridas semanales en rojo, 13-jul a 17-ago). Su SQL original no es
+# recuperable —PROD guarda que se aplicaron, no su texto— y su efecto neto no es
+# la suma de las ocho: `municipios_divipola` se creó y se borró, y postgis se
+# habilitó y hoy NO está instalada. De las ocho sobreviven 2 tablas y 1 vista.
+#
+# git recoge ese efecto neto en 148_air279_reconciliacion_geocoding.sql, cuyo DDL
+# se extrajo del catálogo de PROD y se verificó IDÉNTICO por md5 en tres
+# dimensiones: definición de vista, columnas y constraints. SOLO esas tres — la
+# comprobación NO cubre reloptions ni ACLs/grants, así que "sin divergencia de
+# contenido" vale dentro de ese alcance, no en absoluto. Los ocho slugs de PROD y
+# el slug del archivo nuevo se bendicen aquí: la divergencia de NOMBRES es real y
+# permanente. Ver el bloque ALCANCE de la cabecera de la 148 (que además explica
+# por qué esto no arregla el orden de replay: la 143 sigue haciendo ALTER antes
+# de que la 148 cree la tabla).
+create_direcciones_web_geocoded
+enable_postgis
+create_municipios_divipola_reference
+drop_polygon_table_create_municipio_enrichment
+load_direcciones_web_municipio_enrichment
+create_v_direcciones_web_clean
+fix_discrepancia_ciudad_bogota
+extend_geocode_status_text_forward
+air279_reconciliacion_geocoding
