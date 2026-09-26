@@ -73,6 +73,52 @@
 # │ La contención no se supone: se demuestra en cada corrida.                  │
 # └───────────────────────────────────────────────────────────────────────────┘
 #
+# ┌─ LO QUE EL GATE NO MODELA: LOS DEFAULT PRIVILEGES DE PROD ────────────────┐
+# │ RECORTE DELIBERADO DE FIDELIDAD, aceptado y escrito. Al cargar el          │
+# │ baseline se DESCARTAN sus sentencias `ALTER DEFAULT PRIVILEGES`. A partir  │
+# │ de aquí el gate NO reproduce los default privileges de PROD: valida que    │
+# │ una migración APLICA sobre el esquema real, no que los privilegios por     │
+# │ defecto de objetos futuros salgan idénticos.                               │
+# │                                                                            │
+# │ POR QUÉ. `ALTER DEFAULT PRIVILEGES FOR ROLE <X>` exige ser MIEMBRO de <X>. │
+# │ pg_dump de PROD emite 24 de estas, y 12 con `FOR ROLE postgres` — que en   │
+# │ `pgvector/pgvector:pg17` es EL SUPERUSUARIO. Así que el aplicador          │
+# │ NOSUPERUSER no puede satisfacerlas JAMÁS, y el baseline entero moría con   │
+# │ "permission denied to change default privileges" (SQLSTATE 42501): el gate │
+# │ no podía validar nada. Colisión estructural entre el contenido del         │
+# │ baseline y la contención; las dos son correctas por separado.              │
+# │                                                                            │
+# │ POR QUÉ SE RECORTA ESTO Y NO LA CONTENCIÓN. La alternativa era dar al      │
+# │ aplicador membresía en `postgres`, y eso NO es un tecnicismo: medido en    │
+# │ PG16, con `GRANT postgres TO <aplicador>` un `SET ROLE postgres` deja      │
+# │ `rolsuper=true` y `COPY … TO PROGRAM 'touch …'` VUELVE A CREAR EL ARCHIVO. │
+# │ Es reabrir el canal (b) del modelo de amenaza para que el baseline cargue  │
+# │ más bonito. Los default privileges no participan en la pregunta del gate;  │
+# │ el rol NOSUPERUSER sí. Se van ellos.                                       │
+# │                                                                            │
+# │ DESCARTADO: `pg_dump --no-acl`. Tira TODOS los GRANT/REVOKE, no solo los   │
+# │ default privileges, y eso rompe el gate por otro lado: la lista de roles a │
+# │ precrear se DERIVA de los `GRANT … TO <rol>` del baseline (paso 3). Sin    │
+# │ ACLs quedan 0 roles derivados de 578 líneas, y toda migración que haga     │
+# │ `GRANT … TO el_cerebro_reader` fallaría con "role does not exist": un      │
+# │ FALSO ROJO masivo. Recorte mucho mayor del necesario, y contraproducente.  │
+# │                                                                            │
+# │ DESCARTADO: aplicar solo esas sentencias como superusuario y el resto con  │
+# │ el aplicador. Exige CLASIFICAR por regex qué línea del baseline corre con  │
+# │ privilegio máximo, y el baseline es un archivo del repo que un PR puede    │
+# │ editar. Es la trampa de replicar el lexer de psql —que en este mismo PR    │
+# │ divergió CUATRO veces, cada una un bypass— pero con la ejecución como      │
+# │ superusuario como premio. No se hace.                                      │
+# │                                                                            │
+# │ CONSECUENCIA CONOCIDA (fail-closed, no silenciosa): una migración NUEVA    │
+# │ del PR con `ALTER DEFAULT PRIVILEGES FOR ROLE postgres` (la forma que usan │
+# │ 081 y 136) pondrá el gate ROJO, aunque en PROD se aplique bien porque allí │
+# │ la ejecuta un rol privilegiado. Es un FALSO ROJO. Se acepta a propósito:   │
+# │ las migraciones del PR NO se normalizan nunca —silenciar SQL del PR sería  │
+# │ fail-OPEN—. La forma SIN `FOR ROLE` (`ALTER DEFAULT PRIVILEGES IN SCHEMA   │
+# │ … `, la de 022/048b/060/069) aplica al usuario actual y pasa sin problema. │
+# └───────────────────────────────────────────────────────────────────────────┘
+#
 # Uso:
 #   migration-gate.sh --target <url> --baseline <archivo.sql> [--base-ref origin/main]
 #
@@ -422,8 +468,41 @@ TMPFILES+=("$BASE_NORM" "$BASE_LOG")
 # baseline ya no pasa por psql, el servidor las rechazaría. Se quitan solo si la
 # línea tiene EXACTAMENTE esa forma, y SOLO aquí: una migración del PR nunca las
 # necesita y no recibe ningún trato especial.
+# TERCERA normalización, acotada al BASELINE: se DESCARTAN las sentencias
+# `ALTER DEFAULT PRIVILEGES`. Es un RECORTE DELIBERADO DE FIDELIDAD y va
+# explicado en la cabecera (sección "LO QUE EL GATE NO MODELA"). Resumen:
+# `ALTER DEFAULT PRIVILEGES FOR ROLE <X>` exige ser MIEMBRO de <X>, y PROD las
+# emite con `FOR ROLE postgres`, que en la imagen de CI es EL SUPERUSUARIO. Darle
+# al aplicador esa membresía es exactamente la escalada que el rol NOSUPERUSER
+# viene a cerrar (medido: con `GRANT postgres TO <aplicador>`, un `SET ROLE
+# postgres` deja `rolsuper=true` y `COPY … TO PROGRAM` vuelve a ejecutar). Los
+# default privileges no participan en la pregunta que este gate contesta —"¿esta
+# migración aplica sobre el esquema real de PROD?"— así que se van ellos, no la
+# contención.
+#
+# ACOTADO, y cada límite a propósito:
+#  · SOLO el baseline. Una migración DEL PR con `ALTER DEFAULT PRIVILEGES` NO se
+#    normaliza: se aplica tal cual y, si el aplicador no puede, el gate se pone
+#    ROJO. Silenciar SQL del PR sería fail-OPEN, que es el pecado que persigue
+#    todo este archivo. Consecuencia conocida, en la cabecera: eso es un FALSO
+#    ROJO para la forma `FOR ROLE postgres` (081, 136 la usan) — molesto, seguro.
+#  · SOLO sentencias COMPLETAS en UNA línea (ancladas a `^` y terminadas en `;`),
+#    que es como pg_dump las emite (verificado: 24/24 en el baseline de PROD).
+#    Así nunca se parte una sentencia en dos. Si algún día pg_dump la partiera en
+#    varias líneas, el resto quedaría huérfano y la carga fallaría → ROJO. Ese es
+#    el modo de fallo correcto: nunca un verde a medias.
+#  · Residual asumido: el patrón es textual, así que una línea que EMPIECE por
+#    `ALTER DEFAULT PRIVILEGES` dentro de un cuerpo dollar-quoted del baseline se
+#    descartaría y corrompería esa función. No se replica el lexer de SQL para
+#    evitarlo —esa vía divergió cuatro veces en este mismo PR— y el síntoma sería
+#    un error de sintaxis al cargar el baseline: ROJO, no un pase silencioso.
+# El conteo se IMPRIME siempre: un recorte de fidelidad que no se ve en el log es
+# un recorte que nadie recuerda que existe.
+ADP_N="$(grep -cE '^ALTER DEFAULT PRIVILEGES .*;[[:space:]]*$' "$BASELINE" 2>/dev/null || true)"
 sed -E 's/^CREATE SCHEMA (IF NOT EXISTS )?/CREATE SCHEMA IF NOT EXISTS /;
-        /^\\(un)?restrict [A-Za-z0-9]+[[:space:]]*$/d' "$BASELINE" > "$BASE_NORM"
+        /^\\(un)?restrict [A-Za-z0-9]+[[:space:]]*$/d;
+        /^ALTER DEFAULT PRIVILEGES .*;[[:space:]]*$/d' "$BASELINE" > "$BASE_NORM"
+echo "   fidelidad recortada a propósito: $ADP_N sentencia(s) ALTER DEFAULT PRIVILEGES del baseline DESCARTADAS (el gate no modela los default privileges de PROD; exigirían membresía en un rol SUPERUSUARIO). Las migraciones del PR NO reciben este trato."
 # Legible por el usuario que corra psql: en algunos entornos el cliente corre
 # bajo otra cuenta (p.ej. `runuser -u postgres`) y mktemp deja 0600.
 chmod 644 "$BASE_NORM" 2>/dev/null || true

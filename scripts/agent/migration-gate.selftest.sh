@@ -718,6 +718,102 @@ OUT="$(run_gate "$R" "$T" "$BASELINE")"; RC=$?
 [ $RC -eq 0 ] && ok "el rol NOSUPERUSER no rompe CREATE ROLE / SECURITY DEFINER / RLS / GRANT legítimos" \
   || { bad "el rol NOSUPERUSER rompe una migración legítima (rc=$RC)"; echo "$OUT" | sed 's/^/      /'; }
 
+# ============================================================
+# 13. BASELINE CON `ALTER DEFAULT PRIVILEGES` — la colisión estructural entre el
+#     contenido real del volcado de PROD y el aplicador NOSUPERUSER.
+#
+#     REGRESIÓN REAL (AIR-276, intento 1 del contador `AIR-276-verify`): la
+#     primera vez que `migration-apply` llegó al camino verde, el baseline recién
+#     volcado de PROD murió con "permission denied to change default privileges"
+#     (SQLSTATE 42501) y el gate no pudo validar NADA. PROD emite 24 de estas
+#     sentencias y 12 con `FOR ROLE postgres`, que en la imagen de CI es EL
+#     SUPERUSUARIO: `ALTER DEFAULT PRIVILEGES FOR ROLE <X>` exige membresía en
+#     <X>, y el bucle de membresía del gate excluye a los superusuarios A
+#     PROPÓSITO (medido: con `GRANT postgres TO <aplicador>`, un `SET ROLE
+#     postgres` da `rolsuper=true` y `COPY … TO PROGRAM` vuelve a ejecutarse).
+#
+#     El fix descarta esas sentencias AL CARGAR EL BASELINE. Este caso existe
+#     porque una capa nueva sin nadie que la ataque se queda verde por no tener
+#     quien la pruebe: falla si alguien revierte el descarte, si lo deja de
+#     anunciar, o si vuelve a entrar un baseline con default privileges y el gate
+#     ya no sabe digerirlo.
+# ============================================================
+BASE_ADP="$TMP/baseline_adp.sql"
+# Mismas formas que emite pg_dump de PROD, verbatim: `FOR ROLE postgres` (el
+# superusuario, la que rompía) y `FOR ROLE supabase_admin` (rol normal, que sí
+# funcionaría) — el descarte no distingue, y así se comprueba que ninguna estorba.
+cat > "$BASE_ADP" <<'SQL'
+CREATE SCHEMA analytics;
+CREATE TABLE public.ventas (id serial PRIMARY KEY, ordered_at timestamptz, created_at timestamptz);
+GRANT SELECT ON TABLE public.ventas TO el_cerebro_reader;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA analytics GRANT SELECT ON TABLES TO el_cerebro_reader;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON FUNCTIONS TO service_role;
+SQL
+chmod 644 "$BASE_ADP"
+# El archivo tiene que contener de verdad lo que el caso dice probar (misma
+# lección que `assert_contiene`: un heredoc mal escrito daría verde por nada).
+assert_contiene "$BASE_ADP" "ALTER DEFAULT PRIVILEGES FOR ROLE postgres" \
+  "el baseline del caso contiene la sentencia que rompía"
+
+R="$(mkrepo)"; T="$(newdb)"
+commit_mig "$R" "219_tras_adp.sql" "ALTER TABLE public.ventas ADD COLUMN adp_ok text;"
+OUT="$(run_gate "$R" "$T" "$BASE_ADP")"; RC=$?
+if [ $RC -eq 0 ]; then
+  ok "baseline con ALTER DEFAULT PRIVILEGES => CARGA y el gate valida (exit 0)"
+else
+  bad "el baseline con ALTER DEFAULT PRIVILEGES NO cargó (rc=$RC) — ¿se revirtió el descarte?"
+  echo "$OUT" | sed 's/^/      /'
+fi
+echo "$OUT" | grep -qi "permission denied to change default privileges" \
+  && bad "sigue apareciendo el error 42501 de default privileges (el descarte no se aplicó)" \
+  || ok "no aparece 'permission denied to change default privileges'"
+# El recorte de fidelidad se ANUNCIA. Si deja de verse en el log, nadie recuerda
+# que el gate no modela esto: el silencio es justo lo que no se acepta aquí.
+echo "$OUT" | grep -q "fidelidad recortada a propósito" \
+  && ok "el gate DECLARA en el log que recortó fidelidad (no lo hace en silencio)" \
+  || { bad "el descarte de default privileges no se anuncia en el log"; echo "$OUT" | sed 's/^/      /'; }
+echo "$OUT" | grep -qE "fidelidad recortada a propósito: 3 sentencia" \
+  && ok "declara CUÁNTAS sentencias descartó (3)" \
+  || bad "no declara el conteo exacto de sentencias descartadas"
+# Y no se llevó por delante el resto del baseline: la tabla y el GRANT normal
+# siguen ahí (si el sed fuera demasiado ancho, esto lo caza).
+echo "$OUT" | grep -qE "baseline cargado: [1-9][0-9]* tablas/vistas" \
+  && ok "el resto del baseline sobrevivió al descarte (hay objetos cargados)" \
+  || bad "el descarte se llevó objetos del baseline"
+
+# MITAD IMPRESCINDIBLE — el descarte está ACOTADO AL BASELINE. Una migración DEL
+# PR con la misma sentencia NO se normaliza: se aplica tal cual y el gate se pone
+# ROJO. Sin este caso, "arreglar" el gate filtrando `ALTER DEFAULT PRIVILEGES` en
+# TODAS partes seguiría dando verde arriba — y eso sería silenciar SQL del PR,
+# es decir fail-OPEN, exactamente el pecado que este archivo persigue.
+R="$(mkrepo)"; T="$(newdb)"
+commit_mig "$R" "220_adp_en_migracion.sql" \
+  "ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO anon;"
+#
+# SI ESTE CASO SALE 0, LÉELO ASÍ (tiene valor diagnóstico propio): significa que
+# el aplicador SÍ pudo cambiar los default privileges de un rol SUPERUSUARIO, o
+# sea que es miembro de uno. En CI —cluster recién levantado por el job— eso sería
+# una ESCALADA real y hay que tratarla como tal. En una máquina compartida, la
+# causa probable es un cluster CONTAMINADO a mano: el bucle de membresía del gate
+# concede al aplicador membresía en TODO rol no superusuario, y `rolinherit` la
+# propaga, así que un `GRANT postgres TO <cualquier_rol_normal>` hecho fuera del
+# self-test le entrega superusuario por transitividad. Pasó durante el desarrollo
+# de este caso (un experimento previo dejó un rol así) y el síntoma fue
+# exactamente este. Corre contra un Postgres limpio antes de declarar regresión.
+OUT="$(run_gate "$R" "$T" "$BASE_ADP")"; RC=$?
+must_fail_with "ALTER DEFAULT PRIVILEGES en una migración DEL PR => FALLA (el descarte NO se extiende al PR)" \
+  "$RC" "$OUT" "permission denied to change default privileges"
+
+# …y la forma SIN `FOR ROLE` (022, 048b, 060, 069) aplica al usuario actual, así
+# que las migraciones legítimas del repo que la usan siguen pasando.
+R="$(mkrepo)"; T="$(newdb)"
+commit_mig "$R" "221_adp_sin_for_role.sql" \
+  "ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM anon;"
+OUT="$(run_gate "$R" "$T" "$BASE_ADP")"; RC=$?
+[ $RC -eq 0 ] && ok "ALTER DEFAULT PRIVILEGES sin FOR ROLE (la forma de 022/048b/060/069) sigue pasando" \
+  || { bad "se rompió la forma sin FOR ROLE, que las migraciones del repo SÍ usan (rc=$RC)"; echo "$OUT" | sed 's/^/      /'; }
+
 echo "---"
 echo "migration-gate.selftest: $PASS ok / $FAIL bad"
 [ "$FAIL" -eq 0 ]

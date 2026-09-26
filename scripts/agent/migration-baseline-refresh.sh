@@ -36,6 +36,19 @@
 # Produce (y hay que commitear):
 #   supabase/baseline/schema.sql        el esquema de public+analytics
 #   supabase/baseline/PROD_MIGRATIONS   migraciones aplicadas al momento del volcado
+#
+# ⚠ EL VOLCADO ES FIEL; EL GATE NO LO USA ENTERO. Este script NO filtra nada: el
+# schema.sql sigue siendo respaldo fiel de PROD, default privileges incluidos, y
+# se lee en git como tal. Pero `migration-gate.sh` DESCARTA al cargar las
+# sentencias `ALTER DEFAULT PRIVILEGES`, porque `FOR ROLE postgres` exige
+# membresía en el SUPERUSUARIO y su aplicador es NOSUPERUSER a propósito. O sea:
+# el gate NO modela los default privileges de PROD. El motivo completo, las dos
+# alternativas descartadas (`--no-acl` y clasificar por regex qué se aplica como
+# superusuario) y el falso rojo que esto implica están en la sección
+# "LO QUE EL GATE NO MODELA" de la cabecera de migration-gate.sh.
+#
+# No filtrar aquí es la decisión: el recorte vive en el CONSUMIDOR, así que el
+# artefacto no miente y regenerarlo nunca hace falta para desbloquear el gate.
 set -uo pipefail
 
 PGBIN="${PGBIN:-}"
@@ -100,9 +113,17 @@ unset URL
 # `analytics`. Quedan fuera `extensions`, `auth`, `storage` y `vault`, y el repo
 # referencia `extensions.digest` (084, 088, 092, 107). Si algo del baseline
 # depende de un objeto de esos esquemas, no cargará en el gate y el fallo dirá
-# "no existe" sin decir por qué. Hoy no es verificable —no hay baseline
-# commiteado todavía—; en cuanto lo haya, comprobar si hace falta ampliar la
-# lista de --schema.
+# "no existe" sin decir por qué.
+#
+# MEDIDO (AIR-276, con el primer baseline ya commiteado): NO hace falta ampliar
+# la lista. El baseline real carga completo —106 tablas/vistas— sobre PG17 con
+# pgvector y el aplicador NOSUPERUSER. Queda como riesgo VIVO, no resuelto: si
+# una migración futura añade una dependencia a `extensions`/`auth`/`storage`/
+# `vault`, el síntoma volverá a ser un "no existe" en la carga del baseline.
+# OJO al validar esto a mano: el baseline es un volcado de pg_dump 17 y solo
+# carga en un servidor 17. En PG16 muere antes por tres cosas ajenas al esquema
+# (`SET transaction_timeout` y el privilegio `MAINTAIN`, ambos de PG17, y el
+# tipo `vector` si falta pgvector); ninguna indica un problema real.
 mkdir -p "$OUT_DIR"
 ERR="$WORK/pg_dump.err"
 
