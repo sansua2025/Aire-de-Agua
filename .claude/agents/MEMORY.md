@@ -487,3 +487,19 @@ corrida entera:** el PGDATA NO puede vivir bajo el scratchpad — la plataforma 
 `/tmp/claude-0` y el checkpointer muere con `PANIC: could not open file ... pg_control: Permission
 denied` a mitad del test (sintoma enganoso: TODAS las aserciones en BAD, como si el codigo estuviera
 roto). Usar `/tmp/<dir>` propio de `postgres`. pgvector esta disponible; sin el, `EXTENSIONS=""`.
+
+## Fixer · Un comentario que PROMETE un modo de fallo es load-bearing: hay que medirlo
+Patron del bug de a7d330d (dos bloqueantes, los dos en un fix mio): acepte un residual porque el
+comentario que yo mismo escribi afirmaba que fallaria en ROJO ("seria un error de sintaxis al cargar
+el baseline"). Era falso y se mide en un minuto: borrar una sentencia COMPLETA de un cuerpo plpgsql
+deja plpgsql VALIDO, `check_function_bodies` no lo rechaza y la funcion se CREA truncada — gate en
+verde, `prosrc` sin la sentencia. Regla: si un comentario justifica aceptar un riesgo diciendo "el
+sintoma seria X", ejecutar X antes de commitear; si no se puede ejecutar, no se escribe la promesa.
+Aplicado al fix: (i) `[^;]*` en vez de `.*` (un `.*` anclado solo al `;` final se come la sentencia
+vecina de la misma linea); (ii) afirmacion fail-closed de FORMA (todas las apariciones son sentencias
+completas de una linea) y de POSICION (ningun `$` en o despues de la primera: el cierre de un cuerpo
+dollar-quoted que la contuviera llevaria `$` por debajo — cierra el caso sin replicar lexer alguno);
+(iii) el conteo anunciado se deriva del archivo YA normalizado, nunca de un grep paralelo al input.
+Cada una con su caso negativo y comprobada por mutacion (quitarla => verde silencioso o rojo por otro
+mensaje). Y al escribir el falso rojo: no afirmar una causa que el codigo no puede establecer — la
+pista va condicionada a la evidencia del log, como ya se hacia con rc=3.
