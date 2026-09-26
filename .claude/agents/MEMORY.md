@@ -402,7 +402,47 @@ Nota: el propio reporte lleva `↔ · — ⚠ ≠ →` (multibyte) => tambien es
 - Sentinela_v1.json: `activeVersion === null` en main y en HEAD => paridad AIR-140 vacua. Sin nodos
   Claude/Anthropic. El nodo Gmail tiene destinatario fijo (no controlable por el dato).
 
-## Vector: `sed` de normalizacion sobre un artefacto que el PR puede editar (migration-gate.sh, sha a7d330d) — RONDA 5
+## CERRADO EN RONDA 7 (AIR-276): el `sed` de ADP se BORRO, no se parcheo otra vez
+El filtro que describe la seccion de abajo ya NO existe. Fue **tres rondas y tres clases distintas de
+falso verde** sobre el MISMO `sed`: (1) `.*` codicioso que se comia la sentencia vecina; (2) cuerpos
+dollar-quoted; (3) **literales de comilla simple MULTILINEA**, que cierran con `'` y no con `$`, asi
+que la asercion de posicion basada en `$` no los veia — y pg_dump los emite de forma natural en
+`CHECK`, `DEFAULT`, `CREATE VIEW` y `CREATE POLICY`. La (3) se reprodujo de punta a punta: baseline con
+`CHECK` multilinea + migracion que inserta el valor prohibido => `0 fail` en el gate, violacion de
+constraint en el esquema fiel. El verde de aquel dia era correcto **por accidente de ordenacion**
+(ultimo `$` en 12603, primera ADP en 17907 => 5.303 lineas sin cubrir, con 14 `CREATE POLICY` y 12
+`CREATE VIEW` dentro), no por la defensa.
+
+**LA LECCION, y es la que hay que aplicar la proxima vez: cuando la MISMA correccion falla tres veces
+por clases distintas, el arreglo no es el cuarto parche — es quitar la NECESIDAD de la transformacion.**
+Aqui fue `GRANT <superusuario> TO <aplicador> WITH SET FALSE` (PostgreSQL 16+), que da el
+`has_privs_of_role` que `ALTER DEFAULT PRIVILEGES FOR ROLE X` exige y PROHIBE `SET ROLE`, asi que el
+baseline se aplica ENTERO sin filtrar nada y sin reabrir `COPY … TO PROGRAM`. Sin `sed` no hay borrado:
+la clase entera de falso verde desaparece POR CONSTRUCCION, y con ella las dos aserciones de forma y
+posicion, el conteo del recorte y el aparato de pistas 42501/42704. **Corolario**: un residual que hay
+que sostener con aserciones cada vez mas finas es una señal de que la transformacion no deberia existir.
+
+**PATRON NUEVO, del arreglo y no del bug: una defensa cuyo token se puede quitar SIN que nada se ponga
+rojo necesita una asercion en caliente, no una revision de diffs.** `WITH SET FALSE` es un token
+invisible: quitarlo deja el baseline cargando, las migraciones aplicandose y el gate en verde, con la
+escalada a superusuario abierta. Por eso el gate AFIRMA en cada corrida que
+`pg_has_role(<aplicador>, <cada superusuario>, 'SET')` es falso Y que el servidor deniega
+`COPY … TO PROGRAM` con 42501 — el predicado dice POR QUE, la consecuencia dice QUE PASA si falla, y la
+segunda no se vuelve tautologica si cambia la semantica del primero. El self-test lo muta en dos
+direcciones: token fuera (el gate debe morir) y token + guardas fuera (el programa debe ejecutarse, para
+que conste que las guardas vigilan un peligro real).
+
+**TRAMPA MEDIDA al escribir ese caso negativo, y vale para cualquier mutacion sobre un rol de Postgres:**
+`GRANT <rol> TO <miembro>` a secas sobre una membresia QUE YA EXISTE es un **no-op con NOTICE** y NO
+cambia la opcion SET. `migration_gate_applier` es cluster-wide, asi que en un cluster ya usado el caso
+mutado salia VERDE sin probar nada. El self-test revoca la membresia antes, para modelar CI (cluster
+recien levantado). Y el observable tampoco puede ser un archivo: `COPY … TO PROGRAM 'touch $TMP/x'` SI
+se ejecutaba y devolvia SQLSTATE **38000** (`program … failed`) porque el servidor corre como
+`postgres` y no puede escribir en un `mktemp -d` 755 — la ausencia del archivo confunde "denegado"
+(42501) con "ejecutado y fallo al escribir", que son los dos estados a distinguir. Se usa `true` y se
+mira el rc del gate + `pg_has_role(…,'SET')`.
+
+## Vector: `sed` de normalizacion sobre un artefacto que el PR puede editar (migration-gate.sh, sha a7d330d) — RONDA 5 (HISTORICO: el filtro ya no existe, ver arriba)
 AIR-276 descarta las 24 `ALTER DEFAULT PRIVILEGES` del baseline con
 `/^ALTER DEFAULT PRIVILEGES .*;[[:space:]]*$/d`. DOS fallos, los dos MEDIDOS con GNU sed 4.9:
 1. **El residual declarado "dollar-quoted => error de sintaxis => ROJO" es FALSO: sale VERDE y en

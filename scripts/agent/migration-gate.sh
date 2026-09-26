@@ -73,74 +73,75 @@
 # │ La contención no se supone: se demuestra en cada corrida.                  │
 # └───────────────────────────────────────────────────────────────────────────┘
 #
-# ┌─ LO QUE EL GATE NO MODELA: LOS DEFAULT PRIVILEGES DE PROD ────────────────┐
-# │ Al cargar el baseline se DESCARTAN sus sentencias `ALTER DEFAULT           │
-# │ PRIVILEGES`. A partir de aquí el gate NO reproduce los default privileges  │
-# │ de PROD: valida que una migración APLICA sobre el esquema real, no que los │
-# │ privilegios por defecto de objetos futuros salgan idénticos.                │
-# │                                                                            │
-# │ LA MAGNITUD DEL RECORTE ES ~NULA, y conviene decirlo así en vez de         │
-# │ presentarlo como un sacrificio: `ALTER DEFAULT PRIVILEGES` es PER-GRANTOR  │
-# │ (la lección de mig 037), y en la base efímera el grantor SIEMPRE es        │
-# │ `migration_gate_applier`. Las 24 sentencias hablan de objetos que creen    │
-# │ `postgres` o `supabase_admin`, roles que aquí no crean nada: NO habrían    │
-# │ tenido efecto observable NI APLICÁNDOSE. Lo que se pierde no es fidelidad  │
-# │ útil, es una línea que no hacía nada en este contexto.                     │
-# │                                                                            │
-# │ POR QUÉ. `ALTER DEFAULT PRIVILEGES FOR ROLE <X>` exige ser MIEMBRO de <X>. │
-# │ pg_dump de PROD emite 24 de estas, y 12 con `FOR ROLE postgres` — que en   │
-# │ `pgvector/pgvector:pg17` es EL SUPERUSUARIO. Así que el aplicador          │
-# │ NOSUPERUSER no puede satisfacerlas JAMÁS, y el baseline entero moría con   │
-# │ "permission denied to change default privileges" (SQLSTATE 42501): el gate │
-# │ no podía validar nada. Colisión estructural entre el contenido del         │
-# │ baseline y la contención; las dos son correctas por separado.              │
-# │                                                                            │
-# │ POR QUÉ SE RECORTA ESTO Y NO LA CONTENCIÓN. La alternativa era dar al      │
-# │ aplicador membresía en `postgres`, y eso NO es un tecnicismo: medido en    │
-# │ PG16, con `GRANT postgres TO <aplicador>` un `SET ROLE postgres` deja      │
-# │ `rolsuper=true` y `COPY … TO PROGRAM 'touch …'` VUELVE A CREAR EL ARCHIVO. │
-# │ Es reabrir el canal (b) del modelo de amenaza para que el baseline cargue  │
-# │ más bonito. Los default privileges no participan en la pregunta del gate;  │
-# │ el rol NOSUPERUSER sí. Se van ellos.                                       │
-# │                                                                            │
-# │ DESCARTADO: `pg_dump --no-acl`. Tira TODOS los GRANT/REVOKE, no solo los   │
-# │ default privileges, y eso rompe el gate por otro lado: la lista de roles a │
-# │ precrear se DERIVA de los `GRANT … TO <rol>` del baseline (paso 3). Sin    │
-# │ ACLs quedan 0 roles derivados de 578 líneas, y toda migración que haga     │
-# │ `GRANT … TO el_cerebro_reader` fallaría con "role does not exist": un      │
-# │ FALSO ROJO masivo. Recorte mucho mayor del necesario, y contraproducente.  │
-# │                                                                            │
-# │ DESCARTADO: aplicar solo esas sentencias como superusuario y el resto con  │
-# │ el aplicador. Exige CLASIFICAR por regex qué línea del baseline corre con  │
-# │ privilegio máximo, y el baseline es un archivo del repo que un PR puede    │
-# │ editar. Es la trampa de replicar el lexer de psql —que en este mismo PR    │
-# │ divergió CUATRO veces, cada una un bypass— pero con la ejecución como      │
-# │ superusuario como premio. No se hace.                                      │
-# │                                                                            │
-# │ CONSECUENCIAS CONOCIDAS (fail-closed, no silenciosas). Son TRES clases de  │
-# │ FALSO ROJO, y conviene distinguirlas porque el error que sale es distinto: │
-# │  (1) 42501 «permission denied to change default privileges». Una migración │
-# │      NUEVA del PR con `FOR ROLE <X>` siendo <X> SUPERUSUARIO (`postgres`   │
-# │      en esta imagen). La usan de verdad 037 y 081 — 069 y 136 solo la      │
-# │      mencionan en un comentario. En PROD aplica bien (la ejecuta un rol    │
-# │      privilegiado).                                                        │
-# │  (2) 42704 «role "<X>" does not exist». Una migración del PR con `FOR ROLE │
-# │      <X>` donde <X> NO se precrea: los roles se derivan de lo que sigue a  │
-# │      `TO`/`FROM` en el baseline, JAMÁS de `FOR ROLE`. Es el caso de los    │
-# │      tres `FOR ROLE supabase_admin` de 048b (que usa LAS DOS formas).      │
-# │  (3) Rojo del ARTEFACTO, no del PR: al normalizar, el gate exige que TODAS │
-# │      las apariciones de `ALTER DEFAULT PRIVILEGES` en el baseline sean     │
-# │      sentencias completas de una línea, y que no haya ningún `$` en o tras │
-# │      la primera. Si el volcado de PROD deja de cumplirlo —una mención en   │
-# │      un comentario, una sentencia partida, un `$` ahí abajo— el gate muere │
-# │      antes de cargar nada. Ver la nota del paso 5. Es el precio de no      │
-# │      descartar a ciegas, y se paga a propósito.                            │
-# │ Las (1) y (2) se aceptan porque las migraciones del PR NO se normalizan    │
-# │ nunca —silenciar SQL del PR sería fail-OPEN—, y el gate las ANUNCIA como   │
-# │ falso rojo cuando el log lo evidencia, en vez de afirmar "no aplica sobre  │
-# │ PROD". La forma SIN `FOR ROLE` (`ALTER DEFAULT PRIVILEGES IN SCHEMA … `,   │
-# │ la de 022, 048b y 060) aplica al usuario actual y pasa sin problema.       │
-# └───────────────────────────────────────────────────────────────────────────┘
+# ┌─ LOS DEFAULT PRIVILEGES DEL BASELINE SE APLICAN (no se filtran) ──────┐
+# │ El baseline real de PROD trae 24 `ALTER DEFAULT PRIVILEGES`, 12 con `FOR   │
+# │ ROLE postgres` y 12 con `FOR ROLE supabase_admin`. `ALTER DEFAULT          │
+# │ PRIVILEGES FOR ROLE <X>` exige `has_privs_of_role(current_user, X)`, y     │
+# │ `postgres` es EL SUPERUSUARIO de la imagen de CI: durante un tiempo eso    │
+# │ mataba el baseline entero con 42501 y el gate no podía validar nada.       │
+# │                                                                           │
+# │ CÓMO SE RESUELVE: `GRANT <superusuario> TO <aplicador> WITH SET FALSE`     │
+# │ (PostgreSQL 16+, paso 4). Concede la membresía —y con ella                │
+# │ `has_privs_of_role`— pero PROHÍBE `SET ROLE`. El atributo `rolsuper` NO se │
+# │ hereda por membresía; solo se obtendría convirtiéndose en el rol, que es    │
+# │ justo lo que el token bloquea. MEDIDO en PostgreSQL 17.11 con el aplicador │
+# │ bajo esa membresía: la ADP `FOR ROLE postgres` APLICA; `SET ROLE postgres`,│
+# │ `SET SESSION AUTHORIZATION postgres`, `COPY … TO PROGRAM`, `COPY … FROM    │
+# │ '/etc/hostname'`, `ALTER ROLE … SUPERUSER`, `GRANT                         │
+# │ pg_execute_server_program …` y `GRANT postgres TO … WITH SET TRUE` → TODOS │
+# │ DENEGADOS; `rolsuper` del aplicador sigue `false`. La contención            │
+# │ NOSUPERUSER queda intacta.                                                 │
+# │                                                                           │
+# │ EL TOKEN CARGA TODO EL PESO, Y QUITARLO ES INVISIBLE. Con `GRANT postgres  │
+# │ TO <aplicador>` a secas —medido— `SET ROLE postgres` funciona y `COPY … TO │
+# │ PROGRAM 'touch …'` CREA EL ARCHIVO. Y nada se pondría rojo: el baseline    │
+# │ cargaría igual y el gate saldría verde con la escalada abierta. Por eso no │
+# │ se confía en la revisión de diffs: el paso 4 AFIRMA en cada corrida que    │
+# │ `pg_has_role(<aplicador>, <cada superusuario>, 'SET')` es falso, el control│
+# │ positivo exige que el SERVIDOR deniegue `COPY … TO PROGRAM` con 42501, y   │
+# │ el self-test tiene un caso MUTADO que quita el token y comprueba que se    │
+# │ caza — más otro que, quitando token Y guardas, demuestra que el peligro    │
+# │ que vigilan es real y no hipotético.                                       │
+# │                                                                           │
+# │ POR QUÉ YA NO SE FILTRA EL BASELINE. Antes se descartaban esas 24          │
+# │ sentencias con un `sed`. Tres rondas, tres clases distintas de FALSO       │
+# │ VERDE: un `.*` codicioso que se llevaba la sentencia pegada detrás;        │
+# │ cuerpos dollar-quoted; y literales de comilla simple MULTILÍNEA —que       │
+# │ cierran con `'` y no con `$`, así que la aserción de posición no los veía— │
+# │ que pg_dump emite de forma natural en `CHECK`, `DEFAULT`, `CREATE VIEW` y  │
+# │ `CREATE POLICY`. Reproducido de punta a punta: baseline con un `CHECK`      │
+# │ multilínea + migración que inserta el valor prohibido ⇒ `0 fail` en el     │
+# │ gate, violación de constraint en el esquema fiel. El verde de ese día era  │
+# │ correcto por ACCIDENTE DE ORDENACIÓN, no por la defensa. Es el lexer de    │
+# │ psql otra vez, y la lección ya estaba escrita: replicar ese lexer diverge  │
+# │ SIEMPRE. No se parchea una cuarta vez — se borra la clase. Sin `sed` no    │
+# │ hay borrado, así que el baseline mutilado en silencio es imposible POR      │
+# │ CONSTRUCCIÓN, y con el `sed` se fueron las dos aserciones de forma y        │
+# │ posición, el conteo del recorte y todo el aparato de pistas 42501/42704.   │
+# │                                                                           │
+# │ EFECTO COLATERAL, dicho sin adornos: una migración DEL PR con `ALTER       │
+# │ DEFAULT PRIVILEGES FOR ROLE postgres` (037, 081) ya NO es un falso rojo —  │
+# │ aplica. Y `FOR ROLE supabase_admin` (048b) tampoco, porque desde esta      │
+# │ ronda los roles a precrear se derivan TAMBIÉN de `FOR ROLE`, no solo de    │
+# │ `TO`/`FROM` (paso 3). El gate dejó de tener que EXPLICAR sus propios       │
+# │ falsos rojos, y con esa narrativa se fue el riesgo de que tapara un rojo   │
+# │ GENUINO: hoy un fallo real muestra el error de Postgres tal cual.          │
+# │                                                                           │
+# │ LO QUE SÍ SE ENSANCHA, medido y acotado: al heredar los privilegios de     │
+# │ `postgres`, el aplicador cuenta como dueño de lo que `postgres` posea en   │
+# │ la base efímera (los chequeos de propiedad usan `has_privs_of_role`). Ahí  │
+# │ eso son las extensiones precreadas y poco más —el baseline se vuelca con  │
+# │ `--no-owner` y todo queda a nombre del aplicador—, así que el gate es un   │
+# │ pelo más permisivo sobre PROPIEDAD. Nunca sobre superusuario.              │
+# │                                                                           │
+# │ DESCARTADO: `pg_dump --no-acl`. Tira TODOS los GRANT/REVOKE, y la lista de │
+# │ roles a precrear se DERIVA de ellos: quedarían 0 roles y toda migración    │
+# │ con `GRANT … TO el_cerebro_reader` fallaría con "role does not exist".     │
+# │ DESCARTADO: aplicar unas líneas del baseline como superusuario y el resto  │
+# │ no. Exige CLASIFICAR por regex qué línea corre con privilegio máximo,      │
+# │ sobre un archivo que un PR puede editar: la trampa del lexer, con la       │
+# │ ejecución como superusuario de premio.                                    │
+# └──────────────────────────────────────────────────────────────────┘
 #
 # Uso:
 #   migration-gate.sh --target <url> --baseline <archivo.sql> [--base-ref origin/main]
@@ -252,7 +253,27 @@ ROLES="$(grep -ohiE '\b(GRANT|REVOKE)\b[^;]*\b(TO|FROM)\s+[a-zA-Z0-9_", ]+;|OWNE
   | sed -E 's/^(TO|FROM|to|from)[[:space:]]+//; s/;$//' \
   | tr ',' '\n' | tr -d '" ' \
   | grep -viE '^(public|current_user|session_user|group|$)' | sort -u)"
+# …y TAMBIÉN de `ALTER DEFAULT PRIVILEGES FOR ROLE <X>`, que es una fuente de
+# nombres de rol DISTINTA de `TO`/`FROM`. Antes no se miraba, y eso era inofensivo
+# SOLO porque las ADP del baseline se descartaban: en cuanto se aplican de verdad,
+# los 12 `FOR ROLE supabase_admin` del baseline real mueren con 42704 «role
+# "supabase_admin" does not exist», porque ese rol no aparece detrás de ningún
+# TO/FROM del volcado. Es un rol normal en la base efímera; precrearlo no da nada.
+#
+# El corte es por PALABRA CLAVE (`IN SCHEMA`/`GRANT`/`REVOKE`), no por clase de
+# caracteres: un `[a-zA-Z0-9_, ]+` se habría comido «postgres IN SCHEMA analytics
+# GRANT ALL ON FUNCTIONS TO service» entero, porque todo eso son letras y espacios.
+# LÍMITE, el MISMO que ya tenía la derivación de TO/FROM y por la misma línea
+# (`tr -d '" '`): un nombre entrecomillado CON espacios ("Mixed Case") sale pegado.
+# Es fail-closed —el rol real no se precrea y la sentencia muere en 42704 con el
+# nombre a la vista—, no un falso verde. Este repo no tiene ninguno así.
+ROLES_FOR_ROLE="$(sed -nE 's/.*ALTER[[:space:]]+DEFAULT[[:space:]]+PRIVILEGES[[:space:]]+FOR[[:space:]]+(ROLE|USER)[[:space:]]+(.*)$/\2/Ip' "$BASELINE" 2>/dev/null \
+  | sed -E 's/[[:space:]]+(IN[[:space:]]+SCHEMA|GRANT|REVOKE)[[:space:]].*$//I' \
+  | tr ',' '\n' | tr -d '" ' \
+  | grep -viE '^(public|current_user|session_user|$)' | sort -u)"
+ROLES="$(printf '%s\n%s\n' "$ROLES" "$ROLES_FOR_ROLE" | grep '.' | sort -u)"
 ROLES_N="$(printf '%s\n' "$ROLES" | grep -c '.' || true)"
+ROLES_FOR_N="$(printf '%s\n' "$ROLES_FOR_ROLE" | grep -c '.' || true)"
 
 echo "== preparando destino =="
 psql_su -c "SELECT 1" >/dev/null 2>&1 || die "no se puede conectar al destino."
@@ -261,7 +282,7 @@ for r in $ROLES postgres anon authenticated service_role authenticator; do
   [ -n "$r" ] || continue
   $PSQL "$TARGET" -q -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='$r') THEN EXECUTE format('CREATE ROLE %I NOLOGIN', '$r'); END IF; END \$\$;" >/dev/null 2>&1
 done
-echo "   roles preparados: $ROLES_N derivados del baseline + 5 base"
+echo "   roles preparados: $ROLES_N derivados del baseline (de ellos $ROLES_FOR_N vistos en un 'FOR ROLE') + 5 base"
 
 # Las extensiones se precrean AQUÍ, como superusuario, a propósito: `vector` y
 # `pg_net` no son "trusted", así que el rol aplicador (NOSUPERUSER) no podría
@@ -341,14 +362,81 @@ else
   $PSQL "$TARGET" -q -c "GRANT ALL ON DATABASE \"$DBNAME\" TO \"$APPLIER\";" >/dev/null 2>&1
   $PSQL "$TARGET" -q -c "ALTER SCHEMA public OWNER TO \"$APPLIER\";" >/dev/null 2>&1
 
-  # Membresía en los roles del baseline para poder GRANTear y reasignar dueños.
-  # NUNCA en roles superusuario (heredaría el privilegio que acabamos de quitar).
+  # Membresía en los roles NO superusuario del baseline para poder GRANTear y
+  # reasignar dueños. Con ADMIN OPTION: son roles sin privilegio especial.
   $PSQL "$TARGET" -q -c "DO \$\$ DECLARE r record; BEGIN
       FOR r IN SELECT rolname FROM pg_roles
                WHERE NOT rolsuper AND rolname <> '$APPLIER' AND rolname NOT LIKE 'pg\\_%' LOOP
         EXECUTE format('GRANT %I TO %I WITH ADMIN OPTION', r.rolname, '$APPLIER');
       END LOOP;
     END \$\$;" >/dev/null 2>&1
+
+  # ── Membresía en los roles SUPERUSUARIO, con WITH SET FALSE ──────────────
+  # POR QUÉ HACE FALTA. `ALTER DEFAULT PRIVILEGES FOR ROLE <X>` exige
+  # `has_privs_of_role(current_user, X)`. El baseline real de PROD trae 24 de
+  # estas, 12 con `FOR ROLE postgres`, que en la imagen de CI es EL SUPERUSUARIO.
+  # Sin esta membresía el baseline muere entero con 42501 («permission denied to
+  # change default privileges») y el gate no puede validar nada.
+  #
+  # POR QUÉ NO REABRE LA ESCALADA. `WITH SET FALSE` (PostgreSQL 16+) concede la
+  # membresía —y con ella `has_privs_of_role`— pero PROHÍBE `SET ROLE`. El
+  # atributo `rolsuper` NO se hereda por membresía: solo se obtendría
+  # convirtiéndose en el rol, que es justo lo que `WITH SET FALSE` bloquea.
+  # MEDIDO en PostgreSQL 17.11, con el aplicador conectado bajo esta membresía:
+  #   · ALTER DEFAULT PRIVILEGES FOR ROLE postgres …  → ALTER DEFAULT PRIVILEGES
+  #   · SET ROLE postgres                             → 42501 permission denied
+  #   · SET SESSION AUTHORIZATION postgres            → 42501 permission denied
+  #   · COPY … TO PROGRAM 'touch …'                   → denegado, archivo NO creado
+  #   · COPY … FROM '/etc/hostname'                   → permission denied to COPY
+  #   · rolsuper del aplicador                        → false
+  #   · pg_has_role(…,'pg_execute_server_program',…)  → false
+  #   · ALTER ROLE <aplicador> SUPERUSER              → denegado
+  #   · GRANT postgres TO <otro> WITH SET TRUE        → denegado (no hay ADMIN)
+  #   · GRANT pg_execute_server_program TO <aplicador>→ denegado
+  # Y el CONTROL, con `GRANT postgres TO <aplicador>` A SECAS: `SET ROLE postgres`
+  # funciona y `COPY … TO PROGRAM 'touch …'` CREA EL ARCHIVO. O sea: el token
+  # `WITH SET FALSE` carga todo el peso, y quitarlo no rompe nada visible —el
+  # baseline sigue cargando, todo sigue verde— hasta que alguien escala. Esa es la
+  # clase de regresión que un diff no delata, y por eso NO se confía en la
+  # revisión: se AFIRMA abajo, en caliente, en cada corrida, y el self-test tiene
+  # un caso MUTADO que quita el token y comprueba que se caza.
+  #
+  # SIN ADMIN OPTION, a propósito: con ADMIN sobre un rol superusuario el
+  # aplicador podría reconcedérsela con `WITH SET TRUE`. (Medido: hoy eso lo
+  # bloquea además el propio Postgres —"Only roles with the SUPERUSER attribute
+  # may grant roles with the SUPERUSER attribute"—, pero no se depende de esa
+  # segunda red.)
+  #
+  # FIDELIDAD QUE ESTO SÍ CAMBIA, dicho sin adornos: al heredar los privilegios de
+  # `postgres`, el aplicador pasa a contar como dueño de lo que `postgres` posea
+  # en la base efímera (los chequeos de propiedad usan `has_privs_of_role`). Ahí
+  # eso son las extensiones precreadas y poco más —el baseline se vuelca con
+  # `--no-owner` y todo queda a nombre del aplicador—, así que el gate se vuelve
+  # un pelo más permisivo sobre PROPIEDAD, nunca sobre superusuario. Es un
+  # ensanchamiento medido y acotado, no un desconocido.
+  #
+  # `WITH SET FALSE` es PG16+. En PG15 es un error de SINTAXIS, que con
+  # `>/dev/null 2>&1` se habría tragado dejando al aplicador SIN la membresía: el
+  # baseline moriría luego con un 42501 desconcertante. Peor sería "reintentar sin
+  # el token": degradarse en silencio a la escalada. Se comprueba ANTES.
+  SRV_VER="$($PSQL "$TARGET" -tAc "SHOW server_version_num" 2>/dev/null | tr -d ' ')"
+  case "$SRV_VER" in
+    ''|*[!0-9]*) die "no se pudo leer 'server_version_num' del destino (respuesta: '${SRV_VER:-<vacía>}'). El gate necesita saber la versión antes de conceder la membresía con WITH SET FALSE, que es PostgreSQL 16+. Sin ese dato no se concede nada: hacerlo a ciegas acabaría o en un 42501 incomprensible al cargar el baseline, o —si se 'reintentara sin el token'— en la escalada a superusuario que WITH SET FALSE cierra." ;;
+  esac
+  [ "$SRV_VER" -ge 160000 ] || die "el destino es PostgreSQL $SRV_VER y el gate necesita 16+ (160000). 'GRANT <rol> TO <aplicador> WITH SET FALSE' no existe antes de PG16, y es lo único que permite cargar las 'ALTER DEFAULT PRIVILEGES FOR ROLE postgres' del baseline SIN dar al aplicador la capacidad de hacer 'SET ROLE postgres' (medido: con el GRANT a secas, 'COPY … TO PROGRAM' vuelve a ejecutar órdenes en el runner). El gate NO se degrada a la versión sin el token: usa una imagen de Postgres 16 o superior."
+
+  # `GRANT` a secas sobre una membresía YA EXISTENTE es un no-op con NOTICE y NO
+  # cambia la opción SET (medido), así que un rol aplicador que arrastre una
+  # membresía plana de otra corrida no se corregiría con él. `WITH SET FALSE`
+  # explícito SÍ la baja (medido). Aun así se AFIRMA después: lo que se comprueba
+  # es el ESTADO FINAL, no la intención de la sentencia.
+  $PSQL "$TARGET" -q -c "DO \$\$ DECLARE r record; BEGIN
+      FOR r IN SELECT rolname FROM pg_roles
+               WHERE rolsuper AND rolname <> '$APPLIER' LOOP
+        EXECUTE format('GRANT %I TO %I WITH SET FALSE', r.rolname, '$APPLIER');
+      END LOOP;
+    END \$\$;" >/dev/null 2>&1 \
+    || die "no se pudo conceder al aplicador la membresía WITH SET FALSE en los roles superusuario del destino. Sin ella el baseline de PROD muere con 42501 al llegar a sus 'ALTER DEFAULT PRIVILEGES FOR ROLE postgres'. El gate NO sigue sin la membresía y NO la concede sin el token."
 
   # Derivar la URI del aplicador. libpq deja que los parámetros de query de una
   # URI sobrescriban el userinfo (verificado), y en una cadena keyword/value
@@ -368,7 +456,22 @@ else
   WHOAMI="$($PSQL "$APPLY_URI" -tAc "SELECT current_user || '|' || (SELECT rolsuper::text FROM pg_roles WHERE rolname = current_user)" 2>/dev/null | tr -d ' ')"
   [ "$WHOAMI" = "$APPLIER|false" ] \
     || die "la conexión del aplicador no quedó como se esperaba (current_user|rolsuper = '${WHOAMI:-<sin respuesta>}', se esperaba '$APPLIER|false'). El gate NO ejecuta el SQL del PR con privilegios de superusuario."
-  echo "   aplicador: $APPLIER (NOSUPERUSER) — COPY … TO/FROM PROGRAM queda denegado"
+
+  # ── ASERCIÓN: la membresía es SET FALSE en TODOS los roles superusuario ────
+  # Lo que permite cargar las ADP del baseline es exactamente el token `WITH SET
+  # FALSE`. Quitarlo NO rompe nada visible —el baseline carga igual, las
+  # migraciones se aplican igual, el gate sale verde— y solo se nota si alguien
+  # escala. Así que no se revisa: se mide aquí, en esta corrida, contra el
+  # catálogo. Se pregunta por el PREDICADO (`pg_has_role(…,'SET')`), que dice POR
+  # QUÉ, y justo debajo por la CONSECUENCIA (`COPY … TO PROGRAM`), que no puede
+  # volverse tautológica si mañana cambia la semántica del predicado.
+  SET_OK="$($PSQL "$APPLY_URI" -tAc "SELECT count(*) FROM pg_roles r WHERE r.rolsuper AND r.rolname <> current_user AND pg_has_role(current_user, r.oid, 'SET')" 2>/dev/null | tr -d ' ')"
+  case "$SET_OK" in
+    ''|*[!0-9]*) die "no se pudo comprobar que la membresía del aplicador en los roles superusuario sea SET FALSE (respuesta: '${SET_OK:-<vacía>}'). Esa comprobación es la que impide que el arreglo de los default privileges se convierta en una escalada a superusuario; sin ella el gate no aplica nada." ;;
+  esac
+  [ "$SET_OK" -eq 0 ] \
+    || die "el aplicador PUEDE hacer 'SET ROLE' sobre $SET_OK rol(es) SUPERUSUARIO del destino. Eso es una ESCALADA: medido en PG17, tras un 'SET ROLE postgres' el aplicador queda con rolsuper=true y 'COPY … TO PROGRAM' vuelve a ejecutar órdenes en el runner. La membresía se concede con 'WITH SET FALSE' precisamente para que esto valga 0; si vale más, o alguien quitó el token, o el rol arrastra una membresía plana de otra corrida. El gate NO aplica el SQL del PR en estas condiciones."
+  echo "   aplicador: $APPLIER (NOSUPERUSER) — membresía en roles superusuario con SET FALSE (no puede SET ROLE)"
 fi
 
 # El SQL DEL PR se aplica con esto, NO con psql: sin capa de metacomandos, un
@@ -474,6 +577,40 @@ case "$CANARY_RC" in
   *) die "el aplicador terminó el canario con un código que no debería llegar aquí (rc=$CANARY_RC)." ;;
 esac
 
+# SEGUNDO CANARIO, para el canal (b) —el SQL, no los metacomandos—. El de arriba
+# demuestra que `\!` está cerrado; este demuestra que `COPY … TO PROGRAM` lo está,
+# que es una vía INDEPENDIENTE y la única que cubre la contención NOSUPERUSER.
+# Existe porque desde esta ronda el aplicador es MIEMBRO de los roles superusuario
+# del destino (hace falta para las `ALTER DEFAULT PRIVILEGES FOR ROLE postgres`
+# del baseline): la membresía se concede `WITH SET FALSE`, y si alguien quitara ese
+# token el gate seguiría VERDE con la escalada abierta. La aserción de
+# `pg_has_role(…,'SET')` del paso 4 dice POR QUÉ; esta dice QUÉ CONSECUENCIA
+# tiene, y no puede volverse tautológica si cambia la semántica del predicado.
+#
+# Se exige que el SERVIDOR lo rechace con SQLSTATE 42501 (medido en PG17.11:
+# «permission denied to COPY to or from an external program»). No basta un rc
+# distinto de 0: con el puerto muerto también fallaría y estaríamos anunciando
+# contención sin que nadie la hubiera comprobado. NO se comprueba "el archivo no se
+# creó" porque en CI el Postgres es un contenedor de servicio y su sistema de
+# archivos no es el del runner: ahí esa comprobación sería CIERTA SIEMPRE, o sea un
+# adorno. La demostración por efecto (el archivo que SÍ aparece al quitar el token)
+# vive en el self-test, donde el servidor es local.
+if [ "$APPLY_AS_SUPERUSER" != "1" ]; then
+  COPY_LOG="$(mktemp)"; TMPFILES+=("$COPY_LOG")
+  $PSQL "$APPLY_URI" -v VERBOSITY=verbose -c "COPY (SELECT 1) TO PROGRAM 'true';" >"$COPY_LOG" 2>&1
+  COPY_RC=$?
+  if [ "$COPY_RC" -eq 0 ]; then
+    die "CONTROL POSITIVO FALLIDO: el aplicador EJECUTÓ 'COPY … TO PROGRAM'. Eso es ejecución de órdenes en el contenedor de Postgres desde el SQL del PR, y es el canal que el rol NOSUPERUSER existe para cerrar. La causa más probable es que la membresía en los roles superusuario se haya concedido SIN 'WITH SET FALSE', o que el aplicador tenga privilegios de 'pg_execute_server_program'. El gate no aplica nada."
+  fi
+  if grep -qiE '42501|permission denied to COPY' "$COPY_LOG"; then
+    echo "   ok: el SERVIDOR denegó 'COPY … TO PROGRAM' al aplicador (42501)"
+  else
+    echo "--- salida del canario COPY ---" >&2; head -6 "$COPY_LOG" >&2
+    die "el canario de 'COPY … TO PROGRAM' falló, pero NO con la denegación de privilegio del servidor (falta 42501 / 'permission denied to COPY'). Puede ser un fallo de conexión, no la contención: el control positivo no demuestra nada. El gate no aplica nada."
+  fi
+  rm -f "$COPY_LOG"
+fi
+
 # ── 5. Baseline ─────────────────────────────────────────────────────────────
 echo "== cargando esquema de PROD =="
 # Normalización MÍNIMA y acotada: pg_dump emite `CREATE SCHEMA public;` y el
@@ -491,98 +628,19 @@ TMPFILES+=("$BASE_NORM" "$BASE_LOG")
 # baseline ya no pasa por psql, el servidor las rechazaría. Se quitan solo si la
 # línea tiene EXACTAMENTE esa forma, y SOLO aquí: una migración del PR nunca las
 # necesita y no recibe ningún trato especial.
-# TERCERA normalización, acotada al BASELINE: se DESCARTAN las sentencias
-# `ALTER DEFAULT PRIVILEGES`, y va explicado en la cabecera (sección "LO QUE EL
-# GATE NO MODELA"). Resumen: `ALTER DEFAULT PRIVILEGES FOR ROLE <X>` exige ser
-# MIEMBRO de <X>, y PROD las emite con `FOR ROLE postgres`, que en la imagen de
-# CI es EL SUPERUSUARIO. Lo descartado no hacía nada aquí de todos modos: estas
-# sentencias son PER-GRANTOR y en la base efímera el grantor siempre es
-# `migration_gate_applier`, así que las 24 no habrían tenido efecto observable ni
-# aplicándose — el "recorte de fidelidad" es ~nulo, no un sacrificio. Darle
-# al aplicador esa membresía es exactamente la escalada que el rol NOSUPERUSER
-# viene a cerrar (medido: con `GRANT postgres TO <aplicador>`, un `SET ROLE
-# postgres` deja `rolsuper=true` y `COPY … TO PROGRAM` vuelve a ejecutar). Los
-# default privileges no participan en la pregunta que este gate contesta —"¿esta
-# migración aplica sobre el esquema real de PROD?"— así que se van ellos, no la
-# contención.
-#
-# ACOTADO, y cada límite a propósito:
-#  · SOLO el baseline. Una migración DEL PR con `ALTER DEFAULT PRIVILEGES` NO se
-#    normaliza: se aplica tal cual y, si el aplicador no puede, el gate se pone
-#    ROJO. Silenciar SQL del PR sería fail-OPEN, que es el pecado que persigue
-#    todo este archivo. Consecuencia conocida, en la cabecera: eso es un FALSO
-#    ROJO para la forma `FOR ROLE postgres` (la usan 037 y 081; 069 y 136 solo la
-#    nombran en un comentario) — molesto, seguro.
-#  · SOLO sentencias COMPLETAS en UNA línea: ancladas a `^`, y con el `;` FINAL
-#    como ÚNICO `;` de la línea (`[^;]*`, no `.*`). El `.*` era codicioso y
-#    borraba la línea ENTERA, así que cualquier sentencia pegada detrás en la
-#    misma línea —`ALTER DEFAULT PRIVILEGES … TO anon; DROP TABLE public.ventas;`—
-#    desaparecía con ella, y el único rastro era un conteo que seguía diciendo
-#    «1 sentencia descartada». Con `[^;]*` esa línea ya no casa (sigue casando
-#    24/24 del baseline real de PROD, verificado).
-#  · Y NO SE DESCARTA A CIEGAS: antes del sed se AFIRMA que TODAS las apariciones
-#    de `ALTER DEFAULT PRIVILEGES` en el baseline son de esa forma tratable
-#    (mismo conteo por las dos vías). Si aparece una que no lo es —pg_dump
-#    partiéndola en varias líneas, un `;` interno, o una dentro de un cuerpo
-#    dollar-quoted (indentada o sin terminar en `;`)— el gate MUERE aquí, en
-#    ROJO, antes de tocar nada. Hoy da 24 == 24, así que no cambia ningún verde.
-#    Nota: el conteo de "todas las apariciones" es por LÍNEA y no distingue un
-#    comentario (`-- ALTER DEFAULT PRIVILEGES …`), así que una mención en un
-#    comentario del baseline también pondría el gate rojo. Falso rojo aceptado:
-#    el lado seguro es no descartar lo que no se reconoce.
-#  · SEGUNDA AFIRMACIÓN, la que cierra el caso peligroso de verdad: ninguna
-#    línea que contenga un `$` puede aparecer EN o DESPUÉS de la primera ADP.
-#    POR QUÉ ES SUFICIENTE, y no es una heurística: para que una línea borrada
-#    estuviera DENTRO de un cuerpo dollar-quoted, ese cuerpo tendría que cerrarse
-#    en esa línea o más abajo, y su delimitador de cierre CONTIENE un `$`. Si no
-#    hay ningún `$` de ahí en adelante, ningún borrado cae dentro de un cuerpo.
-#    No se lexa nada: solo se pregunta "¿esta línea tiene el carácter `$`?", que
-#    es la razón de que no pueda divergir como divergió el escáner de psql
-#    (dollar-quote con etiqueta, `$` legal dentro de identificadores, etiquetas
-#    no ASCII: todas contienen `$` y todas se cazan). Es una SOBREaproximación:
-#    un `$` inocente ahí abajo (un `[^[:alpha:]]` en un regexp) pondría el gate
-#    rojo sin que nada estuviera roto — se acepta, es el lado seguro. En el
-#    baseline real de PROD el último `$` está en la línea 12603 y la primera ADP
-#    en la 17907: margen de sobra, y pg_dump emite los default ACL al final por
-#    construcción.
-#    Sin esta afirmación el agujero era REAL y SILENCIOSO, y el comentario que
-#    estaba aquí antes afirmaba lo contrario ("el síntoma sería un error de
-#    sintaxis: ROJO"). Es falso, medido con GNU sed 4.9: borrar una sentencia
-#    COMPLETA de un cuerpo plpgsql deja plpgsql VÁLIDO (`BEGIN / IF … END IF; /
-#    RETURN NEW; / END;` sigue compilando), así que `check_function_bodies` no lo
-#    rechaza y la función se CREA con el cuerpo TRUNCADO: sin error, sin log y
-#    sin rastro en el diff —el borrado ocurre al CARGAR, no en el artefacto—.
-#    Tampoco hacía falta un atacante: en cuanto PROD tenga una función así, el
-#    siguiente `migration-baseline-refresh` produce un baseline FIEL que el gate
-#    cargaría mutilado ⇒ FALSO VERDE. Y nada verifica el CONTENIDO del baseline
-#    (`migration-baseline-freshness` solo compara `PROD_MIGRATIONS`; no hay
-#    checksum en ningún script ni job).
-# El conteo se IMPRIME siempre: un recorte de fidelidad que no se ve en el log es
-# un recorte que nadie recuerda que existe.
-ADP_TOTAL="$(grep -c 'ALTER DEFAULT PRIVILEGES' "$BASELINE" 2>/dev/null || true)"
-ADP_N="$(grep -cE '^ALTER DEFAULT PRIVILEGES [^;]*;[[:space:]]*$' "$BASELINE" 2>/dev/null || true)"
-[ "$ADP_TOTAL" = "$ADP_N" ] || die "el baseline '$BASELINE' tiene $ADP_TOTAL línea(s) con 'ALTER DEFAULT PRIVILEGES' pero solo $ADP_N de la forma que el gate sabe descartar (^ALTER DEFAULT PRIVILEGES [^;]*;\$). El gate NO descarta lo que no reconoce: descartar una línea que no sea una sentencia completa de nivel superior mutilaría el baseline EN SILENCIO (borrar una sentencia entera de un cuerpo plpgsql deja plpgsql válido, así que la función se crearía truncada sin error) y eso es un FALSO VERDE. Revisa las apariciones con: grep -nE 'ALTER DEFAULT PRIVILEGES' '$BASELINE' | grep -vE ':ALTER DEFAULT PRIVILEGES [^;]*;[[:space:]]*\$'"
-if [ "$ADP_N" -gt 0 ]; then
-  ADP_FIRST="$(grep -nE '^ALTER DEFAULT PRIVILEGES [^;]*;[[:space:]]*$' "$BASELINE" | head -1 | cut -d: -f1 || true)"
-  DOLLAR_LAST="$(grep -nF '$' "$BASELINE" | tail -1 | cut -d: -f1 || true)"
-  DOLLAR_LAST="${DOLLAR_LAST:-0}"
-  [ "$DOLLAR_LAST" -lt "$ADP_FIRST" ] || die "el baseline '$BASELINE' tiene una línea con el carácter '\$' en la línea $DOLLAR_LAST, en o después de la primera 'ALTER DEFAULT PRIVILEGES' (línea $ADP_FIRST). El gate no descarta ahí: una sentencia borrada DENTRO de un cuerpo dollar-quoted deja plpgsql VÁLIDO y la función se cargaría TRUNCADA sin ningún error (falso verde). Mientras no haya ningún '\$' de la primera ADP en adelante, ningún borrado puede caer dentro de un cuerpo —el delimitador de cierre contiene '\$' y estaría por debajo—. Si el '\$' es inocente (un regexp, p.ej.), sigue siendo un rojo a propósito: el gate no adivina. Mira la línea con: sed -n '${DOLLAR_LAST}p' '$BASELINE'"
-fi
+# Las `ALTER DEFAULT PRIVILEGES` del baseline NO se recortan: se APLICAN (la
+# membresía `WITH SET FALSE` del paso 4 es lo que lo permite). Aquí hubo tres
+# rondas de un `sed` que las descartaba, y cada ronda encontró una clase NUEVA de
+# falso verde: un `.*` codicioso que se comía la sentencia pegada detrás; cuerpos
+# dollar-quoted; y literales de comilla simple MULTILÍNEA —que cierran con `'` y no
+# con `$`, así que la aserción de posición no los veía— que pg_dump emite de forma
+# natural en CHECK/DEFAULT/CREATE VIEW/CREATE POLICY. Era el lexer de psql otra
+# vez, y la lección ya estaba escrita en CLAUDE.md: replicar ese lexer DIVERGE
+# SIEMPRE. Así que no se parcheó una cuarta vez — se borró la clase entera quitando
+# la NECESIDAD de filtrar. Sin `sed` no hay borrado, y sin borrado un baseline
+# mutilado en silencio es imposible POR CONSTRUCCIÓN.
 sed -E 's/^CREATE SCHEMA (IF NOT EXISTS )?/CREATE SCHEMA IF NOT EXISTS /;
-        /^\\(un)?restrict [A-Za-z0-9]+[[:space:]]*$/d;
-        /^ALTER DEFAULT PRIVILEGES [^;]*;[[:space:]]*$/d' "$BASELINE" > "$BASE_NORM"
-# El conteo que se ANUNCIA se deriva del EFECTO REAL del sed sobre el archivo
-# normalizado (antes menos después), no de un `grep` paralelo sobre la entrada.
-# POR QUÉ: con el `sed` NEUTRALIZADO, el log seguía anunciando "3 sentencias
-# DESCARTADAS" —medido— porque la cifra venía de contar la ENTRADA por otra vía.
-# Una cifra obtenida por una segunda vía no es evidencia de lo que hizo la
-# primera; es exactamente el pecado que este bloque arregla. Y si queda alguna
-# ADP en la salida, el descarte NO ocurrió (sed neutralizado, patrón divergente,
-# normalización reordenada): ROJO aquí, no un recorte invisible más abajo.
-ADP_LEFT="$(grep -c 'ALTER DEFAULT PRIVILEGES' "$BASE_NORM" 2>/dev/null || true)"
-ADP_DROPPED=$(( ADP_TOTAL - ADP_LEFT ))
-[ "$ADP_LEFT" -eq 0 ] || die "el descarte de ALTER DEFAULT PRIVILEGES NO se aplicó: quedan $ADP_LEFT de $ADP_TOTAL en el baseline normalizado. El gate NO sigue: el baseline moriría más abajo con 42501 y el log habría anunciado un recorte que nunca ocurrió. Revisa la normalización del baseline en $0."
-echo "   fidelidad recortada a propósito: $ADP_DROPPED sentencia(s) ALTER DEFAULT PRIVILEGES del baseline DESCARTADAS (conteo derivado del archivo normalizado, no de un grep aparte; el gate no modela los default privileges de PROD: exigirían membresía en un rol SUPERUSUARIO). Las migraciones del PR NO reciben este trato."
+        /^\\(un)?restrict [A-Za-z0-9]+[[:space:]]*$/d' "$BASELINE" > "$BASE_NORM"
 # Legible por el usuario que corra psql: en algunos entornos el cliente corre
 # bajo otra cuenta (p.ej. `runuser -u postgres`) y mktemp deja 0600.
 chmod 644 "$BASE_NORM" 2>/dev/null || true
@@ -619,9 +677,6 @@ echo "   baseline cargado: $OBJ tablas/vistas en public+analytics"
 # ── 6. Aplicar ──────────────────────────────────────────────────────────────
 echo "== aplicando =="
 FAILED=0; APPLIED=0
-# Pista del falso rojo de default privileges: se ARMA solo si el log lo
-# evidencia (ver el resumen del final). Vacía = no se afirma nada.
-ADP_HINT=""; ADP_HINT_FILE=""
 for f in "${ADDED[@]}"; do
   if grep -qiE '^[[:space:]]*(COMMIT|ROLLBACK)[[:space:]]*;' "$f"; then
     echo "   AVISO: $f trae COMMIT/ROLLBACK propio; lo confirmado antes de ese punto"
@@ -647,15 +702,6 @@ for f in "${ADDED[@]}"; do
     sed 's/^/         /' "$LOG" | head -25
     echo "         ------------------------------------------------------------"
     FAILED=$((FAILED+1))
-    # ¿El error es uno de los FALSOS ROJOS conocidos del recorte de default
-    # privileges? Se decide por la EVIDENCIA del log (mismo estándar que rc=3):
-    # la pista va CONDICIONADA, y si no hay evidencia no se insinúa nada.
-    if grep -qi 'change default privileges' "$LOG"; then
-      ADP_HINT=42501; ADP_HINT_FILE="$f"
-    elif grep -qiE 'role "[^"]*" does not exist' "$LOG" \
-         && grep -qiE 'ALTER[[:space:]]+DEFAULT[[:space:]]+PRIVILEGES[[:space:]]+FOR[[:space:]]+ROLE' "$f"; then
-      ADP_HINT=42704; ADP_HINT_FILE="$f"
-    fi
     rm -f "$LOG"
     break   # las migraciones son secuenciales: seguir tras un fallo no informa
   fi
@@ -663,30 +709,6 @@ for f in "${ADDED[@]}"; do
 done
 
 echo "---"
-if [ "$FAILED" -gt 0 ] && [ -n "$ADP_HINT" ]; then
-  # Rojo que el gate SÍ puede atribuir, así que no se afirma la causa genérica
-  # ("no aplica sobre PROD") ni se suelta la pista de drift, que aquí es ajena:
-  # las dos serían afirmar una causa que el código no establece.
-  echo "migration-gate: $FAILED fail — el error coincide con un FALSO ROJO CONOCIDO de este gate,"
-  echo "no con una migración que no aplique sobre PROD. El gate NO modela los default privileges"
-  echo "(ver 'LO QUE EL GATE NO MODELA' en la cabecera de $0)."
-  if [ "$ADP_HINT" = 42501 ]; then
-    echo "  · Qué pasó: $ADP_HINT_FILE trae 'ALTER DEFAULT PRIVILEGES FOR ROLE <X>' con <X> SUPERUSUARIO"
-    echo "    (en esta imagen, 'postgres'). Eso exige membresía en <X> y el aplicador es NOSUPERUSER"
-    echo "    a propósito: dársela reabriría COPY … TO PROGRAM. En PROD la ejecuta un rol privilegiado"
-    echo "    y aplica bien. Es la forma de 037 y 081."
-  else
-    echo "  · Qué pasó: $ADP_HINT_FILE trae 'ALTER DEFAULT PRIVILEGES FOR ROLE <X>' con un <X> que el gate"
-    echo "    no precrea. Los roles se derivan de lo que sigue a TO/FROM en el baseline, NUNCA de FOR ROLE,"
-    echo "    así que un 'FOR ROLE supabase_admin' (la forma de 048b) sale como 'role does not exist'."
-  fi
-  echo "  · Qué hacer: el SQL del PR NO se normaliza nunca (silenciarlo sería fail-OPEN), así que este rojo"
-  echo "    no se 'arregla' en el gate. Verifica a mano que la migración aplica en PROD y pide el juicio"
-  echo "    humano de AIR-162 §2; o usa la forma sin FOR ROLE (022, 048b, 060) si el default privilege"
-  echo "    debe quedar a nombre del rol que aplica."
-  echo "  · Lo que este gate NO puede establecer aquí: si además hay otro problema en la migración."
-  exit 1
-fi
 if [ "$FAILED" -gt 0 ]; then
   echo "migration-gate: $FAILED fail — una migración nueva NO aplica sobre el esquema real de PROD."
   echo "Si el error dice que un objeto YA EXISTE, la causa probable es drift: la migración"

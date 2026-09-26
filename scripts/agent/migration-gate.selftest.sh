@@ -719,33 +719,32 @@ OUT="$(run_gate "$R" "$T" "$BASELINE")"; RC=$?
   || { bad "el rol NOSUPERUSER rompe una migración legítima (rc=$RC)"; echo "$OUT" | sed 's/^/      /'; }
 
 # ============================================================
-# 13. BASELINE CON `ALTER DEFAULT PRIVILEGES` — la colisión estructural entre el
-#     contenido real del volcado de PROD y el aplicador NOSUPERUSER.
+# 13. BASELINE CON `ALTER DEFAULT PRIVILEGES` — ahora SE APLICAN, no se filtran.
 #
-#     REGRESIÓN REAL (AIR-276, intento 1 del contador `AIR-276-verify`): la
-#     primera vez que `migration-apply` llegó al camino verde, el baseline recién
-#     volcado de PROD murió con "permission denied to change default privileges"
-#     (SQLSTATE 42501) y el gate no pudo validar NADA. PROD emite 24 de estas
-#     sentencias y 12 con `FOR ROLE postgres`, que en la imagen de CI es EL
-#     SUPERUSUARIO: `ALTER DEFAULT PRIVILEGES FOR ROLE <X>` exige membresía en
-#     <X>, y el bucle de membresía del gate excluye a los superusuarios A
-#     PROPÓSITO (medido: con `GRANT postgres TO <aplicador>`, un `SET ROLE
-#     postgres` da `rolsuper=true` y `COPY … TO PROGRAM` vuelve a ejecutarse).
+#     HISTORIA, porque explica por qué esta sección está escrita así. PROD emite
+#     24 de estas sentencias, 12 con `FOR ROLE postgres` (EL SUPERUSUARIO de la
+#     imagen de CI) y 12 con `FOR ROLE supabase_admin`. `ALTER DEFAULT PRIVILEGES
+#     FOR ROLE <X>` exige `has_privs_of_role(current_user, X)`, así que el
+#     baseline moría entero con 42501 y el gate no validaba NADA. Se intentó
+#     DESCARTARLAS con un `sed`, y hubo TRES rondas con TRES clases distintas de
+#     falso verde: un `.*` codicioso que se llevaba la sentencia pegada detrás;
+#     cuerpos dollar-quoted; y literales de comilla simple MULTILÍNEA (cierran con
+#     `'`, no con `$`, así que la aserción de posición no los veía) que pg_dump
+#     emite de forma natural en CHECK/DEFAULT/CREATE VIEW/CREATE POLICY. Era el
+#     lexer de psql otra vez. No se parcheó una cuarta vez: se quitó la NECESIDAD
+#     de filtrar con `GRANT <superusuario> TO <aplicador> WITH SET FALSE`
+#     (PostgreSQL 16+), que da `has_privs_of_role` y PROHÍBE `SET ROLE`.
 #
-#     El fix descarta esas sentencias AL CARGAR EL BASELINE. Este caso existe
-#     porque una capa nueva sin nadie que la ataque se queda verde por no tener
-#     quien la pruebe: falla si alguien revierte el descarte, si lo deja de
-#     anunciar, o si vuelve a entrar un baseline con default privileges y el gate
-#     ya no sabe digerirlo.
+#     Así que lo que estos casos prueban cambió de signo: ya no "el descarte
+#     ocurrió y está acotado", sino "las ADP APLICAN de verdad Y la contención
+#     sigue en pie". El caso que lleva el peso es 13e: quitar `WITH SET FALSE` no
+#     rompe nada visible, así que tiene que haber alguien atacándolo.
 # ============================================================
 BASE_ADP="$TMP/baseline_adp.sql"
 # Mismas formas que emite pg_dump de PROD, verbatim: `FOR ROLE postgres` (el
-# superusuario, la que rompía) y `FOR ROLE supabase_admin`. Sobre la segunda este
-# harness NO puede afirmar que "sí funcionaría": `supabase_admin` no se precrea
-# —los roles se derivan de lo que sigue a `TO`/`FROM`, nunca a `FOR ROLE`—, así
-# que sin el descarte daría `role "supabase_admin" does not exist` (42704), otra
-# cosa que el 42501. Está aquí porque el descarte no distingue entre las dos, y
-# así se comprueba que ninguna de las dos estorba.
+# superusuario) y `FOR ROLE supabase_admin` (un rol que NO aparece detrás de
+# ningún TO/FROM, así que solo se precrea si la derivación mira también a
+# `FOR ROLE` — es el caso 13a).
 cat > "$BASE_ADP" <<'SQL'
 CREATE SCHEMA analytics;
 CREATE TABLE public.ventas (id serial PRIMARY KEY, ordered_at timestamptz, created_at timestamptz);
@@ -766,237 +765,369 @@ OUT="$(run_gate "$R" "$T" "$BASE_ADP")"; RC=$?
 if [ $RC -eq 0 ]; then
   ok "baseline con ALTER DEFAULT PRIVILEGES => CARGA y el gate valida (exit 0)"
 else
-  bad "el baseline con ALTER DEFAULT PRIVILEGES NO cargó (rc=$RC) — ¿se revirtió el descarte?"
+  bad "el baseline con ALTER DEFAULT PRIVILEGES NO cargó (rc=$RC)"
   echo "$OUT" | sed 's/^/      /'
 fi
 echo "$OUT" | grep -qi "permission denied to change default privileges" \
-  && bad "sigue apareciendo el error 42501 de default privileges (el descarte no se aplicó)" \
+  && bad "sigue apareciendo el error 42501 de default privileges" \
   || ok "no aparece 'permission denied to change default privileges'"
-# El recorte de fidelidad se ANUNCIA. Si deja de verse en el log, nadie recuerda
-# que el gate no modela esto: el silencio es justo lo que no se acepta aquí.
+# LA ASERCIÓN QUE DE VERDAD IMPORTA: no que el gate saliera 0, sino que las ADP
+# TOMARAN EFECTO. Un `sed` que las borrara también daría exit 0 — eso es
+# exactamente el falso verde de las tres rondas anteriores. Se mira el CATÁLOGO.
+ADP_FILAS="$($PSQL "$T" -tAc "SELECT count(*) FROM pg_default_acl" 2>/dev/null | tr -d ' ')"
+[ "${ADP_FILAS:-0}" -ge 3 ] \
+  && ok "las 3 ADP del baseline QUEDARON APLICADAS ($ADP_FILAS filas en pg_default_acl)" \
+  || bad "el baseline cargó pero pg_default_acl tiene ${ADP_FILAS:-<vacío>} filas: las ADP no tomaron efecto (¿volvió un filtro?)"
+# …y a nombre de los roles de PROD, no del aplicador: `ALTER DEFAULT PRIVILEGES`
+# es PER-GRANTOR, así que un grantor equivocado sería fidelidad solo de nombre.
+GRANTORES="$($PSQL "$T" -tAc "SELECT string_agg(DISTINCT pg_get_userbyid(defaclrole), ',' ORDER BY pg_get_userbyid(defaclrole)) FROM pg_default_acl" 2>/dev/null | tr -d ' ')"
+[ "$GRANTORES" = "postgres,supabase_admin" ] \
+  && ok "el GRANTOR de las ADP es el de PROD (postgres,supabase_admin), no el aplicador" \
+  || bad "los grantores de pg_default_acl son '${GRANTORES:-<vacío>}', se esperaba 'postgres,supabase_admin'"
+# Y ya NO se anuncia ningún recorte: si volviera ese texto, volvió el filtro.
 echo "$OUT" | grep -q "fidelidad recortada a propósito" \
-  && ok "el gate DECLARA en el log que recortó fidelidad (no lo hace en silencio)" \
-  || { bad "el descarte de default privileges no se anuncia en el log"; echo "$OUT" | sed 's/^/      /'; }
-echo "$OUT" | grep -qE "fidelidad recortada a propósito: 3 sentencia" \
-  && ok "declara CUÁNTAS sentencias descartó (3)" \
-  || bad "no declara el conteo exacto de sentencias descartadas"
-# Y no se llevó por delante el resto del baseline: la tabla y el GRANT normal
-# siguen ahí (si el sed fuera demasiado ancho, esto lo caza).
+  && bad "el gate sigue anunciando un recorte de ALTER DEFAULT PRIVILEGES (¿volvió el sed?)" \
+  || ok "el gate ya no anuncia ningún recorte de default privileges (no hay filtro)"
 echo "$OUT" | grep -qE "baseline cargado: [1-9][0-9]* tablas/vistas" \
-  && ok "el resto del baseline sobrevivió al descarte (hay objetos cargados)" \
-  || bad "el descarte se llevó objetos del baseline"
+  && ok "el resto del baseline se cargó (hay objetos)" \
+  || bad "el baseline no cargó objetos"
 
-# MITAD IMPRESCINDIBLE — el descarte está ACOTADO AL BASELINE. Una migración DEL
-# PR con la misma sentencia NO se normaliza: se aplica tal cual y el gate se pone
-# ROJO. Sin este caso, "arreglar" el gate filtrando `ALTER DEFAULT PRIVILEGES` en
-# TODAS partes seguiría dando verde arriba — y eso sería silenciar SQL del PR,
-# es decir fail-OPEN, exactamente el pecado que este archivo persigue.
+# ============================================================
+# 13a. LOS ROLES SE DERIVAN TAMBIÉN DE `FOR ROLE`, no solo de `TO`/`FROM`.
+#      Antes no se miraba, y era inofensivo SOLO porque las ADP se descartaban.
+#      En cuanto se aplican, los 12 `FOR ROLE supabase_admin` del baseline real
+#      mueren con 42704 («role "supabase_admin" does not exist»), porque ese rol
+#      no aparece detrás de ningún TO/FROM del volcado.
+#      MUTACIÓN COMPROBADA: quitando el bloque `ROLES_FOR_ROLE` del gate, este
+#      caso se pone rojo con ese 42704 exacto.
+# ============================================================
+echo "$OUT" | grep -qE "roles preparados: [0-9]+ derivados del baseline \(de ellos [1-9][0-9]* vistos en un 'FOR ROLE'\)" \
+  && ok "el gate declara cuántos roles derivó de un 'FOR ROLE'" \
+  || { bad "el gate no declara la derivación desde 'FOR ROLE'"; echo "$OUT" | sed 's/^/      /'; }
+$PSQL "$T" -tAc "SELECT 1 FROM pg_roles WHERE rolname='supabase_admin'" 2>/dev/null | grep -q 1 \
+  && ok "'supabase_admin' se precreó pese a no aparecer tras ningún TO/FROM" \
+  || bad "'supabase_admin' no se precreó: las ADP 'FOR ROLE supabase_admin' morirían con 42704"
+
+# ============================================================
+# 13b. UNA MIGRACIÓN DEL PR CON `ALTER DEFAULT PRIVILEGES` YA NO ES FALSO ROJO.
+#      Eran las clases (1) 42501 y (2) 42704 que el gate tenía que EXPLICAR en su
+#      resumen. Al aplicarse las del baseline y precrearse los roles de `FOR
+#      ROLE`, las del PR aplican igual: el gate dejó de necesitar una narrativa
+#      sobre sus propios falsos rojos, y con ella se fue el riesgo de que esa
+#      narrativa tapara un rojo GENUINO (bloqueante 2 de la ronda anterior).
+# ============================================================
 R="$(mkrepo)"; T="$(newdb)"
 commit_mig "$R" "220_adp_en_migracion.sql" \
   "ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO anon;"
-#
-# SI ESTE CASO SALE 0, LÉELO ASÍ (tiene valor diagnóstico propio): significa que
-# el aplicador SÍ pudo cambiar los default privileges de un rol SUPERUSUARIO, o
-# sea que es miembro de uno. En CI —cluster recién levantado por el job— eso sería
-# una ESCALADA real y hay que tratarla como tal. En una máquina compartida, la
-# causa probable es un cluster CONTAMINADO a mano: el bucle de membresía del gate
-# concede al aplicador membresía en TODO rol no superusuario, y `rolinherit` la
-# propaga, así que un `GRANT postgres TO <cualquier_rol_normal>` hecho fuera del
-# self-test le entrega superusuario por transitividad. Pasó durante el desarrollo
-# de este caso (un experimento previo dejó un rol así) y el síntoma fue
-# exactamente este. Corre contra un Postgres limpio antes de declarar regresión.
 OUT="$(run_gate "$R" "$T" "$BASE_ADP")"; RC=$?
-must_fail_with "ALTER DEFAULT PRIVILEGES en una migración DEL PR => FALLA (el descarte NO se extiende al PR)" \
-  "$RC" "$OUT" "permission denied to change default privileges"
+[ $RC -eq 0 ] && ok "ADP 'FOR ROLE postgres' en una migración DEL PR => PASA (037, 081)" \
+  || { bad "la ADP 'FOR ROLE postgres' del PR sigue siendo roja (rc=$RC)"; echo "$OUT" | sed 's/^/      /'; }
 
-# …y la forma SIN `FOR ROLE` (022, 048b y 060 — 069 solo la nombra en un
-# comentario) aplica al usuario actual, así
-# que las migraciones legítimas del repo que la usan siguen pasando.
 R="$(mkrepo)"; T="$(newdb)"
-commit_mig "$R" "221_adp_sin_for_role.sql" \
+commit_mig "$R" "221_adp_supabase_admin.sql" \
+  "ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON TABLES FROM anon;"
+OUT="$(run_gate "$R" "$T" "$BASE_ADP")"; RC=$?
+[ $RC -eq 0 ] && ok "ADP 'FOR ROLE supabase_admin' en una migración DEL PR => PASA (048b)" \
+  || { bad "la ADP 'FOR ROLE supabase_admin' del PR sigue siendo roja (rc=$RC)"; echo "$OUT" | sed 's/^/      /'; }
+echo "$OUT" | grep -q "FALSO ROJO CONOCIDO" \
+  && bad "el gate sigue trayendo la narrativa de 'FALSO ROJO CONOCIDO' (podía tapar un rojo genuino)" \
+  || ok "ya no hay narrativa de 'FALSO ROJO CONOCIDO' que pueda tapar un rojo genuino"
+
+# …y la forma SIN `FOR ROLE` (022, 048b, 060) aplica al usuario actual y sigue pasando.
+R="$(mkrepo)"; T="$(newdb)"
+commit_mig "$R" "222_adp_sin_for_role.sql" \
   "ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM anon;"
 OUT="$(run_gate "$R" "$T" "$BASE_ADP")"; RC=$?
-[ $RC -eq 0 ] && ok "ALTER DEFAULT PRIVILEGES sin FOR ROLE (la forma de 022, 048b y 060) sigue pasando" \
+[ $RC -eq 0 ] && ok "ALTER DEFAULT PRIVILEGES sin FOR ROLE (022, 048b, 060) sigue pasando" \
   || { bad "se rompió la forma sin FOR ROLE, que las migraciones del repo SÍ usan (rc=$RC)"; echo "$OUT" | sed 's/^/      /'; }
 
 # ============================================================
-# 13b. EL DESCARTE NO PUEDE LLEVARSE UNA SENTENCIA VECINA (bloqueante 1 de la
-#      revisión de a7d330d). El patrón era `.*`, o sea CODICIOSO: solo exigía que
-#      la línea ACABARA en `;`, así que se comía la línea ENTERA y con ella
-#      cualquier sentencia pegada detrás —`… TO anon; DROP TABLE public.ventas;`—
-#      mientras el log seguía anunciando "1 sentencia descartada". La evidencia
-#      del recorte era falsificable con un prefijo.
-#
-#      Hoy son DOS defensas y este caso las prueba juntas por el resultado
-#      observable: `[^;]*` (la línea con dos sentencias ya no casa) y la
-#      afirmación de forma (una aparición que no sea sentencia completa de una
-#      línea mata el gate antes de tocar nada). MUTACIÓN COMPROBADA: revertir el
-#      patrón a `.*` en el conteo Y en el sed hace que el gate cargue el baseline
-#      sin `canario_pegado` y falle con 'relation … does not exist' — otro rojo,
-#      pero POR OTRO MOTIVO, y `must_fail_with` lo caza porque exige el mensaje.
+# 13c. LA CONTENCIÓN SIGUE EN PIE CON LA MEMBRESÍA CONCEDIDA. El aplicador es
+#      ahora MIEMBRO de los roles superusuario del destino; lo único que lo
+#      separa de ser superusuario es que no puede `SET ROLE`. Así que se ataca
+#      por las dos puertas, DESDE UNA MIGRACIÓN DEL PR y con el baseline que
+#      dispara la membresía.
 # ============================================================
-BASE_PEGADA="$TMP/baseline_adp_pegada.sql"
-cat > "$BASE_PEGADA" <<'SQL'
-CREATE SCHEMA analytics;
-CREATE TABLE public.ventas (id serial PRIMARY KEY, ordered_at timestamptz, created_at timestamptz);
-GRANT SELECT ON TABLE public.ventas TO el_cerebro_reader;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO anon; CREATE TABLE public.canario_pegado (id int);
-SQL
-chmod 644 "$BASE_PEGADA"
-assert_contiene "$BASE_PEGADA" "TO anon; CREATE TABLE public.canario_pegado (id int);" \
-  "el baseline del caso lleva DE VERDAD la sentencia vecina en la misma línea"
 R="$(mkrepo)"; T="$(newdb)"
-commit_mig "$R" "222_usa_canario.sql" "ALTER TABLE public.canario_pegado ADD COLUMN ok text;"
-OUT="$(run_gate "$R" "$T" "$BASE_PEGADA")"; RC=$?
-must_fail_with "sentencia vecina pegada tras un ALTER DEFAULT PRIVILEGES => ROJO por la afirmación de forma" \
-  "$RC" "$OUT" "de la forma que el gate sabe descartar"
-echo "$OUT" | grep -qi 'canario_pegado" does not exist' \
-  && bad "la vecina DESAPARECIÓ del baseline (el descarte sigue siendo codicioso)" \
-  || ok "la vecina no se borró en silencio: el gate murió ANTES de cargar nada"
+commit_mig "$R" "223_set_role.sql" "SET ROLE postgres;"
+OUT="$(run_gate "$R" "$T" "$BASE_ADP")"; RC=$?
+must_fail_with "el aplicador NO puede 'SET ROLE postgres' (WITH SET FALSE)" \
+  "$RC" "$OUT" 'permission denied to set role'
+
+R="$(mkrepo)"; T="$(newdb)"
+commit_mig "$R" "224_set_sess_auth.sql" "SET SESSION AUTHORIZATION postgres;"
+OUT="$(run_gate "$R" "$T" "$BASE_ADP")"; RC=$?
+must_fail_with "el aplicador NO puede 'SET SESSION AUTHORIZATION postgres'" \
+  "$RC" "$OUT" 'permission denied to set session authorization'
+
+R="$(mkrepo)"; T="$(newdb)"; W2="$TMP/pwned_adp_copy"
+commit_mig "$R" "225_copy_program_con_membresia.sql" "COPY (SELECT 1) TO PROGRAM 'touch $W2';"
+OUT="$(run_gate "$R" "$T" "$BASE_ADP")"; RC=$?
+must_fail_with "con la membresía concedida, 'COPY … TO PROGRAM' sigue denegado" \
+  "$RC" "$OUT" "permission denied to COPY"
+[ -e "$W2" ] && bad "COPY … TO PROGRAM SE EJECUTÓ pese a WITH SET FALSE" \
+  || ok "COPY … TO PROGRAM no creó el archivo con la membresía concedida"
+
+# `rolsuper` del aplicador sigue en false, y el gate lo AFIRMA en caliente.
+SUP="$($PSQL "$T" -tAc "SELECT rolsuper FROM pg_roles WHERE rolname='migration_gate_applier'" 2>/dev/null | tr -d ' ')"
+[ "$SUP" = "f" ] && ok "el aplicador sigue con rolsuper=false tras la membresía" \
+  || bad "el aplicador tiene rolsuper='$SUP': la membresía le dio el atributo (imposible por diseño, míralo)"
+SETN="$($PSQL "$T" -tAc "SELECT count(*) FROM pg_roles r WHERE r.rolsuper AND r.rolname<>'migration_gate_applier' AND pg_has_role('migration_gate_applier', r.oid, 'SET')" 2>/dev/null | tr -d ' ')"
+[ "${SETN:-1}" -eq 0 ] && ok "pg_has_role(aplicador, <superusuario>, 'SET') = false para TODOS" \
+  || bad "el aplicador puede SET ROLE sobre ${SETN:-?} rol(es) superusuario"
+echo "$OUT" | grep -q "membresía en roles superusuario con SET FALSE" \
+  && ok "el gate DECLARA en el log cómo concedió la membresía" \
+  || { bad "el gate no declara la membresía WITH SET FALSE en el log"; echo "$OUT" | sed 's/^/      /'; }
+echo "$OUT" | grep -q "denegó 'COPY … TO PROGRAM' al aplicador" \
+  && ok "el control positivo del gate DEMUESTRA en cada corrida que COPY … TO PROGRAM está cerrado" \
+  || { bad "el gate no demuestra la contención del canal (b) en caliente"; echo "$OUT" | sed 's/^/      /'; }
 
 # ============================================================
-# 13c. LA AFIRMACIÓN FAIL-CLOSED DISPARA CON UNA APARICIÓN NO TRATABLE
-#      (bloqueante 2). El comentario que se aceptó en a7d330d prometía que una
-#      ADP dentro de un cuerpo dollar-quoted "corrompería la función" y que el
-#      síntoma sería "un error de sintaxis al cargar el baseline: ROJO". ES
-#      FALSO, medido: borrar una sentencia COMPLETA de un cuerpo plpgsql deja
-#      plpgsql VÁLIDO, así que `check_function_bodies` no lo rechaza y la función
-#      se CREA truncada — sin error, sin log, sin rastro en el diff. Falso verde.
-#      Ahora hay dos afirmaciones que lo hacen RUIDOSO, y cada una tiene aquí su
-#      caso: (a) la forma (la línea de dentro del cuerpo va indentada ⇒ no es
-#      tratable) y (b) la posición (un `$` en o después de la primera ADP ⇒ el
-#      borrado podría caer dentro de un cuerpo, así que no se hace).
+# 13d. BASELINE CON UN LITERAL DE COMILLA SIMPLE MULTILÍNEA — la clase de falso
+#      verde de la TERCERA ronda, y el motivo por el que el filtro se borró.
+#
+#      El `CHECK` de abajo prohíbe una cadena de TRES líneas cuya línea de en
+#      medio es, textualmente, una `ALTER DEFAULT PRIVILEGES` completa a columna 0
+#      terminada en `;`. El `sed` la habría borrado: casaba el patrón, el conteo
+#      de forma daba 2==2 y la aserción de posición no la veía porque el literal
+#      cierra con `'`, no con `$`. Resultado MEDIDO contra el gate anterior: el
+#      constraint quedaba prohibiendo OTRA cadena, la migración insertaba el valor
+#      prohibido sin problema y el gate decía `0 fail` — verde en el gate, rojo en
+#      PROD. Hoy es imposible por construcción (no hay `sed`), y este caso lo
+#      comprueba por el EFECTO: el constraint tiene que seguir VIVO y la inserción
+#      del valor prohibido tiene que salir ROJA.
 # ============================================================
-BASE_BODY="$TMP/baseline_adp_body.sql"
-cat > "$BASE_BODY" <<'SQL'
+BASE_LIT="$TMP/baseline_literal_multilinea.sql"
+cat > "$BASE_LIT" <<'SQL'
 CREATE SCHEMA analytics;
-CREATE TABLE public.ventas (id serial PRIMARY KEY, ordered_at timestamptz, created_at timestamptz);
+CREATE TABLE public.ventas (
+  id serial PRIMARY KEY,
+  ordered_at timestamptz,
+  created_at timestamptz,
+  estado text CONSTRAINT ventas_estado_chk CHECK (estado <> 'primera
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO anon;
+ultima')
+);
 GRANT SELECT ON TABLE public.ventas TO el_cerebro_reader;
-CREATE FUNCTION public.f_cuerpo() RETURNS void LANGUAGE plpgsql AS $$
-BEGIN
-  ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO anon;
-  RAISE NOTICE 'sigo aqui';
-END;
-$$;
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA analytics GRANT SELECT ON TABLES TO el_cerebro_reader;
 SQL
-chmod 644 "$BASE_BODY"
-assert_contiene "$BASE_BODY" "  ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public" \
-  "el baseline del caso lleva la ADP DENTRO del cuerpo plpgsql"
-R="$(mkrepo)"; T="$(newdb)"
-commit_mig "$R" "223_tras_cuerpo.sql" "SELECT public.f_cuerpo();"
-OUT="$(run_gate "$R" "$T" "$BASE_BODY")"; RC=$?
-must_fail_with "ADP indentada dentro de un cuerpo dollar-quoted => ROJO (no se descarta lo que no se reconoce)" \
-  "$RC" "$OUT" "de la forma que el gate sabe descartar"
-
-# (b) la misma ADP, pero a COLUMNA 0 dentro del cuerpo: textualmente idéntica a
-# una sentencia de nivel superior, así que la afirmación de FORMA es ciega — la
-# que dispara es la de POSICIÓN (el `$$;` de cierre lleva un `$` por debajo).
-# MUTACIÓN COMPROBADA: sin esa afirmación este caso queda VERDE con la función
-# CARGADA TRUNCADA y sin un solo error — el falso verde que midió el veredicto.
-BASE_BODY0="$TMP/baseline_adp_body_col0.sql"
-cat > "$BASE_BODY0" <<'SQL'
-CREATE SCHEMA analytics;
-CREATE TABLE public.ventas (id serial PRIMARY KEY, ordered_at timestamptz, created_at timestamptz);
-GRANT SELECT ON TABLE public.ventas TO el_cerebro_reader;
-CREATE FUNCTION public.f_cuerpo0() RETURNS void LANGUAGE plpgsql AS $$
-BEGIN
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO anon;
-RAISE NOTICE 'sigo aqui';
-END;
-$$;
-SQL
-chmod 644 "$BASE_BODY0"
-# Aquí no vale `assert_contiene` (grep -F por SUBcadena casaría también la línea
-# indentada): hace falta que la línea exista ENTERA a columna 0 y que el cierre
-# del dollar-quote esté POR DEBAJO, que es lo que hace peligroso el caso.
-ADP_L="$(grep -nxF 'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO anon;' "$BASE_BODY0" | head -1 | cut -d: -f1)"
-FIN_L="$(grep -nF '$$;' "$BASE_BODY0" | tail -1 | cut -d: -f1)"
-if [ -n "$ADP_L" ] && [ -n "$FIN_L" ] && [ "$FIN_L" -gt "$ADP_L" ]; then
-  ok "el baseline del caso lleva la ADP a COLUMNA 0 (línea $ADP_L) y DENTRO del cuerpo (cierre en $FIN_L)"
+chmod 644 "$BASE_LIT"
+# La línea peligrosa tiene que estar DE VERDAD a columna 0 y DENTRO del literal:
+# si el heredoc la indentara, el caso no probaría la clase que dice probar.
+LIT_L="$(grep -nxF 'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO anon;' "$BASE_LIT" | head -1 | cut -d: -f1)"
+CIERRE_L="$(grep -nF "ultima')" "$BASE_LIT" | head -1 | cut -d: -f1)"
+DOLAR_N="$(grep -cF '$' "$BASE_LIT" || true)"
+if [ -n "$LIT_L" ] && [ -n "$CIERRE_L" ] && [ "$CIERRE_L" -gt "$LIT_L" ] && [ "$DOLAR_N" -eq 0 ]; then
+  ok "el baseline del caso lleva la ADP a columna 0 (línea $LIT_L) DENTRO de un literal que cierra en $CIERRE_L, y sin un solo '\$' en el archivo"
 else
-  bad "el baseline del caso no quedó como el caso dice (ADP_L=$ADP_L cierre=$FIN_L)"
+  bad "el baseline del caso no quedó como el caso dice (ADP=$LIT_L cierre=$CIERRE_L dolares=$DOLAR_N)"
 fi
 R="$(mkrepo)"; T="$(newdb)"
-commit_mig "$R" "224_tras_cuerpo0.sql" "SELECT public.f_cuerpo0();"
-OUT="$(run_gate "$R" "$T" "$BASE_BODY0")"; RC=$?
-must_fail_with "ADP a columna 0 DENTRO de un cuerpo => ROJO por la afirmación de posición (hay un \$ por debajo)" \
-  "$RC" "$OUT" "en o después de la primera 'ALTER DEFAULT PRIVILEGES'"
-# Que esa afirmación de posición NO rompe el baseline REAL de PROD (default ACL
-# al final, último `$` 5.300 líneas antes) lo cubre el caso 13, que sigue verde.
+# El valor prohibido, escrito con los mismos saltos de línea que el CHECK.
+commit_mig "$R" "226_inserta_valor_prohibido.sql" "INSERT INTO public.ventas (estado) VALUES ('primera
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO anon;
+ultima');"
+OUT="$(run_gate "$R" "$T" "$BASE_LIT")"; RC=$?
+must_fail_with "el CHECK multilínea del baseline sigue VIVO: insertar el valor prohibido => ROJO" \
+  "$RC" "$OUT" 'ventas_estado_chk'
+# Y la ADP de nivel superior del mismo baseline sí se aplicó: el archivo se cargó
+# entero, no "sobrevivió porque no se tocó nada".
+R="$(mkrepo)"; T="$(newdb)"
+commit_mig "$R" "227_tras_literal.sql" "ALTER TABLE public.ventas ADD COLUMN lit_ok text;"
+OUT="$(run_gate "$R" "$T" "$BASE_LIT")"; RC=$?
+[ $RC -eq 0 ] && ok "el baseline con literal multilínea carga entero (exit 0)" \
+  || { bad "el baseline con literal multilínea no cargó (rc=$RC)"; echo "$OUT" | sed 's/^/      /'; }
+CHK="$($PSQL "$T" -tAc "SELECT count(*) FROM pg_constraint WHERE conname='ventas_estado_chk'" 2>/dev/null | tr -d ' ')"
+[ "${CHK:-0}" -eq 1 ] && ok "el constraint multilínea existe en el destino (no se mutiló al cargar)" \
+  || bad "el constraint 'ventas_estado_chk' no está en el destino (el baseline se cargó mutilado)"
 
 # ============================================================
-# 13d. EL CONTEO ANUNCIADO TIENE QUE SER EL EFECTO REAL DEL `sed`.
-#      Medido en la revisión: con el `sed` NEUTRALIZADO el log seguía diciendo
-#      "3 sentencia(s) DESCARTADAS" y la aserción de arriba ("declara CUÁNTAS
-#      descartó") seguía en ok, porque la cifra venía de un `grep` aparte sobre
-#      la ENTRADA. Una cifra de una segunda vía no es evidencia de lo que hizo la
-#      primera. Este caso MUTA el gate de verdad: neutraliza el patrón del sed y
-#      exige ROJO. Si la mutación no se puede aplicar (alguien reformateó la
-#      línea), el caso FALLA en vez de bendecir nada.
+# 13e. EL CASO QUE LLEVA EL PESO: QUITAR `WITH SET FALSE` TIENE QUE CAZARSE.
+#
+#      Es la regresión que un diff NO delata. Con `GRANT postgres TO <aplicador>`
+#      a secas no se rompe nada visible: el baseline carga igual, las migraciones
+#      se aplican igual, el gate sale verde — y el aplicador puede hacer `SET ROLE
+#      postgres` y con ello `COPY … TO PROGRAM`. O sea que este arreglo se
+#      convertiría, en silencio, en la escalada que venía a evitar.
+#
+#      DOS mitades, y las dos hacen falta:
+#       (a) el gate MUTADO (token fuera, guardas intactas) tiene que MORIR. Prueba
+#           que las guardas tienen dientes.
+#       (b) el gate mutado CON LAS GUARDAS TAMBIÉN FUERA tiene que crear el
+#           archivo del `COPY … TO PROGRAM`. Prueba que las guardas de (a) no
+#           están vigilando un peligro imaginario. Sin (b), (a) podría volverse
+#           tautológica si mañana cambia la semántica de `pg_has_role`.
 # ============================================================
-GATE_MUT="$TMP/gate_sed_neutralizado.sh"
-"$GATE_PYTHON" - "$GATE" "$GATE_MUT" <<'PYMUT'
+# `migration_gate_applier` es un rol CLUSTER-WIDE y `GRANT <rol> TO <miembro>` a
+# secas sobre una membresía QUE YA EXISTE es un NO-OP con NOTICE: NO cambia la
+# opción SET (medido en PG17.11). Consecuencia para ESTE caso: si el rol llega con
+# el `WITH SET FALSE` que le pusieron los casos de arriba, el gate MUTADO no
+# escalaría nada y las tres aserciones de 13e saldrían verdes sin probar nada — pasó
+# exactamente así la primera vez que se corrió. En CI no aplica (cada job levanta su
+# cluster y el rol nace limpio), pero el self-test tiene que MODELAR CI, no el
+# cluster sucio de la máquina de desarrollo. Así que se revoca antes, y se COMPRUEBA
+# que la revocación surtió efecto: sin eso el caso volvería a bendecir el vacío.
+#
+# (El gate REAL no depende de esto: emite `WITH SET FALSE` explícito, que SÍ baja
+# una membresía plana preexistente —medido—, y además afirma el estado final.)
+resetear_membresia_aplicador() { # target
+  $PSQL "$1" -q -c "DO \$\$ DECLARE r record; BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='migration_gate_applier') THEN RETURN; END IF;
+      FOR r IN SELECT rolname FROM pg_roles WHERE rolsuper LOOP
+        EXECUTE format('REVOKE %I FROM %I', r.rolname, 'migration_gate_applier');
+      END LOOP;
+    END \$\$;" >/dev/null 2>&1
+  local n
+  n="$($PSQL "$1" -tAc "SELECT count(*) FROM pg_auth_members m JOIN pg_roles r ON r.oid=m.roleid JOIN pg_roles g ON g.oid=m.member WHERE r.rolsuper AND g.rolname='migration_gate_applier'" 2>/dev/null | tr -d ' ')"
+  [ "${n:-1}" -eq 0 ]
+}
+
+mutar_gate() { # destino, needle→reemplazo pares (2 por mutación)
+  local dst="$1"; shift
+  "$GATE_PYTHON" - "$GATE" "$dst" "$@" <<'PYMUT'
 import io, sys
 src = io.open(sys.argv[1], encoding='utf-8').read()
-needle = '/^ALTER DEFAULT PRIVILEGES [^;]*;[[:space:]]*$/d\' "$BASELINE"'
-if src.count(needle) != 1:
-    sys.stderr.write('mutacion imposible: el patron del sed aparece %d veces\n' % src.count(needle))
-    sys.exit(9)
-io.open(sys.argv[2], 'w', encoding='utf-8').write(
-    src.replace(needle, '/^NUNCA_CASA_ESTA_MUTACION$/d\' "$BASELINE"', 1))
+pares = sys.argv[3:]
+for i in range(0, len(pares), 2):
+    needle, repl = pares[i], pares[i+1]
+    if src.count(needle) != 1:
+        sys.stderr.write('mutacion imposible: %r aparece %d veces\n' % (needle, src.count(needle)))
+        sys.exit(9)
+    src = src.replace(needle, repl, 1)
+io.open(sys.argv[2], 'w', encoding='utf-8').write(src)
 PYMUT
-if [ $? -ne 0 ]; then
-  bad "no se pudo mutar el gate para neutralizar el sed (¿cambió la línea?) — el caso no probó nada"
+}
+N_TOKEN="GRANT %I TO %I WITH SET FALSE"
+N_ASERC='[ "$SET_OK" -eq 0 ] \'
+# El canario COPY se neutraliza por su `if` EXTERIOR, no por el `if [ "$COPY_RC"
+# -eq 0 ]` de dentro: neutralizando solo ese, el `else` del `grep` de 42501 sigue
+# ahí y mata el gate igual (medido: rc=1 y el COPY nunca llegaba a ejecutarse, así
+# que la mitad (b) no demostraba la escalada). El `if` exterior aparece dos veces en
+# el gate; el ancla es la línea siguiente, que es única.
+N_COPY='if [ "$APPLY_AS_SUPERUSER" != "1" ]; then
+  COPY_LOG="$(mktemp)"'
+
+# (a) solo el token fuera.
+GATE_SINSET="$TMP/gate_sin_with_set_false.sh"
+if ! mutar_gate "$GATE_SINSET" "$N_TOKEN" "GRANT %I TO %I"; then
+  bad "no se pudo mutar el gate para quitar WITH SET FALSE (¿cambió la línea?) — el caso no probó nada"
 else
   R="$(mkrepo)"; T="$(newdb)"
-  commit_mig "$R" "225_tras_sed_mutado.sql" "ALTER TABLE public.ventas ADD COLUMN tras_mut text;"
-  # `SQL_APPLY` explícito: la copia mutada vive en $TMP y el gate resuelve el
-  # aplicador junto a SU propio archivo, así que sin esto moriría por no
-  # encontrarlo — un rojo, sí, pero por el motivo equivocado.
-  OUT="$( cd "$R" && SQL_APPLY="$REAL_APPLY" bash "$GATE_MUT" --target "$T" --baseline "$BASE_ADP" --base-ref HEAD~1 2>&1 )"; RC=$?
-  must_fail_with "sed neutralizado => ROJO (el conteo sale del archivo normalizado, no de un grep aparte)" \
-    "$RC" "$OUT" "el descarte de ALTER DEFAULT PRIVILEGES NO se aplicó"
-  echo "$OUT" | grep -qE "fidelidad recortada a propósito: [1-9]" \
-    && bad "el gate mutado ANUNCIÓ un recorte que no hizo (el conteo sigue mintiendo)" \
-    || ok "un sed neutralizado ya no puede anunciar un recorte que no hizo"
+  commit_mig "$R" "228_tras_token_fuera.sql" "ALTER TABLE public.ventas ADD COLUMN tras_token text;"
+  resetear_membresia_aplicador "$T" \
+    && ok "membresía del aplicador revocada: el gate mutado arranca como en CI (rol limpio)" \
+    || bad "no se pudo revocar la membresía del aplicador: (a) correría sobre un rol que YA trae WITH SET FALSE y no probaría nada"
+  OUT="$( cd "$R" && SQL_APPLY="$REAL_APPLY" bash "$GATE_SINSET" --target "$T" --baseline "$BASE_ADP" --base-ref HEAD~1 2>&1 )"; RC=$?
+  must_fail_with "sin WITH SET FALSE => el gate MUERE (la aserción de escalada tiene dientes)" \
+    "$RC" "$OUT" "rol(es) SUPERUSUARIO"
+  echo "$OUT" | grep -q "migration-gate: 0 fail" \
+    && bad "el gate sin WITH SET FALSE llegó a declarar 0 fail: la regresión pasaría en verde" \
+    || ok "el gate sin WITH SET FALSE no llega a declarar 0 fail"
+fi
+
+# (b) token fuera Y guardas fuera: el peligro es real, no hipotético.
+#
+# EL OBSERVABLE NO ES UN ARCHIVO, y es una corrección medida. La primera versión
+# exigía que `COPY … TO PROGRAM 'touch $TMP/…'` CREARA el archivo, y salía BAD
+# diciendo "la escalada no ocurrió" — pero sí ocurría: el servidor EJECUTÓ el
+# programa y devolvió SQLSTATE 38000 «program … failed» porque el proceso de
+# Postgres corre como el usuario `postgres` y no puede escribir en `$TMP`
+# (mktemp -d + chmod 755: atravesable, no escribible). O sea que el archivo sirve
+# como prueba NEGATIVA ("no se creó ⇒ no se ejecutó", caso 12 y 13c) pero NO como
+# prueba POSITIVA: su ausencia confunde "denegado" con "ejecutado y falló al
+# escribir", que son exactamente los dos estados que hay que distinguir.
+#
+# Se usa un programa que no toca el disco (`true`) y se mira lo que SÍ distingue:
+# el SERVIDOR deja pasar el `COPY` (el gate llega a `0 fail`) y
+# `pg_has_role(…,'SET')` pasa a ser verdadero. Es el DIFERENCIAL exacto contra el
+# caso 13c, que corre el MISMO SQL con el gate real y obtiene 42501.
+GATE_ABIERTO="$TMP/gate_sin_token_ni_guardas.sh"
+ESCALADA_SQL="SET ROLE postgres;
+COPY (SELECT 1) TO PROGRAM 'true';"
+if ! mutar_gate "$GATE_ABIERTO" \
+      "$N_TOKEN" "GRANT %I TO %I" \
+      "$N_ASERC" '[ "$SET_OK" -ge 0 ] \' \
+      "$N_COPY" 'if false; then
+  COPY_LOG="$(mktemp)"'; then
+  bad "no se pudo mutar el gate para desactivar token Y guardas — no consta que el peligro sea real"
+else
+  # DIFERENCIAL, primera mitad: con el gate REAL el mismo SQL es 42501.
+  R="$(mkrepo)"; T="$(newdb)"
+  commit_mig "$R" "229a_escalada_gate_real.sql" "$ESCALADA_SQL"
+  OUT="$(run_gate "$R" "$T" "$BASE_ADP")"; RC=$?
+  must_fail_with "gate REAL: 'SET ROLE postgres' + COPY … TO PROGRAM => DENEGADO" \
+    "$RC" "$OUT" "permission denied to set role"
+
+  # …y segunda mitad: con el token y las guardas fuera, el MISMO SQL pasa.
+  R="$(mkrepo)"; T="$(newdb)"
+  commit_mig "$R" "229b_escalada_gate_abierto.sql" "$ESCALADA_SQL"
+  resetear_membresia_aplicador "$T" \
+    || bad "no se pudo revocar la membresía del aplicador: (b) no podría demostrar la escalada"
+  OUT="$( cd "$R" && SQL_APPLY="$REAL_APPLY" bash "$GATE_ABIERTO" --target "$T" --baseline "$BASE_ADP" --base-ref HEAD~1 2>&1 )"; RC=$?
+  if [ "$RC" -eq 0 ] && echo "$OUT" | grep -q "migration-gate: 0 fail"; then
+    ok "sin el token y sin guardas, 'SET ROLE postgres' + COPY … TO PROGRAM SÍ EJECUTA: el peligro es REAL"
+  else
+    bad "sin el token y sin guardas el COPY … TO PROGRAM no ejecutó (rc=$RC): este harness no prueba la escalada que dice, o el servidor la corta por otra vía — revísalo antes de fiarte de (a)"
+    echo "$OUT" | sed 's/^/      /' | tail -12
+  fi
+  SETMUT="$($PSQL "$T" -tAc "SELECT pg_has_role('migration_gate_applier','postgres','SET')" 2>/dev/null | tr -d ' ')"
+  [ "$SETMUT" = "t" ] \
+    && ok "y el catálogo lo confirma: sin el token, pg_has_role(aplicador,'postgres','SET') = true" \
+    || bad "el catálogo dice SET='$SETMUT' tras el gate mutado: la mutación no reprodujo la membresía plana"
 fi
 
 # ============================================================
-# 13e. EL FALSO ROJO SE ANUNCIA COMO FALSO ROJO, Y NO SE AFIRMA UNA CAUSA QUE EL
-#      GATE NO PUEDE ESTABLECER. Antes, una migración del PR con ADP salía con el
-#      resumen genérico ("una migración nueva NO aplica sobre el esquema real de
-#      PROD") más la pista de DRIFT, las dos ajenas al caso: el mismo pecado que
-#      ya se arregló para `rc=3`. La pista va ahora CONDICIONADA al log.
+# 13f. `WITH SET FALSE` ES PostgreSQL 16+. En PG15 es un ERROR DE SINTAXIS, y el
+#      GRANT del gate va con `>/dev/null 2>&1`: sin esta comprobación el
+#      aplicador se quedaría SIN la membresía y el baseline moriría más abajo con
+#      un 42501 desconcertante. Peor sería "reintentar sin el token", que es
+#      degradarse en silencio a la escalada. Se exige un mensaje CLARO.
+#
+#      Cómo se prueba sin un PG15: un `psql` de mentira que solo miente en
+#      `SHOW server_version_num` y delega todo lo demás en el real. Es la misma
+#      vía (`PSQL_BIN`) que el gate ya documenta para el SQL de preparación.
 # ============================================================
+PSQL_VIEJO="$TMP/psql_pg15"
+cat > "$PSQL_VIEJO" <<PSQLFAKE
+#!/bin/sh
+for a in "\$@"; do
+  case "\$a" in *server_version_num*) echo 150000; exit 0 ;; esac
+done
+exec $PSQL "\$@"
+PSQLFAKE
+chmod 755 "$PSQL_VIEJO"
+# Que el falso psql MIENTE donde debe y delega el resto: si delegara también la
+# versión, el caso quedaría verde sin haber probado nada.
+[ "$("$PSQL_VIEJO" "${TPL//\{db\}/postgres}" -tAc 'SHOW server_version_num' 2>/dev/null | tr -d ' ')" = "150000" ] \
+  && ok "el psql de mentira reporta server_version_num=150000" \
+  || bad "el psql de mentira no miente la versión: el caso 13f no probaría nada"
+[ "$("$PSQL_VIEJO" "${TPL//\{db\}/postgres}" -tAc 'SELECT 42' 2>/dev/null | tr -d ' ')" = "42" ] \
+  && ok "el psql de mentira delega el resto en el psql real" \
+  || bad "el psql de mentira no delega: el caso 13f fallaría por el motivo equivocado"
 R="$(mkrepo)"; T="$(newdb)"
-commit_mig "$R" "226_adp_falso_rojo.sql" \
-  "ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO anon;"
-OUT="$(run_gate "$R" "$T" "$BASE_ADP")"; RC=$?
-[ "$RC" -ne 0 ] && ok "la ADP del PR sigue siendo ROJA (no se silencia SQL del PR)" \
-  || { bad "la ADP de una migración del PR pasó: el descarte se extendió al PR (fail-OPEN)"; echo "$OUT" | sed 's/^/      /'; }
-echo "$OUT" | grep -q "FALSO ROJO CONOCIDO" \
-  && ok "el resumen lo declara FALSO ROJO CONOCIDO (clase 1, 42501)" \
-  || { bad "el resumen no conecta el rojo con el recorte de default privileges"; echo "$OUT" | sed 's/^/      /'; }
-echo "$OUT" | grep -q "NO aplica sobre el esquema real de PROD" \
-  && bad "sigue AFIRMANDO una causa que el gate no puede establecer aquí" \
-  || ok "no afirma 'no aplica sobre PROD' donde no puede establecerlo"
-echo "$OUT" | grep -qi "la causa probable es drift" \
-  && bad "suelta la pista de DRIFT, que es ajena a este rojo" \
-  || ok "no suelta la pista de drift, que aquí es ajena"
+commit_mig "$R" "230_en_pg15.sql" "ALTER TABLE public.ventas ADD COLUMN pg15 text;"
+OUT="$( cd "$R" && PSQL_BIN="$PSQL_VIEJO" bash "$GATE" --target "$T" --baseline "$BASE_ADP" --base-ref HEAD~1 2>&1 )"; RC=$?
+must_fail_with "destino PostgreSQL 15 => ROJO con mensaje claro, NUNCA degradarse sin el token" \
+  "$RC" "$OUT" "necesita 16+"
+echo "$OUT" | grep -q "migration-gate: 0 fail" \
+  && bad "el gate declaró 0 fail sobre un destino sin WITH SET FALSE" \
+  || ok "el gate no valida nada sobre un destino que no soporta WITH SET FALSE"
 
-# …y la clase (2), que NO es 42501 sino 42704: `FOR ROLE <rol que no se precrea>`.
-# Los roles se derivan de lo que sigue a TO/FROM, nunca a FOR ROLE, así que la
-# forma de 048b sale como 'role "supabase_admin" does not exist'.
+# …y si la versión no se puede LEER, tampoco se concede nada a ciegas.
+PSQL_MUDO="$TMP/psql_sin_version"
+cat > "$PSQL_MUDO" <<PSQLFAKE2
+#!/bin/sh
+for a in "\$@"; do
+  case "\$a" in *server_version_num*) echo ""; exit 0 ;; esac
+done
+exec $PSQL "\$@"
+PSQLFAKE2
+chmod 755 "$PSQL_MUDO"
 R="$(mkrepo)"; T="$(newdb)"
-commit_mig "$R" "227_adp_rol_inexistente.sql" \
-  "ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON TABLES FROM anon;"
-OUT="$(run_gate "$R" "$T" "$BASE_ADP")"; RC=$?
-must_fail_with "FOR ROLE supabase_admin en el PR => ROJO por 'role does not exist' (42704), no por 42501" \
-  "$RC" "$OUT" 'role "supabase_admin" does not exist'
-echo "$OUT" | grep -q "FALSO ROJO CONOCIDO" \
-  && ok "el 42704 también se declara falso rojo conocido (clase 2)" \
-  || { bad "el 42704 no se reconoce como la clase (2) del falso rojo"; echo "$OUT" | sed 's/^/      /'; }
+commit_mig "$R" "231_version_ilegible.sql" "ALTER TABLE public.ventas ADD COLUMN sinver text;"
+OUT="$( cd "$R" && PSQL_BIN="$PSQL_MUDO" bash "$GATE" --target "$T" --baseline "$BASE_ADP" --base-ref HEAD~1 2>&1 )"; RC=$?
+must_fail_with "versión del servidor ILEGIBLE => ROJO (no se concede la membresía a ciegas)" \
+  "$RC" "$OUT" "server_version_num"
 
 echo "---"
 echo "migration-gate.selftest: $PASS ok / $FAIL bad"

@@ -37,28 +37,26 @@
 #   supabase/baseline/schema.sql        el esquema de public+analytics
 #   supabase/baseline/PROD_MIGRATIONS   migraciones aplicadas al momento del volcado
 #
-# ⚠ EL VOLCADO ES FIEL; EL GATE NO LO USA ENTERO. Este script NO filtra nada: el
-# schema.sql sigue siendo respaldo fiel de PROD, default privileges incluidos, y
-# se lee en git como tal. Pero `migration-gate.sh` DESCARTA al cargar las
-# sentencias `ALTER DEFAULT PRIVILEGES`, porque `FOR ROLE postgres` exige
-# membresía en el SUPERUSUARIO y su aplicador es NOSUPERUSER a propósito. O sea:
-# el gate NO modela los default privileges de PROD. El motivo completo, las dos
-# alternativas descartadas (`--no-acl` y clasificar por regex qué se aplica como
-# superusuario) y el falso rojo que esto implica están en la sección
-# "LO QUE EL GATE NO MODELA" de la cabecera de migration-gate.sh.
+# EL VOLCADO ES FIEL Y SE USA ENTERO. Este script NO filtra nada, y el gate
+# tampoco: `migration-gate.sh` carga el baseline COMPLETO, sus 24 `ALTER DEFAULT
+# PRIVILEGES` incluidas. Puede hacerlo porque su aplicador NOSUPERUSER recibe
+# membresía en los roles superusuario con `GRANT … WITH SET FALSE` (PostgreSQL
+# 16+), que da el `has_privs_of_role` que esas sentencias exigen y PROHÍBE `SET
+# ROLE` — o sea, sin reabrir `COPY … TO PROGRAM`. Detalle y mediciones en la
+# sección "LOS DEFAULT PRIVILEGES DEL BASELINE SE APLICAN" de la cabecera de
+# migration-gate.sh.
 #
-# No filtrar aquí es la decisión: el recorte vive en el CONSUMIDOR, así que el
-# artefacto no miente y regenerarlo nunca hace falta para desbloquear el gate.
-#
-# ⚠ SI EL GATE SE PONE ROJO NOMBRANDO ESTE VOLCADO, no es drift: el gate no
-# descarta a ciegas. Exige que TODAS las apariciones de `ALTER DEFAULT
-# PRIVILEGES` sean sentencias completas de una línea y que no haya ningún `$` en
-# o después de la primera (si lo hubiera, un borrado podría caer dentro de un
-# cuerpo dollar-quoted y la función se cargaría TRUNCADA sin ningún error). Hoy
-# pg_dump cumple las dos —24/24, último `$` 5.300 líneas antes— pero si algún día
-# deja de cumplirlas el gate MUERE en vez de mutilar el baseline en silencio. El
-# arreglo es del CONSUMIDOR (migration-gate.sh), no de este volcado: sigue
-# fiel.
+# HISTORIA, porque cambia qué hay que mirar si algo se pone rojo: hubo tres rondas
+# en que el gate DESCARTABA esas sentencias con un `sed`, y cada ronda encontró una
+# clase nueva de falso verde (sentencia vecina pegada; cuerpos dollar-quoted;
+# literales de comilla simple MULTILÍNEA, que pg_dump emite de forma natural en
+# CHECK/DEFAULT/CREATE VIEW/CREATE POLICY). Ese filtro YA NO EXISTE, y con él se
+# fueron sus exigencias sobre la FORMA del volcado: hoy este archivo puede traer
+# `ALTER DEFAULT PRIVILEGES` donde quiera, partida en varias líneas o dentro de un
+# literal, y el gate no la interpreta — la ejecuta. Si el gate se pone rojo
+# nombrando este volcado, es un problema REAL del esquema o del entorno, no una
+# exigencia de forma del gate. Lo único que sí exige es un destino PostgreSQL 16+
+# (`WITH SET FALSE`), y lo dice con ese mensaje.
 set -uo pipefail
 
 PGBIN="${PGBIN:-}"
