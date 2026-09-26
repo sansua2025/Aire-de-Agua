@@ -401,3 +401,55 @@ Nota: el propio reporte lleva `↔ · — ⚠ ≠ →` (multibyte) => tambien es
   `permissions: contents:read + issues:write`. El job sigue fallando con drift (`exit "${STATUS:-2}"`).
 - Sentinela_v1.json: `activeVersion === null` en main y en HEAD => paridad AIR-140 vacua. Sin nodos
   Claude/Anthropic. El nodo Gmail tiene destinatario fijo (no controlable por el dato).
+
+## Vector: `sed` de normalizacion sobre un artefacto que el PR puede editar (migration-gate.sh, sha a7d330d) — RONDA 5
+AIR-276 descarta las 24 `ALTER DEFAULT PRIVILEGES` del baseline con
+`/^ALTER DEFAULT PRIVILEGES .*;[[:space:]]*$/d`. DOS fallos, los dos MEDIDOS con GNU sed 4.9:
+1. **El residual declarado "dollar-quoted => error de sintaxis => ROJO" es FALSO: sale VERDE y en
+   silencio.** Borrar una SENTENCIA COMPLETA de un cuerpo plpgsql deja plpgsql VALIDO
+   (`BEGIN / IF … END IF; / RETURN NEW; / END;` tras quitar la linea del medio), asi que
+   `check_function_bodies` no lo rechaza: la funcion se CREA con el cuerpo truncado. Ni error, ni log,
+   ni señal en el diff — el borrado ocurre en tiempo de CARGA, no en el artefacto. Falso verde del
+   gate en cuanto PROD tenga una sentencia a columna 0 dentro de un cuerpo. `--no-comments` en el
+   volcado cierra la variante por `COMMENT ON`; los cuerpos de funcion NO.
+   REGLA GENERAL: **"borrar una linea dentro de una cadena/cuerpo da error de sintaxis" es falso casi
+   siempre.** Quitar un statement completo casi nunca rompe la gramatica; rompe la SEMANTICA, que es
+   justo lo que no se ve. Antes de aceptar un residual que promete fallo ruidoso, construir el caso.
+2. **`.*` codicioso borra sentencias ajenas y el conteo anunciado las oculta.** El patron solo exige
+   que la linea ACABE en `;`, asi que `ALTER DEFAULT PRIVILEGES …; DROP TABLE public.ventas;` se va
+   ENTERA y el log dice "1 sentencia ALTER DEFAULT PRIVILEGES descartada". El `echo` del conteo era la
+   unica evidencia visible del recorte y es falsificable con un prefijo. Fix de 1 caracter (`[^;]*`),
+   que sigue casando las 24 reales.
+Fix de ambos sin replicar lexer (la objecion "replicar el lexer diverge siempre" es legitima):
+`grep -c 'ALTER DEFAULT PRIVILEGES' == grep -cE '^ALTER DEFAULT PRIVILEGES [^;]*;$'` o `die`. Hoy 24==24.
+**PATRON A EXIGIR: toda normalizacion textual de un artefacto necesita una asercion de que TODAS las
+apariciones del patron son de la forma que la normalizacion sabe tratar; si no, FALLAR.** Un `sed -E`
+sobre datos que otro proceso genera es la misma clase de fallo que el lexer, solo mas corta.
+
+## Nadie verifica el CONTENIDO de `supabase/baseline/schema.sql` (confirmado en a7d330d)
+`migration-baseline-freshness` (inline en ci.yml ~236-258) compara SOLO `PROD_MIGRATIONS`. No hay
+checksum ni comparacion de `schema.sql` en ningun script ni job. Es lo que convierte cualquier
+corrupcion silenciosa del baseline en falso verde no detectable. Al revisar el gate: el baseline es un
+INPUT NO VERIFICADO; toda transformacion sobre el tiene que ser fail-closed por si misma.
+
+## `ALTER DEFAULT PRIVILEGES` es PER-GRANTOR — usarlo para acotar el radio de un recorte
+Las 24 del baseline son `FOR ROLE postgres` (12) o `FOR ROLE supabase_admin` (12). En el destino
+efimero NADA crea objetos como esos roles (el grantor es siempre `migration_gate_applier`), asi que las
+24 no habrian tenido efecto observable ni aplicandose. Sirve para DESCARTAR el vector "el borrado
+neutraliza una defensa del esquema" en una linea, sin razonar caso por caso.
+Corolario de derivacion: la lista de roles del gate captura lo que sigue a `TO`/`FROM`, NUNCA a
+`FOR ROLE` => `supabase_admin` no se precrea nunca, y el falso rojo de una migracion con
+`FOR ROLE supabase_admin` (048b) sera `role does not exist`, no el 42501 documentado.
+
+## Auditar las CITAS de ejemplo, no solo la logica (a7d330d, 3 copias del mismo error)
+"la forma que usan 081 y 136" / "la forma sin FOR ROLE (022, 048b, 060, 069)": **136 y 069 solo la
+mencionan en un comentario `--`**, no tienen la sentencia; **037 SI la tiene y no se nombra**; 048b usa
+LAS DOS formas. Barato de comprobar (`grep -n 'PATRON' -A2 <archivo>` y mirar si la linea empieza por
+`--`) y aparecio identico en commit + cabecera + CLAUDE.md. Un `grep -c` cuenta comentarios como uso.
+Lo mismo en el self-test: un comentario que afirma "este rol si funcionaria" cuando el rol no se
+precrea en ese harness => afirmacion indemostrable con lo que el test ejecuta.
+
+## `gh` NO existe en este entorno: publicar el veredicto por MCP
+`gh: command not found` (coherente con la nota de la retro nocturna). Usar
+`mcp__github__add_issue_comment` con owner `sansua2025`, repo `Aire-de-Agua`. El head se resuelve con
+`git fetch origin <rama> && git rev-parse origin/<rama>`, no con `gh pr view`.
