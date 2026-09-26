@@ -453,3 +453,37 @@ precrea en ese harness => afirmacion indemostrable con lo que el test ejecuta.
 `gh: command not found` (coherente con la nota de la retro nocturna). Usar
 `mcp__github__add_issue_comment` con owner `sansua2025`, repo `Aire-de-Agua`. El head se resuelve con
 `git fetch origin <rama> && git rev-parse origin/<rama>`, no con `gh pr view`.
+
+## Revisar el BLOB COMPROMETIDO, no el archivo del arbol de trabajo (reviewer, PR #186)
+Corri el gate por ruta (`bash scripts/agent/migration-gate.sh`) y a mitad de la review otro agente
+dejo `migration-gate.sh` MODIFICADO SIN COMMITEAR en el mismo arbol (56+/22-). Estuve a punto de
+firmar un veredicto sobre codigo que no esta en ningun commit. Regla: extraer siempre
+`git show <head>:<path> > /tmp/.../<path>` y ejecutar ESO. Comprobar `git status --porcelain` antes
+de empezar Y antes de firmar; si el head se movio o el arbol esta sucio en los archivos del alcance,
+re-anclar. (En este PR el head paso de a7d330d a 29ab431 —solo MEMORY.md— mientras revisaba.)
+
+## Un conteo calculado por SEGUNDA VIA no prueba lo que el log afirma
+`ADP_N=$(grep -c PATRON ...)` + `sed /PATRON/d`: dos copias literales del patron. Mutacion: deje el
+`sed` sin borrar nada y el log siguio anunciando "3 sentencia(s) DESCARTADAS" con la asercion
+"declara CUANTAS descarto (3)" en **ok**. Un numero que se deriva del mismo input pero por otro camino
+puede mentir sobre lo que paso; hay que derivarlo de la DIFERENCIA REAL (antes vs despues). Al revisar:
+toda cifra que un log "declara" se audita preguntando *de donde sale*, no si el valor de hoy cuadra.
+
+## Verificar por EJECUCION que un patron textual no se come vecinos (a7d330d: dos falsos verdes)
+`/^ALTER DEFAULT PRIVILEGES .*;[[:space:]]*$/d` con `.*` codicioso borra la LINEA ENTERA. Reproducido:
+(a) `ADP ...; CREATE TABLE public.x(id int);` en una linea => la tabla nunca carga y una migracion del
+PR que la CREA sale **verde** (en PROD seria "already exists" = drift, lo que el gate existe para
+cazar); (b) esa linea a columna 0 dentro de un cuerpo `$$...$$` de plpgsql => la funcion se crea con el
+cuerpo TRUNCADO, sin error y sin rastro — refutando el comentario que prometia "error de sintaxis =>
+ROJO". Receta de ataque para cualquier `sed`/regex de normalizacion: meter una segunda sentencia en la
+misma linea, y meter el patron dentro de un cuerpo dollar-quoted. Usar `[^;]*` en vez de `.*` y afirmar
+que TODAS las apariciones son de la forma tratable.
+
+## Levantar un PG17 real en este contenedor para correr el self-test del gate
+Hay `psql`, `psycopg2` y binarios en `/usr/lib/postgresql/{16,17}/bin`, sin servidor arrancado, y
+`initdb` no corre como root: usar el usuario `postgres` (uid 102) con `su postgres -c`.
+`SELFTEST_DB_URL_TEMPLATE='postgresql://postgres@127.0.0.1:<puerto>/{db}'`. **Trampa que me costo una
+corrida entera:** el PGDATA NO puede vivir bajo el scratchpad — la plataforma reimpone `drwx------` en
+`/tmp/claude-0` y el checkpointer muere con `PANIC: could not open file ... pg_control: Permission
+denied` a mitad del test (sintoma enganoso: TODAS las aserciones en BAD, como si el codigo estuviera
+roto). Usar `/tmp/<dir>` propio de `postgres`. pgvector esta disponible; sin el, `EXTENSIONS=""`.
