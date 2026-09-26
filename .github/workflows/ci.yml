@@ -87,6 +87,23 @@ jobs:
         run: bash scripts/agent/hooks/guard-verify-readonly.test.sh
       - name: Guard de agentes read-only (self-test)
         run: bash scripts/agent/hooks/guard-readonly-agents.test.sh
+      # AIR-162 (retro PR #184) — los tres self-tests de arriba cubren la
+      # SEMÁNTICA de cada guard; lo que sigue cubre su COBERTURA, que es la
+      # intersección de dos capas distintas y divergió de la declarada 3 veces
+      # en una sola ronda de revisión (comentarios del guard, CLAUDE.md, globs
+      # sin '*' final). El check EJECUTA guard-prod-writes.sh con payloads
+      # sintéticos (un tool_name por tool del piso, con tres prefijos de
+      # servidor y la variante _v2) y exige 'ask'; de .claude/settings.json
+      # —que no se puede ejecutar— evalúa la regex de los matchers cableados
+      # contra esos mismos nombres, con la semántica del binario; y comprueba
+      # que CLAUDE.md no declare más superficie de la que el hook tiene.
+      # Verificar por conducta y no por parseo es lo que cierra el `case`
+      # señuelo y el espacio en el matcher, que engañaban a las versiones
+      # anteriores del check.
+      - name: Self-test de cobertura del guard (controles negativos)
+        run: bash scripts/agent/check-guard-coverage-parity.selftest.sh
+      - name: Cobertura del guard de writes a PROD (piso de conducta + doc)
+        run: bash scripts/agent/check-guard-coverage-parity.sh
 
   n8n-sync:
     name: n8n-sync
