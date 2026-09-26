@@ -1,0 +1,785 @@
+#!/usr/bin/env bash
+# migration-gate.sh — AIR-276. Valida POR EJECUCIÓN que las migraciones NUEVAS
+# de un PR aplican sobre el esquema REAL de PROD.
+#
+# ┌─ POR QUÉ EXISTE ──────────────────────────────────────────────────────────┐
+# │ El check `Supabase Preview` no puede pasar NUNCA en este repo: un preview  │
+# │ branch arranca de una base vacía y reproduce supabase/migrations/ desde    │
+# │ cero, pero ese directorio es RESPALDO de lo aplicado, no un bootstrap —    │
+# │ ninguna migración crea las tablas base (`venta_items`, `ventas`,           │
+# │ `productos`, `clientes`), así que muere en el archivo 1 de 152. Y cuando   │
+# │ el cupo de branches concurrentes se agota, el check se salta EN SILENCIO.  │
+# │ Resultado: ninguna migración de este repo estuvo nunca validada por        │
+# │ ejecución antes de entrar a PROD. Ver AIR-276 y AIR-162.                   │
+# │                                                                            │
+# │ Este gate invierte el planteamiento: en vez de reconstruir la historia,    │
+# │ parte del esquema ACTUAL de PROD y aplica encima SOLO lo que el PR agrega. │
+# │ Es la pregunta que de verdad importa —"¿esta migración aplica sobre lo que │
+# │ hay en producción?"— y es contestable hoy, sin arqueología.                │
+# └───────────────────────────────────────────────────────────────────────────┘
+#
+# NUNCA PASA EN SILENCIO. Si no puede verificar (falta baseline, falta target,
+# el baseline no carga, el base-ref no resuelve, un archivo declarado añadido no
+# está en el árbol), FALLA. El baseline se carga en CADA corrida, haya o no
+# migraciones nuevas: un PR que solo edite `supabase/baseline/schema.sql` no
+# puede pasar sin que se cargue, y cada push a `main` re-verifica que el baseline
+# vigente carga bajo la contención vigente (ver paso 1). Un gate que se salta a sí mismo es la patología que
+# este gate viene a cerrar; no la reproduce.
+#
+# ┌─ MODELO DE AMENAZA: ESTE GATE EJECUTA CÓDIGO DEL PR ──────────────────────┐
+# │ El input son archivos .sql que trae el PR. Ejecutarlos es ejecución de     │
+# │ código controlado por el autor del PR dentro del runner. Dos canales       │
+# │ REALES, verificados ejecutándolos contra un Postgres de verdad:            │
+# │                                                                            │
+# │  (a) METACOMANDOS DE psql. `psql -f` interpreta `\!`, `\copy`, `\i`, `\o`… │
+# │      desde un archivo igual que en sesión interactiva. Ni                  │
+# │      `--single-transaction` ni `ON_ERROR_STOP=1` los desactivan: un        │
+# │      `\! sh -c 'id > /tmp/PWNED'` se ejecuta como root y el gate reporta   │
+# │      EXIT=0.                                                               │
+# │      → CERRADO POR CONSTRUCCIÓN: el SQL del PR ya NO pasa por psql. Se     │
+# │        aplica con `scripts/agent/sql-apply.py`, que habla el protocolo de  │
+# │        Postgres (psycopg) y no tiene capa de metacomandos: para el         │
+# │        SERVIDOR, un backslash suelto es un error de sintaxis. psql se      │
+# │        sigue usando SOLO para el SQL de preparación, que es NUESTRO.       │
+# │                                                                            │
+# │      POR QUÉ NO SE ESCANEA EL ARCHIVO EN VEZ DE ESTO. Se intentó: un       │
+# │      escáner propio que replicaba la tokenización de psql. Divergió        │
+# │      CUATRO veces, cada una un bypass reproducido: el backslash a mitad    │
+# │      de sentencia; el `\restrict` que pg_dump pone en todo volcado; `$`    │
+# │      como carácter legal DENTRO de un identificador (`SELECT 1 AS a$q$;`   │
+# │      y `ADD COLUMN col_a$$b text;` NO abren un dollar-quote, pero el       │
+# │      escáner creía que sí y se tragaba el metacomando siguiente); y las    │
+# │      etiquetas no ASCII (`$ñ$…$ñ$` SÍ es dollar-quote para psql). La       │
+# │      lección no es "faltaba un caso" sino que replicar ese lexer diverge   │
+# │      siempre, y la siguiente divergencia existe aunque no la hayamos       │
+# │      encontrado. Por eso el lexer se BORRÓ en vez de parcharse.            │
+# │                                                                            │
+# │  (b) COPY … TO/FROM PROGRAM y COPY contra archivos del servidor. Es SQL    │
+# │      legítimo, así que quitar la capa de metacomandos no lo toca; ejecuta  │
+# │      órdenes y abre red dentro del contenedor de Postgres. Exige           │
+# │      SUPERUSER (o pg_execute_server_program / pg_read_server_files).       │
+# │      → Capa aparte: las migraciones NO se aplican como superusuario. El    │
+# │        gate crea un rol NOSUPERUSER en la base efímera, le da la           │
+# │        propiedad de la base, y carga baseline y migraciones con ÉL.        │
+# │        Verificado en PG16: `COPY … TO PROGRAM` → "permission denied";      │
+# │        `GRANT pg_execute_server_program` → denegado; `CREATE ROLE …        │
+# │        SUPERUSER` → denegado; `ALTER SYSTEM` → denegado. Y lo que las      │
+# │        migraciones de este repo SÍ necesitan sigue funcionando: CREATE     │
+# │        ROLE simple (022, 081, 087, 104), CREATE SCHEMA, CREATE TABLE,      │
+# │        funciones SECURITY DEFINER, extensiones de confianza.               │
+# │                                                                            │
+# │ Las dos son INDEPENDIENTES: (b) no cubre (a) —`\!` lo ejecuta el proceso   │
+# │ CLIENTE, así que el rol de base de datos es irrelevante— ni (a) a (b).     │
+# │                                                                            │
+# │ CONTROLES POSITIVOS: antes de aplicar nada, el gate comprueba EN           │
+# │ CALIENTE que el servidor rechaza el metacomando canario `\!` (42601,       │
+# │ canal (a)) y que le NIEGA al aplicador `COPY (SELECT 1) TO PROGRAM         │
+# │ 'cat >/dev/null'` (42501, canal (b)). Si alguno pasa, muere. La           │
+# │ contención no se supone: se demuestra en cada corrida.                     │
+# └───────────────────────────────────────────────────────────────────────────┘
+#
+# ┌─ EL SUPERUSUARIO EFÍMERO NO SE LLAMA `postgres` — Y SE AFIRMA ────────────┐
+# │ El baseline de PROD NOMBRA a `postgres`: trae 24 `ALTER DEFAULT           │
+# │ PRIVILEGES`, 12 `FOR ROLE postgres` y 12 `FOR ROLE supabase_admin`, que    │
+# │ exigen `has_privs_of_role(current_user, X)`. En PROD `postgres` es un rol  │
+# │ más; en la imagen `pgvector/pgvector:pg17` es, por defecto, EL             │
+# │ SUPERUSUARIO. Con esa coincidencia de nombre, cargar el baseline exige     │
+# │ hacer al aplicador MIEMBRO de un superusuario, y eso arrastra las ACL que  │
+# │ `initdb` pone a nombre del superusuario. MEDIDO en PG 17.11 (`initdb -U    │
+# │ postgres`, aplicador con `GRANT postgres TO … WITH SET FALSE`, sin poder   │
+# │ `SET ROLE`): `lo_import('/etc/hostname')` y `pg_read_file(               │
+# │ 'postgresql.conf')` FUNCIONAN — lectura (y con `lo_export`, escritura) de  │
+# │ archivos del servidor. El token cerraba `SET ROLE`, no la herencia de ACL. │
+# │                                                                            │
+# │ ARREGLO: quitar la coincidencia, no esquivarla. En ci.yml el superusuario  │
+# │ efímero se llama `gate_super` (`POSTGRES_USER`), un nombre que un volcado  │
+# │ de Supabase no emite. `postgres` pasa a ser un rol PLANO NOLOGIN que el    │
+# │ gate precrea (paso 3) y en el que el aplicador entra por el bucle de       │
+# │ siempre (`WHERE NOT rolsuper`). MEDIDO en PG 17.11 con `initdb -U          │
+# │ gate_super`: el rol `postgres` no existe hasta que el gate lo crea;        │
+# │ `proacl` de `lo_import` = `{gate_super=X/gate_super}`; la ADP `FOR ROLE    │
+# │ postgres` aplica con grantor `postgres`; `lo_import`, `pg_read_file` y     │
+# │ `COPY … TO PROGRAM` → permission denied; `SET ROLE postgres` funciona y    │
+# │ deja rolsuper=false (inofensivo). Sin `WITH SET FALSE` ni guarda PG16+:    │
+# │ la clase entera desaparece. (El canario de COPY se retiró con ellas por    │
+# │ tautológico y VOLVIÓ después por otra amenaza —membresía directa en        │
+# │ `pg_execute_server_program`—: ver el paso 4b.)                             │
+# │                                                                            │
+# │ LO QUE LO SOSTIENE (paso 3 y paso 4, en cada corrida, fail-closed):        │
+# │  · INVARIANTE DE COLISIÓN: ningún rol nombrado en el baseline (derivados   │
+# │    de GRANT/REVOKE/OWNER TO/FOR ROLE, más los 5 base de Supabase) puede    │
+# │    ser superusuario en el destino. Si mañana alguien vuelve a              │
+# │    `POSTGRES_USER=postgres`, o el baseline trae `FOR ROLE gate_super`      │
+# │    (con cualquier grafía NO entrecomillada: la derivación pliega a         │
+# │    minúsculas como Postgres, así que `FOR ROLE GATE_SUPER` también), el    │
+# │    gate MUERE nombrando el rol, ANTES de crear roles o cargar nada. Es el  │
+# │    fallo TEMPRANO y NOMBRADO; quien impide la membresía en un              │
+# │    superusuario es el `WHERE NOT rolsuper` del paso 4, lo nombre el        │
+# │    baseline o no.                                                          │
+# │  · TRES cuentas que deben valer 0, cada una una vía CONCRETA (y nada       │
+# │    más): cuenta 1, superusuarios sobre los que el aplicador puede `SET     │
+# │    ROLE`; cuenta 2, funciones con ACL que el aplicador ejecuta y PUBLIC    │
+# │    no (caza el `lo_import` heredado de arriba); cuenta 3, membresía en     │
+# │    `pg_execute_server_program`/`pg_read_server_files`/                     │
+# │    `pg_write_server_files` (COPY a programa/archivo sin función).          │
+# │  · canario COPY (`COPY … TO PROGRAM` ⇒ 42501), que demuestra por su        │
+# │    efecto lo que la cuenta 3 mide; y canario `\!` (⇒ 42601), aparte.       │
+# │ Cada una tiene su caso en el self-test, y la invariante, la cuenta 3 +     │
+# │ canario COPY y la salida sin migraciones, uno MUTADO.                      │
+# │                                                                            │
+# │ POR QUÉ EL BASELINE NO SE FILTRA. Antes se descartaban esas 24 sentencias  │
+# │ con un `sed`: tres rondas, tres clases de FALSO VERDE (un `.*` codicioso;  │
+# │ cuerpos dollar-quoted; literales de comilla simple MULTILÍNEA, que pg_dump │
+# │ emite en CHECK/DEFAULT/VIEW/POLICY). Es el lexer de psql otra vez, y       │
+# │ replicarlo diverge SIEMPRE. Se aplica ENTERO; el caso 13d lo comprueba.    │
+# │                                                                            │
+# │ EFECTO COLATERAL: una migración DEL PR con `ALTER DEFAULT PRIVILEGES FOR   │
+# │ ROLE postgres` (037, 081) o `FOR ROLE supabase_admin` (048b) APLICA en vez │
+# │ de ser falso rojo, porque los roles se derivan también de `FOR ROLE`.      │
+# │ DESCARTADO `pg_dump --no-acl`: tira los GRANT/REVOKE de los que se deriva  │
+# │ la lista de roles ⇒ falso rojo masivo.                                     │
+# └────────────────────────────────────────────────────────────────────────────┘
+#
+# Uso:
+#   migration-gate.sh --target <url> --baseline <archivo.sql> [--base-ref origin/main]
+#
+# Variables opcionales:
+#   PSQL_BIN        binario psql (default: psql). Se hace word-split A PROPÓSITO.
+#                   Solo se usa para el SQL de PREPARACIÓN, que es nuestro.
+#   GATE_PYTHON     intérprete con psycopg2 para sql-apply.py (default: python3).
+#   MIGRATIONS_DIR  default: supabase/migrations
+#   EXTENSIONS      extensiones a precrear. Usa `${VAR-default}` (SIN dos puntos):
+#                   EXTENSIONS='' significa "ninguna", no "el default".
+#   GATE_APPLY_AS_SUPERUSER=1  ESCAPE HATCH RUIDOSO. Desactiva el rol NOSUPERUSER.
+#                   la advertencia que imprime; el riesgo residual queda escrito
+#                   en el log y en el Step Summary, nunca silenciado.
+set -uo pipefail
+
+TARGET=""; BASELINE=""; BASE_REF="origin/main"
+MIGRATIONS_DIR="${MIGRATIONS_DIR:-supabase/migrations}"
+EXTENSIONS="${EXTENSIONS-pg_trgm unaccent vector}"
+PSQL="${PSQL_BIN:-psql}"
+GATE_PYTHON="${GATE_PYTHON:-python3}"
+GATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SQL_APPLY="${SQL_APPLY:-$GATE_DIR/sql-apply.py}"
+APPLY_AS_SUPERUSER="${GATE_APPLY_AS_SUPERUSER:-0}"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --target)   TARGET="${2:-}"; shift 2 ;;
+    --baseline) BASELINE="${2:-}"; shift 2 ;;
+    --base-ref) BASE_REF="${2:-}"; shift 2 ;;
+    --migrations-dir) MIGRATIONS_DIR="${2:-}"; shift 2 ;;
+    *) echo "migration-gate: argumento desconocido '$1'" >&2; exit 2 ;;
+  esac
+done
+
+TMPFILES=()
+cleanup() { [ "${#TMPFILES[@]}" -gt 0 ] && rm -f "${TMPFILES[@]}"; return 0; }
+trap cleanup EXIT
+
+die() { echo "FAIL  $*" >&2; echo "---"; echo "migration-gate: 1 fail"; exit 1; }
+
+[ -n "$TARGET" ]   || die "falta --target <url>. Sin base de destino no hay nada que verificar."
+[ -n "$BASELINE" ] || die "falta --baseline <archivo.sql>. Sin el esquema de PROD el gate no puede afirmar nada."
+[ -s "$BASELINE" ] || die "el baseline '$BASELINE' no existe o está vacío. Puede que nunca se haya generado, que no esté commiteado, que la ruta sea otra o que el volcado de PROD fallara. Sea cual sea: sin él el gate no puede afirmar nada y NO se declara verde."
+[ -d "$MIGRATIONS_DIR" ] || die "no existe el directorio de migraciones '$MIGRATIONS_DIR' (¿cwd equivocado?). Sin él la lista de migraciones nuevas saldría vacía y el gate pasaría sin validar nada."
+
+# ── 1. Migraciones nuevas del PR ────────────────────────────────────────────
+# ESTO VA PRIMERO, ANTES DE TOCAR LA BASE. Motivo: si la enumeración no se
+# puede hacer, el gate debe morir sin haber ejecutado NADA del PR.
+echo "== migraciones nuevas respecto de $BASE_REF =="
+
+# FAIL-CLOSED sobre el base-ref (regresión reproducida): con `set -uo pipefail`
+# y sin `-e`, un `git diff` contra una ref inexistente sale 128, y si su stderr
+# se descarta y nadie mira el rc, la lista queda VACÍA y el gate anuncia "nada
+# que validar" con exit 0 — aunque el PR traiga un `DROP TABLE ventas`. Agrava
+# que ci.yml hace `git fetch origin main || true`. Por eso: la ref se RESUELVE
+# explícitamente, y el rc de git diff se comprueba SIN silenciar su stderr.
+git rev-parse --verify --quiet "$BASE_REF^{commit}" >/dev/null \
+  || die "el base-ref '$BASE_REF' no resuelve a un commit. Sin él no se puede saber qué migraciones agrega el PR; el gate NO puede declarar 'nada que validar'. Comprueba que el fetch de esa rama funcionó (ci.yml hace \`git fetch … || true\`, que enmascara el fallo)."
+
+# `-z` + core.quotePath=false: con la configuración por defecto git ENTRECOMILLA
+# y escapa en octal cualquier ruta con un byte no ASCII ("149_migraci\303\263n.sql"),
+# esa cadena no existe como archivo y el gate saltaba la migración devolviendo 0.
+# En un repo cuyos slugs son español ("migración", "reconciliación") basta una tilde.
+# La salida de `git diff -z` va a un ARCHIVO, no a `$( )`: la sustitución de
+# comandos de bash DESCARTA los bytes NUL ("warning: ignored null byte in
+# input"), así que capturarla ahí colapsaría la lista entera a nada — el mismo
+# fail-open que este bloque viene a cerrar, por la puerta de al lado.
+ADDED_F="$(mktemp)"; MODIFIED_F="$(mktemp)"; TMPFILES+=("$ADDED_F" "$MODIFIED_F")
+if ! git -c core.quotePath=false diff -z --name-only --diff-filter=A "$BASE_REF"...HEAD -- "$MIGRATIONS_DIR/*.sql" > "$ADDED_F"; then
+  die "\`git diff\` falló al enumerar las migraciones añadidas respecto de '$BASE_REF' (ver el error de git arriba). El gate NO interpreta un fallo de enumeración como 'no hay migraciones'."
+fi
+if ! git -c core.quotePath=false diff -z --name-only --diff-filter=M "$BASE_REF"...HEAD -- "$MIGRATIONS_DIR/*.sql" > "$MODIFIED_F"; then
+  die "\`git diff\` falló al enumerar las migraciones modificadas respecto de '$BASE_REF'."
+fi
+
+ADDED=(); MODIFIED=()
+while IFS= read -r -d '' f; do [ -n "$f" ] && ADDED+=("$f"); done < "$ADDED_F"
+while IFS= read -r -d '' f; do [ -n "$f" ] && MODIFIED+=("$f"); done < "$MODIFIED_F"
+
+if [ "${#MODIFIED[@]}" -gt 0 ]; then
+  echo "   AVISO: el PR MODIFICA migraciones existentes (AIR-90: son respaldo fiel de PROD,"
+  echo "   solo deberían renombrarse con git mv):"
+  for f in "${MODIFIED[@]}"; do echo "     - $f"; done
+fi
+
+# SIN migraciones nuevas NO se sale aquí. Antes había un `exit 0` en este punto
+# y el gate terminaba en 0 segundos sin preparar el destino ni cargar nada (run
+# 482 de CI). Eso era un FAIL-OPEN: el baseline es un archivo del repo que el PR
+# puede editar, y un PR que tocara SOLO `supabase/baseline/schema.sql` pasaba en
+# verde sin que nadie lo cargase — la corrupción estallaba después, en el PR
+# siguiente que añadiera una migración, atribuida al PR equivocado. Por eso el
+# destino se prepara y el baseline se carga en CADA corrida, con migraciones o
+# sin ellas: roles, invariante de colisión, las tres cuentas, los dos canarios, carga del
+# baseline y aserción OBJ > 0. Además, cada push a `main` (que casi nunca trae
+# migraciones nuevas respecto de sí mismo) re-verifica así que el baseline
+# vigente carga bajo la contención vigente. La salida "sin migraciones nuevas"
+# ocurre DESPUÉS del paso 5. No hay flag para saltarlo, a propósito.
+if [ "${#ADDED[@]}" -eq 0 ]; then
+  echo "   ninguna."
+fi
+for f in "${ADDED[@]}"; do echo "   + $f"; done
+
+# Un archivo que git declara AÑADIDO y no está en el árbol es un estado que el
+# gate no entiende: antes se SALTABA con un aviso y seguía devolviendo 0, que es
+# exactamente cómo se colaba una migración con un nombre no ASCII. Ahora es FATAL.
+for f in "${ADDED[@]}"; do
+  [ -f "$f" ] || die "git declara añadido '$f' pero no está en el árbol de trabajo. El gate NO salta migraciones: o las valida o falla."
+done
+
+# ── 3. Preparar el destino (como superusuario: solo setup) ──────────────────
+psql_su() { $PSQL "$TARGET" -v ON_ERROR_STOP=1 -q "$@"; }
+
+# Los roles se DERIVAN del baseline (GRANT/REVOKE/OWNER TO), no de una lista
+# fija: la lista fija se desactualiza en silencio en cuanto una migración crea
+# un rol nuevo, y el síntoma sería un fallo de carga confuso en vez de un gate útil.
+ROLES="$(grep -ohiE '\b(GRANT|REVOKE)\b[^;]*\b(TO|FROM)\s+[a-zA-Z0-9_", ]+;|OWNER TO [a-zA-Z0-9_"]+;' "$BASELINE" 2>/dev/null \
+  | grep -ohiE '\b(TO|FROM)\s+[a-zA-Z0-9_", ]+;' \
+  | sed -E 's/^(TO|FROM|to|from)[[:space:]]+//; s/;$//' \
+  | tr ',' '\n' \
+  | awk '{ gsub(/^[ \t]+|[ \t]+$/, ""); if ($0 ~ /^".*"$/) { $0 = substr($0, 2, length($0) - 2) } else { gsub(/[" ]/, ""); $0 = tolower($0) } print }' \
+  | grep -viE '^(public|current_user|session_user|group|$)' | sort -u)"
+# …y TAMBIÉN de `ALTER DEFAULT PRIVILEGES FOR ROLE <X>`, que es una fuente de
+# nombres de rol DISTINTA de `TO`/`FROM`. Antes no se miraba, y eso era inofensivo
+# SOLO porque las ADP del baseline se descartaban: en cuanto se aplican de verdad,
+# los 12 `FOR ROLE supabase_admin` del baseline real mueren con 42704 «role
+# "supabase_admin" does not exist», porque ese rol no aparece detrás de ningún
+# TO/FROM del volcado. Es un rol normal en la base efímera; precrearlo no da nada.
+#
+# El corte es por PALABRA CLAVE (`IN SCHEMA`/`GRANT`/`REVOKE`), no por clase de
+# caracteres: un `[a-zA-Z0-9_, ]+` se habría comido «postgres IN SCHEMA analytics
+# GRANT ALL ON FUNCTIONS TO service» entero, porque todo eso son letras y espacios.
+# PLEGADO A MINÚSCULAS, con la semántica de Postgres (las dos derivaciones usan
+# el mismo `awk`): un identificador NO entrecomillado se pliega (`FOR ROLE
+# GATE_SUPER` ES `gate_super` para el servidor) y uno entrecomillado conserva su
+# grafía (`"GATE_SUPER"` es OTRO rol). Antes se guardaba tal cual: `FOR ROLE
+# GATE_SUPER` producía `GATE_SUPER`, la invariante de colisión no lo veía, se
+# precreaba un rol espurio "GATE_SUPER" y el gate moría DESPUÉS con un 42501
+# sin nombrar la colisión (caso 13e(f)).
+# LÍMITE: un nombre entrecomillado CON espacios ("Mixed Case") no llega entero
+# (se partió antes por la clase de caracteres) y el residuo no pasa el filtro de
+# [A-Za-z0-9_] del paso 3 o no se precrea: fail-closed, no un falso verde. Este
+# repo no tiene ninguno así.
+ROLES_FOR_ROLE="$(sed -nE 's/.*ALTER[[:space:]]+DEFAULT[[:space:]]+PRIVILEGES[[:space:]]+FOR[[:space:]]+(ROLE|USER)[[:space:]]+(.*)$/\2/Ip' "$BASELINE" 2>/dev/null \
+  | sed -E 's/[[:space:]]+(IN[[:space:]]+SCHEMA|GRANT|REVOKE)[[:space:]].*$//I' \
+  | tr ',' '\n' \
+  | awk '{ gsub(/^[ \t]+|[ \t]+$/, ""); if ($0 ~ /^".*"$/) { $0 = substr($0, 2, length($0) - 2) } else { gsub(/[" ]/, ""); $0 = tolower($0) } print }' \
+  | grep -viE '^(public|current_user|session_user|$)' | sort -u)"
+ROLES="$(printf '%s\n%s\n' "$ROLES" "$ROLES_FOR_ROLE" | grep '.' | sort -u)"
+ROLES_N="$(printf '%s\n' "$ROLES" | grep -c '.' || true)"
+ROLES_FOR_N="$(printf '%s\n' "$ROLES_FOR_ROLE" | grep -c '.' || true)"
+
+echo "== preparando destino =="
+psql_su -c "SELECT 1" >/dev/null 2>&1 || die "no se puede conectar al destino."
+
+# Los 5 roles base de Supabase se precrean aunque el baseline no los nombre.
+BASE_ROLES="postgres anon authenticated service_role authenticator"
+# shellcheck disable=SC2086
+ROLES_NOMBRADOS="$(printf '%s\n' $ROLES $BASE_ROLES | grep '.' | sort -u)"
+
+# Los nombres salen de un archivo que el PR puede editar y se interpolan en SQL
+# que corre como SUPERUSUARIO (aquí abajo y en la invariante). La derivación de
+# `FOR ROLE` captura `(.*)` hasta la palabra clave, así que una comilla o un `$`
+# llegarían tal cual. Se exige la forma de identificador simple; si no, se muere
+# nombrando el valor (fail-closed: nunca se "limpia" y se sigue).
+NOMBRES_RAROS="$(printf '%s\n' "$ROLES_NOMBRADOS" | grep -vE '^[A-Za-z0-9_]+$' || true)"
+[ -z "$NOMBRES_RAROS" ] \
+  || die "el baseline nombra rol(es) con caracteres fuera de [A-Za-z0-9_]: $(printf '%s' "$NOMBRES_RAROS" | tr '\n' ' ')— el gate los interpolaría en SQL ejecutado como superusuario, así que no sigue."
+
+# ── INVARIANTE DE COLISIÓN: ningún rol nombrado en el baseline es superusuario ─
+# ESTO ES LO QUE SOSTIENE TODO EL MODELO DE PRIVILEGIOS (ver la cabecera). El
+# baseline nombra a `postgres` (12 `ALTER DEFAULT PRIVILEGES FOR ROLE postgres`)
+# y esas sentencias exigen que el aplicador tenga los privilegios de ese rol. Si
+# en el destino ese nombre es el del SUPERUSUARIO —la imagen de Postgres con
+# `POSTGRES_USER` por defecto—, cargar el baseline obliga a hacer al aplicador
+# miembro de un superusuario, y la membresía hereda las ACL que `initdb` pone a
+# su nombre: medido en PG 17.11, `lo_import`, `lo_export` y `pg_read_file`
+# pasan a funcionar (lectura y escritura de archivos del servidor) aun con
+# `WITH SET FALSE`. Por eso aquí no se concede nada: se MUERE, antes de crear
+# un solo rol o de cargar una línea del baseline.
+# Fail-closed también si la consulta no responde: el sufijo `|ok` distingue
+# "ningún rol colisiona" (cadena vacía + `|ok`) de "no pude preguntar".
+ROLES_ARR="$(printf "'%s'," $ROLES_NOMBRADOS)"; ROLES_ARR="ARRAY[${ROLES_ARR%,}]::name[]"
+COLISION="$($PSQL "$TARGET" -v ON_ERROR_STOP=1 -tAc "SELECT coalesce(string_agg(rolname::text, ',' ORDER BY rolname), '') || '|ok' FROM pg_roles WHERE rolsuper AND rolname = ANY($ROLES_ARR)" 2>/dev/null | tr -d ' ')"
+case "$COLISION" in
+  *'|ok') ;;
+  *) die "no se pudo comprobar la invariante de colisión (respuesta: '${COLISION:-<vacía>}'): que ningún rol nombrado por el baseline sea superusuario en el destino. Sin esa comprobación el gate no prepara ni carga nada." ;;
+esac
+COLISION="${COLISION%|ok}"
+# Dos mensajes según DÓNDE está el arreglo, sin afirmar de qué sentencia salió el
+# nombre ni qué es ese rol en PROD (el gate no lo establece):
+#  (i)  el nombre es uno de los 5 roles base de Supabase, que el gate precrea
+#       como rol PLANO lo nombre el baseline o no ⇒ lo que sobra es el nombre
+#       del superusuario del DESTINO (caso 13e(b));
+#  (ii) cualquier otro nombre sale del baseline (GRANT/REVOKE/OWNER TO/FOR ROLE)
+#       y coincide con el superusuario del destino ⇒ puede sobrar en cualquiera
+#       de los dos lados (casos 13e(a) y 13e(f)).
+COLISION_MSG=""
+if [ -n "$COLISION" ]; then
+  COL_BASE=""; COL_BL=""
+  for r in $(printf '%s' "$COLISION" | tr ',' ' '); do
+    case " $BASE_ROLES " in
+      *" $r "*) COL_BASE="${COL_BASE:+$COL_BASE,}$r" ;;
+      *)        COL_BL="${COL_BL:+$COL_BL,}$r" ;;
+    esac
+  done
+  COL_RIESGO="cargar el baseline exigiría hacer al aplicador MIEMBRO de un superusuario, y esa membresía hereda lo concedido a su nombre (si es el superusuario de initdb, las ACL de lo_import/lo_export/pg_read_file: medido en PG 17.11, lectura y escritura de archivos del servidor aun con WITH SET FALSE). El gate NO concede esa membresía ni carga el baseline así."
+  [ -z "$COL_BASE" ] || COLISION_MSG="COLISIÓN DE NOMBRES (destino): el superusuario del destino se llama como uno de los roles base de Supabase que el gate precrea como rol PLANO para cargar el baseline: '$COL_BASE'. $COL_RIESGO Arranca el Postgres efímero con un superusuario de OTRO nombre (ci.yml: POSTGRES_USER) y conéctate como él."
+  [ -z "$COL_BL" ] || COLISION_MSG="${COLISION_MSG:+$COLISION_MSG | }COLISIÓN DE NOMBRES (baseline): el baseline nombra al superusuario del destino: '$COL_BL'. Alguna sentencia del baseline de las que el gate deriva roles (FOR ROLE, GRANT/REVOKE … TO/FROM, OWNER TO) usa ese nombre. $COL_RIESGO Revisa el baseline, o arranca el Postgres efímero con un superusuario de otro nombre (ci.yml: POSTGRES_USER)."
+fi
+[ -z "$COLISION" ] \
+  || die "$COLISION_MSG"
+
+echo "   invariante de colisión: ninguno de los $(printf '%s\n' "$ROLES_NOMBRADOS" | grep -c .) roles nombrados es superusuario en el destino"
+
+for r in $ROLES_NOMBRADOS; do
+  [ -n "$r" ] || continue
+  $PSQL "$TARGET" -q -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='$r') THEN EXECUTE format('CREATE ROLE %I NOLOGIN', '$r'); END IF; END \$\$;" >/dev/null 2>&1
+done
+echo "   roles preparados: $ROLES_N derivados del baseline (de ellos $ROLES_FOR_N vistos en un 'FOR ROLE') + 5 base"
+
+# Las extensiones se precrean AQUÍ, como superusuario, a propósito: `vector` y
+# `pg_net` no son "trusted", así que el rol aplicador (NOSUPERUSER) no podría
+# crearlas. Precreadas, un `CREATE EXTENSION IF NOT EXISTS vector` de una
+# migración es un no-op y no necesita privilegio.
+#
+# ⚠ FALSO VERDE CONOCIDO — FIDELIDAD DE ENTORNO. Se crean en el esquema por
+# defecto del aplicador (`public`), pero PROD las tiene en `extensions`, y aquí
+# el esquema `extensions` queda VACÍO. Medido, y el efecto está INVERTIDO
+# respecto de lo que uno querría:
+#   · `unaccent('Bogotá')`              → pasa aquí (resuelve por search_path)
+#   · `extensions.unaccent('Bogotá')`   → ERROR: function … does not exist
+# Es decir: HOY EL GATE PREMIA LA FORMA ARRIESGADA Y CASTIGA LA RECOMENDADA.
+# La 148 usa la primera y pasa. No deduzcas de un verde aquí que la llamada
+# resolverá igual en PROD, ni escribas la llamada sin calificar solo para que
+# el gate pase.
+#
+# NO se arregla en este commit a propósito: el arreglo es crear las extensiones
+# `WITH SCHEMA extensions` y darle al rol aplicador el `search_path` que usa
+# Supabase, y hasta que exista un baseline real no se puede comprobar que eso no
+# rompa la carga del propio baseline. Queda escrito como limitación, no como
+# resuelto, y se cierra cuando haya baseline.
+for e in $EXTENSIONS; do
+  $PSQL "$TARGET" -q -c "CREATE EXTENSION IF NOT EXISTS \"$e\";" >/dev/null 2>&1 \
+    || die "no se pudo crear la extensión '$e' en el destino. Lo más común es que la imagen de Postgres no la traiga, pero también falla si el rol no tiene privilegio para crearla o si ya existe en otro esquema de forma incompatible. El error de psql de arriba lo dice."
+done
+$PSQL "$TARGET" -q -c "CREATE SCHEMA IF NOT EXISTS extensions;" >/dev/null 2>&1
+echo "   extensiones: ${EXTENSIONS:-(ninguna)}"
+
+# ── 4. Rol aplicador NOSUPERUSER ────────────────────────────────────────────
+# El destino se alcanza como su superusuario (en CI, `gate_super`) porque el
+# setup de arriba lo necesita. Pero ejecutar el SQL DEL PR como superusuario habilita
+# `COPY … TO PROGRAM 'curl …'`: ejecución de órdenes y salida de red desde
+# dentro del contenedor. Es un canal INDEPENDIENTE de los metacomandos: al ser
+# SQL perfectamente válido, haber quitado la capa de metacomandos no lo toca.
+#
+# `SET SESSION AUTHORIZATION` NO sirve como frontera: se verificó que un simple
+# `RESET SESSION AUTHORIZATION` en el propio .sql devuelve la sesión a
+# superusuario. Hace falta una CONEXIÓN distinta con un rol distinto.
+APPLY_URI="$TARGET"
+if [ "$APPLY_AS_SUPERUSER" = "1" ]; then
+  echo "   !! GATE_APPLY_AS_SUPERUSER=1 — rol NOSUPERUSER DESACTIVADO a petición explícita."
+  echo "   !! RIESGO RESIDUAL ACEPTADO: el SQL del PR corre como superusuario, así que"
+  echo "   !! \`COPY … TO/FROM PROGRAM\` y \`COPY\` contra archivos del servidor quedan"
+  echo "   !! disponibles (ejecución de órdenes y salida de red en el runner)."
+  echo "   !! El aplicador sin metacomandos sigue activo, así que \`\\!\` sigue cerrado:"
+  echo "   !! lo que se reabre es SOLO el canal SQL. Quita la variable en cuanto puedas."
+else
+  APPLIER="migration_gate_applier"
+  # La contraseña del aplicador SÍ viaja por argv de psql. Es deliberado y sin
+  # coste: la base es efímera y local al job, y su superusuario ya se alcanza con
+  # la contraseña que está escrita en claro en ci.yml. Nada que proteger
+  # aquí — a diferencia del secreto de PROD, que vive en OTRO job y no pasa por
+  # argv en ningún caso.
+  APPLIER_PW="$(openssl rand -hex 16 2>/dev/null || head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  [ -n "$APPLIER_PW" ] || die "no se pudo generar la contraseña del rol aplicador."
+
+  DBNAME="$($PSQL "$TARGET" -tAc "SELECT current_database()" 2>/dev/null | tr -d ' ')"
+  [ -n "$DBNAME" ] || die "no se pudo determinar la base de datos del destino."
+
+  # NOSUPERUSER explícito; CREATEROLE porque migraciones legítimas de este repo
+  # crean roles (022, 081, 087, 104). En PG16+ CREATEROLE NO permite crear roles
+  # SUPERUSER ni auto-concederse los roles predefinidos pg_* (verificado).
+  $PSQL "$TARGET" -q -c "DO \$\$ BEGIN
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='$APPLIER') THEN
+        EXECUTE format('ALTER ROLE %I LOGIN NOSUPERUSER CREATEROLE PASSWORD %L', '$APPLIER', '$APPLIER_PW');
+      ELSE
+        EXECUTE format('CREATE ROLE %I LOGIN NOSUPERUSER CREATEROLE PASSWORD %L', '$APPLIER', '$APPLIER_PW');
+      END IF;
+    END \$\$;" >/dev/null 2>&1 || die "no se pudo crear el rol aplicador NOSUPERUSER."
+
+  # Dueño de la base y del esquema public: así el baseline (volcado con
+  # --no-owner) queda a su nombre y puede ALTERar/DROPear lo que las migraciones
+  # necesiten, sin ningún privilegio de superusuario.
+  $PSQL "$TARGET" -q -c "ALTER DATABASE \"$DBNAME\" OWNER TO \"$APPLIER\";" >/dev/null 2>&1 \
+    || die "no se pudo dar la propiedad de la base '$DBNAME' al rol aplicador."
+  $PSQL "$TARGET" -q -c "GRANT ALL ON DATABASE \"$DBNAME\" TO \"$APPLIER\";" >/dev/null 2>&1
+  $PSQL "$TARGET" -q -c "ALTER SCHEMA public OWNER TO \"$APPLIER\";" >/dev/null 2>&1
+
+  # Membresía en los roles NO superusuario del baseline para poder GRANTear y
+  # reasignar dueños. Con ADMIN OPTION: son roles sin privilegio especial.
+  # `postgres` entra AQUÍ, como rol plano: es lo que permite aplicar las
+  # `ALTER DEFAULT PRIVILEGES FOR ROLE postgres` del baseline. Quien IMPIDE la
+  # membresía en un superusuario es este `WHERE NOT rolsuper`: excluye a
+  # CUALQUIER superusuario, lo nombre el baseline o no. La invariante de
+  # colisión del paso 3 no aporta contención sino el fallo TEMPRANO y NOMBRADO:
+  # sin ella, un `postgres` superusuario quedaría fuera de este bucle y el
+  # baseline moriría después con un 42501 anónimo (caso 13e(c) del self-test).
+  $PSQL "$TARGET" -q -c "DO \$\$ DECLARE r record; BEGIN
+      FOR r IN SELECT rolname FROM pg_roles
+               WHERE NOT rolsuper AND rolname <> '$APPLIER' AND rolname NOT LIKE 'pg\\_%' LOOP
+        EXECUTE format('GRANT %I TO %I WITH ADMIN OPTION', r.rolname, '$APPLIER');
+      END LOOP;
+    END \$\$;" >/dev/null 2>&1
+
+  # Derivar la URI del aplicador. libpq deja que los parámetros de query de una
+  # URI sobrescriban el userinfo (verificado), y en una cadena keyword/value
+  # gana la última aparición.
+  case "$TARGET" in
+    postgres://*|postgresql://*)
+      case "$TARGET" in
+        *\?*) APPLY_URI="$TARGET&user=$APPLIER&password=$APPLIER_PW" ;;
+        *)    APPLY_URI="$TARGET?user=$APPLIER&password=$APPLIER_PW" ;;
+      esac ;;
+    *=*) APPLY_URI="$TARGET user=$APPLIER password=$APPLIER_PW" ;;
+    *) die "no se reconoce la forma de --target ('$TARGET'): ni URI postgres:// ni cadena keyword=value. El gate no puede derivar la conexión NO superusuario, y NO aplica el SQL del PR como superusuario por defecto." ;;
+  esac
+
+  # ASERCIÓN FAIL-CLOSED: si la derivación no hubiera funcionado, seguiríamos
+  # conectados como superusuario sin enterarnos. Se comprueba, no se supone.
+  WHOAMI="$($PSQL "$APPLY_URI" -tAc "SELECT current_user || '|' || (SELECT rolsuper::text FROM pg_roles WHERE rolname = current_user)" 2>/dev/null | tr -d ' ')"
+  [ "$WHOAMI" = "$APPLIER|false" ] \
+    || die "la conexión del aplicador no quedó como se esperaba (current_user|rolsuper = '${WHOAMI:-<sin respuesta>}', se esperaba '$APPLIER|false'). El gate NO ejecuta el SQL del PR con privilegios de superusuario."
+
+  # ── TRES CUENTAS QUE DEBEN VALER 0, medidas en el catálogo en cada corrida ─
+  # La invariante de colisión cierra la CAUSA conocida. Estas tres miden TRES
+  # VÍAS CONCRETAS de escalada del aplicador, y NADA MÁS — no "el efecto, venga
+  # de donde venga": esa promesa se escribió aquí con dos cuentas y era falsa
+  # (la membresía en `pg_execute_server_program` no pasa por ninguna función ni
+  # por ningún superusuario, y ninguna de las dos la veía). Las tres vías, cada
+  # una con su caso sembrado en el self-test:
+  #  cuenta 1: superusuarios sobre los que el aplicador puede `SET ROLE` (13f);
+  #  cuenta 2: funciones con ACL que el aplicador puede ejecutar y PUBLIC no (13g). Es
+  #            la que caza el `lo_import`/`lo_export`/`pg_read_file` heredado de una
+  #            membresía en el superusuario (la medición de la cabecera). Va ANTES del
+  #            baseline a propósito: después, el aplicador es dueño de las funciones
+  #            del baseline y muchas llevan `REVOKE … FROM PUBLIC`, lo que la volvería
+  #            ruido. Aquí solo hay catálogo y extensiones, ninguna suya;
+  #  cuenta 3: membresía (directa o indirecta, `pg_has_role … 'MEMBER'`) en los roles
+  #            predefinidos de servidor `pg_execute_server_program`,
+  #            `pg_read_server_files` y `pg_write_server_files` (13h). Dan `COPY … TO/
+  #            FROM PROGRAM` y `COPY` contra archivos del servidor SIN superusuario y
+  #            SIN pasar por ninguna función. Reproducido: con `GRANT
+  #            pg_execute_server_program, pg_read_server_files TO` el aplicador (rol
+  #            CLUSTER-WIDE: la membresía sobrevive al `ALTER ROLE` de arriba), las
+  #            cuentas 1 y 2 daban 0 y una migración con `COPY … TO PROGRAM` salía
+  #            verde tras ejecutar el programa.
+  # Otra vía que no sea una de estas tres no la ve ninguna cuenta; para el canal
+  # COPY hay además un control positivo en caliente (paso 4b).
+  CUENTAS="$($PSQL "$APPLY_URI" -v ON_ERROR_STOP=1 -tAc "SELECT (SELECT count(*) FROM pg_roles r WHERE r.rolsuper AND pg_has_role('$APPLIER', r.oid, 'SET')) || '|' || (SELECT count(*) FROM pg_proc p WHERE p.proacl IS NOT NULL AND has_function_privilege('$APPLIER', p.oid, 'EXECUTE') AND NOT has_function_privilege('public', p.oid, 'EXECUTE')) || '|' || (SELECT count(*) FROM pg_roles r WHERE r.rolname IN ('pg_execute_server_program','pg_read_server_files','pg_write_server_files') AND pg_has_role('$APPLIER', r.oid, 'MEMBER'))" 2>/dev/null | tr -d ' ')"
+  # Exactamente tres enteros separados por `|`; cualquier otra forma (vacía, con
+  # texto, con dos o cuatro campos) es "no pude medir" y muere.
+  case "$CUENTAS" in
+    *[!0-9\|]*|'') CUENTAS_OK=0 ;;
+    *) CUENTAS_OK=1 ;;
+  esac
+  IFS='|' read -r SUPER_SET FUNC_HEREDADAS SERVER_ROLES CUENTA_EXTRA <<<"$CUENTAS"
+  case "$CUENTAS_OK:${SUPER_SET:-x}:${FUNC_HEREDADAS:-x}:${SERVER_ROLES:-x}:${CUENTA_EXTRA:-}" in
+    0:*|*:x:*|*:x:*:*|*:*:*:x:*|*:*:*:*:?*) die "no se pudo medir en el catálogo lo que el aplicador hereda (respuesta: '${CUENTAS:-<vacía>}'). Sin esas tres cuentas no consta que el aplicador esté contenido; el gate no aplica nada." ;;
+  esac
+  [ "$SUPER_SET" -eq 0 ] \
+    || die "el aplicador PUEDE hacer 'SET ROLE' sobre $SUPER_SET rol(es) SUPERUSUARIO del destino: eso es una escalada directa ('SET ROLE' + 'COPY … TO PROGRAM'). Suele ser una membresía que arrastra el rol cluster-wide '$APPLIER' de otra corrida o un GRANT añadido al setup. El gate NO aplica el SQL del PR en estas condiciones."
+  [ "$FUNC_HEREDADAS" -eq 0 ] \
+    || die "el aplicador puede ejecutar $FUNC_HEREDADAS función(es) con ACL restringida que PUBLIC no puede (p.ej. lo_import/lo_export/pg_read_file: lectura y escritura de archivos del servidor). Las hereda de alguna membresía — típicamente la de un rol que en el destino es superusuario o que recibió esos GRANT. El gate NO aplica el SQL del PR en estas condiciones."
+  [ "$SERVER_ROLES" -eq 0 ] \
+    || die "el aplicador es MIEMBRO de $SERVER_ROLES rol(es) predefinido(s) de servidor (pg_execute_server_program / pg_read_server_files / pg_write_server_files): con eso 'COPY … TO/FROM PROGRAM' ejecuta órdenes y 'COPY' lee/escribe archivos del servidor SIN ser superusuario. Suele ser una membresía rancia del rol cluster-wide '$APPLIER' o un GRANT añadido al setup. El gate NO aplica el SQL del PR en estas condiciones."
+  echo "   aplicador: $APPLIER (NOSUPERUSER) — 0 superusuarios con SET, 0 funciones restringidas heredadas, 0 roles de servidor"
+fi
+
+# El SQL DEL PR se aplica con esto, NO con psql: sin capa de metacomandos, un
+# `\!` es un error de sintaxis del servidor. Ver la cabecera (canal (a)).
+# `-I` (modo aislado) NO es decorativo: sin él, Python pone el DIRECTORIO DEL
+# SCRIPT primero en sys.path, así que un PR que AÑADA `scripts/agent/psycopg2.py`
+# secuestra el driver sin editar ni un archivo existente —invisible en una
+# revisión de diffs—. Medido: con el impostor, el gate imprime "ok: el SERVIDOR
+# rechazó el canario" sin que haya habido servidor, "baseline cargado: 0
+# tablas/vistas", aplica un `DROP TABLE public.ventas` y sale VERDE. `-I` saca
+# ese directorio de sys.path (el psycopg2 real, en dist-packages, se sigue
+# importando: comprobado). Efectos colaterales aceptados: `-I` implica `-E` (se
+# ignora PYTHONPATH) y también `-s` (se ignora el site-packages del USUARIO), así
+# que un `pip install --user psycopg2-binary` tampoco se vería — que es la forma
+# más probable de tropezar con esto. El driver tiene que estar instalado de
+# verdad (en Debian/Ubuntu: python3-psycopg2).
+#
+# `-I` y la aserción de objetos del baseline NO son dos redes equivalentes, y
+# conviene no confundirlas: la que sostiene la defensa es `-I`. La aserción de
+# OBJ solo caza a un aplicador que finge TODO; contra uno que delegue el
+# baseline al driver real y mienta solo en las migraciones es inútil.
+apply_sql() { $GATE_PYTHON -I "$SQL_APPLY" --dsn "$APPLY_URI" --file "$1"; }
+
+# sql-apply.py distingue por código de salida de quién es la culpa:
+#   0 aplicado · 1 el ARCHIVO (SQL, encoding, NUL) · 2 sin driver · 3 no pudo CONECTAR
+# …pero esa distinción no vale nada si quien lo llama la ignora. Durante un
+# tiempo el gate solo la miraba en el control positivo: en los dos sitios donde
+# de verdad importa —cargar el baseline y aplicar migraciones— todo caía en el
+# mismo `if !`, así que una caída de red salía como "esta migración NO aplica
+# sobre el esquema real de PROD" con su pista de drift, y en el baseline además
+# imprimía el bloque de PRIVILEGIOS y sugería `GATE_APPLY_AS_SUPERUSER=1`.
+# Un fallo de conexión empujando al operador a desactivar el rol NOSUPERUSER es
+# el peor consejo posible, y por eso esto no es cosmético.
+#
+# Regla: solo rc 1 puede reportarse como culpa del .sql. Todo lo demás muere
+# aquí, con su propio mensaje, ANTES de que nadie culpe a la migración.
+#
+# LÍMITE RESIDUAL, DICHO SIN ADORNOS. Son DOS, y ninguno se tapa:
+#
+# (i) rc=3 NO identifica una causa, solo un momento: "falló en connect()".
+#     Ahí caben al menos tres poblaciones distintas, medidas: red/puerto
+#     ("Connection refused"), AUTENTICACIÓN ("password authentication failed")
+#     y base inexistente ("database ... does not exist"). Por eso el mensaje
+#     NOMBRA las dos poblaciones plausibles en este gate y remite al detalle de
+#     libpq, en vez de afirmar una. La de autenticación importa especialmente:
+#     es el síntoma de la intermitencia que documenta la cabecera del self-test
+#     (dos gates concurrentes rotando la contraseña de migration_gate_applier),
+#     así que un mensaje que dijera "es la base efímera" mandaría a mirar al
+#     sitio equivocado justo a quien tiene un problema de credenciales.
+#
+# (ii) rc=3 solo se emite desde `psycopg2.connect()`. Una conexión que se cae
+# DESPUÉS de haber conectado —el caso realista en CI: el servicio pg del job
+# muriendo a mitad de un baseline largo— llega como rc=1 y se reporta como
+# migración que no aplica. Medido con `pg_terminate_backend` a mitad de un
+# `pg_sleep`: "SSL connection has been closed unexpectedly", rc=1.
+# NO se clasifica por heurística (OperationalError + pgcode vacío): un backend
+# que muera POR la migración (OOM) da el mismo patrón y pasaría a leerse como
+# "es la infra, reintenta" — el mismo error de atribución en dirección
+# contraria, y encima tranquilizador. Se prefiere una afirmación honesta y
+# acotada a una heurística que se equivoca al revés.
+die_si_no_es_del_archivo() { # rc, log, contexto
+  local rc="$1" log="$2" ctx="$3" det
+  det="$(head -2 "$log" 2>/dev/null | tr '\n' ' ')"
+  case "$rc" in
+    0|1) return 0 ;;
+    2) die "el aplicador no pudo arrancar al $ctx: $det. Suele ser el driver (psycopg2) ausente, pero el mismo código sale si el propio sql-apply.py no está donde se espera. OJO: esta rama cubre el driver AUSENTE; por construcción NO puede cubrir un driver SUSTITUIDO —un módulo impostor devuelve 0, nunca 2—; de eso se ocupan \`-I\` y la aserción de objetos del baseline. El gate NO cae de vuelta a \`psql -f\`: esa es justo la vía de ejecución de código del PR que se viene a cerrar." ;;
+    3) die "el aplicador NO PUDO CONECTAR con el destino al $ctx (rc=3): $det. NO es la migración ni el baseline. rc=3 dice el MOMENTO (falló al conectar), no la causa: las típicas aquí son la base efímera del job y las CREDENCIALES del rol aplicador (dos gates concurrentes contra el mismo cluster rotan la contraseña de migration_gate_applier y se pisan), pero también sale así una base inexistente. El detalle de libpq de arriba dice cuál fue. Reintenta; no toques GATE_APPLY_AS_SUPERUSER." ;;
+    *) die "el aplicador terminó con un código inesperado (rc=$rc) al $ctx: $det. El gate no interpreta códigos que no conoce." ;;
+  esac
+}
+
+# ── CONTROL POSITIVO ────────────────────────────────────────────────────────
+# La contención no se supone: se demuestra aquí, en esta corrida y en esta
+# máquina, antes de aplicar una sola línea del PR. Si el aplicador aceptara un
+# metacomando —driver raro, script cambiado, cualquier cosa— el gate muere.
+# Fail-closed en las tres direcciones: aceptado, o ni siquiera arrancable.
+echo "== control positivo del aplicador =="
+# Antes de interpretar ningún código de salida: que el script EXISTA. Sin esto,
+# un SQL_APPLY mal apuntado sale con el mismo rc=2 que "falta psycopg2" y el
+# gate diagnosticaba un driver ausente cuando lo que falta es el aplicador.
+[ -f "$SQL_APPLY" ] || die "no existe el aplicador '$SQL_APPLY'. El gate NO cae de vuelta a \`psql -f\`: esa es la vía de ejecución de código del PR que viene a cerrar."
+CANARY="$(mktemp)"; CANARY_LOG="$(mktemp)"; TMPFILES+=("$CANARY" "$CANARY_LOG")
+printf '\\! true\n' > "$CANARY"; chmod 644 "$CANARY" 2>/dev/null || true
+apply_sql "$CANARY" >"$CANARY_LOG" 2>&1
+CANARY_RC=$?
+# Misma función de atribución que el baseline y el bucle: si el canario falla
+# por driver ausente o por no poder conectar, no es "contención no demostrada",
+# es otra cosa — y las dos rutas no pueden divergir en el texto con el tiempo.
+die_si_no_es_del_archivo "$CANARY_RC" "$CANARY_LOG" "ejecutar el canario del control positivo"
+# No basta con rc=1: con el puerto muerto el aplicador también devolvería error
+# y estaríamos anunciando "contención demostrada" sin que ningún servidor
+# hubiera visto el canario. Se exige el SQLSTATE 42601 (syntax_error), que solo
+# puede haber puesto Postgres al parsear el `\!`.
+case "$CANARY_RC" in
+  1)
+    if grep -q 'SQLSTATE:  *42601' "$CANARY_LOG"; then
+      echo "   ok: el SERVIDOR rechazó el canario \\! con SQLSTATE 42601 (syntax_error)"
+    else
+      echo "--- salida del canario ---" >&2; head -6 "$CANARY_LOG" >&2
+      die "el canario falló, pero NO con el error de sintaxis del servidor (falta SQLSTATE 42601). El control positivo no demuestra nada: puede ser un fallo de conexión o de arranque, no la contención. El gate no aplica nada."
+    fi ;;
+  0) die "CONTROL POSITIVO FALLIDO: el aplicador ACEPTÓ el metacomando canario '\\! true'. Eso significa que el SQL del PR podría ejecutar órdenes en el runner. El gate no aplica nada." ;;
+  *) die "el aplicador terminó el canario con un código que no debería llegar aquí (rc=$CANARY_RC)." ;;
+esac
+
+# ── 4b. SEGUNDO CONTROL POSITIVO: el canal (b), COPY … TO PROGRAM ───────────
+# El SERVIDOR debe negarle al aplicador `COPY (SELECT 1) TO PROGRAM 'cat >/dev/null'` con
+# SQLSTATE 42501 (insufficient_privilege). Solo 42501 cuenta: un rc=1 por otra
+# causa no demuestra la contención.
+# Por qué `cat >/dev/null` y no `true`: `true` sale sin leer stdin y, si se lo
+# PERMITEN, Postgres escribe en una tubería ya cerrada ⇒ EPIPE/XX000 o rc=0 según
+# una carrera con el hijo; `cat` drena stdin y la rama permitida es determinista.
+#
+# HISTORIA. Este canario existió, y en 02b546b se RETIRÓ por tautológico: en
+# aquel diseño vigilaba lo mismo que la guarda `WITH SET FALSE` (que el
+# aplicador no pudiera `SET ROLE` a un superusuario), y al desaparecer esa
+# guarda parecía no vigilar nada. VUELVE porque la amenaza que mira ahora es
+# OTRA y no está detrás de ningún `SET ROLE`: la MEMBRESÍA DIRECTA del aplicador
+# en `pg_execute_server_program` (o `pg_read/write_server_files`), que las
+# cuentas 1 y 2 no ven. La cuenta 3 la mide en el catálogo; este canario la
+# demuestra por su EFECTO en el servidor. Son dos capas: el self-test (13h) solo
+# pone rojo el caso sembrado cuando se quitan LAS DOS.
+# Con GATE_APPLY_AS_SUPERUSER=1 no se corre: ahí el riesgo está aceptado por
+# escrito y el canario, que ejecutaría `cat >/dev/null`, no demostraría nada.
+if [ "$APPLY_AS_SUPERUSER" != "1" ]; then
+  COPY_CANARY="$(mktemp)"; COPY_CANARY_LOG="$(mktemp)"; TMPFILES+=("$COPY_CANARY" "$COPY_CANARY_LOG")
+  printf "COPY (SELECT 1) TO PROGRAM 'cat >/dev/null';\n" > "$COPY_CANARY"; chmod 644 "$COPY_CANARY" 2>/dev/null || true
+  apply_sql "$COPY_CANARY" >"$COPY_CANARY_LOG" 2>&1
+  COPY_CANARY_RC=$?
+  die_si_no_es_del_archivo "$COPY_CANARY_RC" "$COPY_CANARY_LOG" "ejecutar el canario de COPY … TO PROGRAM"
+  case "$COPY_CANARY_RC" in
+    1)
+      if grep -q 'SQLSTATE:  *42501' "$COPY_CANARY_LOG"; then
+        echo "   ok: el SERVIDOR denegó COPY … TO PROGRAM al aplicador con SQLSTATE 42501"
+      else
+        echo "--- salida del canario COPY ---" >&2; head -6 "$COPY_CANARY_LOG" >&2
+        die "el canario de COPY … TO PROGRAM falló, pero NO con SQLSTATE 42501 (insufficient_privilege). No consta que el servidor le niegue el canal al aplicador; el gate no aplica nada."
+      fi ;;
+    0) die "CONTROL POSITIVO FALLIDO: el servidor EJECUTÓ 'COPY (SELECT 1) TO PROGRAM' como el aplicador. El SQL del PR podría ejecutar órdenes dentro del contenedor de Postgres (típicamente: membresía en pg_execute_server_program). El gate no aplica nada." ;;
+    *) die "el aplicador terminó el canario COPY con un código que no debería llegar aquí (rc=$COPY_CANARY_RC)." ;;
+  esac
+fi
+
+# ── 5. Baseline ─────────────────────────────────────────────────────────────
+echo "== cargando esquema de PROD =="
+# Normalización MÍNIMA y acotada: pg_dump emite `CREATE SCHEMA public;` y el
+# destino ya trae ese esquema por defecto, así que la carga aborta por una
+# colisión que no dice nada sobre la migración. Se relaja SOLO la creación de
+# esquemas; cualquier otro error del baseline sigue siendo fatal. El patrón
+# acepta un `IF NOT EXISTS` ya presente en vez de excluir los nombres que
+# empiezan por `I` (el `[^I]` anterior dejaba fuera, p.ej., `CREATE SCHEMA inv`).
+BASE_NORM="$(mktemp)"
+BASE_LOG="$(mktemp)"
+TMPFILES+=("$BASE_NORM" "$BASE_LOG")
+# Segunda normalización, acotada al BASELINE y solo a un artefacto CONOCIDO de
+# pg_dump: desde 16.10/17.6 envuelve todo volcado en `\restrict <clave>` …
+# `\unrestrict <clave>`, que son directivas del CLIENTE psql y no SQL. Como el
+# baseline ya no pasa por psql, el servidor las rechazaría. Se quitan solo si la
+# línea tiene EXACTAMENTE esa forma, y SOLO aquí: una migración del PR nunca las
+# necesita y no recibe ningún trato especial.
+# Las `ALTER DEFAULT PRIVILEGES` del baseline NO se recortan: se APLICAN (lo
+# permite la membresía del aplicador en `postgres`, rol PLANO en el destino
+# gracias a la invariante de colisión del paso 3). Aquí hubo tres
+# rondas de un `sed` que las descartaba, y cada ronda encontró una clase NUEVA de
+# falso verde: un `.*` codicioso que se comía la sentencia pegada detrás; cuerpos
+# dollar-quoted; y literales de comilla simple MULTILÍNEA —que cierran con `'` y no
+# con `$`, así que la aserción de posición no los veía— que pg_dump emite de forma
+# natural en CHECK/DEFAULT/CREATE VIEW/CREATE POLICY. Era el lexer de psql otra
+# vez, y la lección ya estaba escrita en CLAUDE.md: replicar ese lexer DIVERGE
+# SIEMPRE. Así que no se parcheó una cuarta vez — se borró la clase entera quitando
+# la NECESIDAD de filtrar. Sin `sed` no hay borrado, y sin borrado un baseline
+# mutilado en silencio es imposible POR CONSTRUCCIÓN.
+sed -E 's/^CREATE SCHEMA (IF NOT EXISTS )?/CREATE SCHEMA IF NOT EXISTS /;
+        /^\\(un)?restrict [A-Za-z0-9]+[[:space:]]*$/d' "$BASELINE" > "$BASE_NORM"
+# Legible por el usuario que corra psql: en algunos entornos el cliente corre
+# bajo otra cuenta (p.ej. `runuser -u postgres`) y mktemp deja 0600.
+chmod 644 "$BASE_NORM" 2>/dev/null || true
+apply_sql "$BASE_NORM" >"$BASE_LOG" 2>&1; BASE_RC=$?
+# Antes de culpar al baseline (o a los privilegios): ¿fue el baseline siquiera?
+die_si_no_es_del_archivo "$BASE_RC" "$BASE_LOG" "cargar el baseline"
+if [ "$BASE_RC" -ne 0 ]; then
+  echo "--- primeras 30 líneas del error ---" >&2
+  head -30 "$BASE_LOG" >&2
+  # La pista solo sale ante un 42501 y NO empuja a desactivar la contención: el
+  # aplicador ya es miembro de todo rol NO superusuario del destino, así que un
+  # 42501 aquí NO se lee como "falta un privilegio". La firma medida (13e(c)) es
+  # un rol que el baseline nombra y que en el destino es SUPERUSUARIO, que el
+  # `WHERE NOT rolsuper` deja fuera a propósito. Que un fallo empuje hacia
+  # GATE_APPLY_AS_SUPERUSER es el patrón que CLAUDE.md documenta como el error.
+  if [ "$APPLY_AS_SUPERUSER" != "1" ] && grep -q 'SQLSTATE:  *42501' "$BASE_LOG"; then
+    echo "--- PISTA 42501 AL CARGAR EL BASELINE ---" >&2
+    echo "Un 42501 aquí NO es 'falta un privilegio que conceder': el aplicador ya es" >&2
+    echo "miembro de todo rol NO superusuario del destino. Mira primero la contención:" >&2
+    echo "  · ¿el rol que nombra el error es SUPERUSUARIO en el destino? Eso es lo que la" >&2
+    echo "    invariante de colisión (paso 3) debía parar antes de cargar nada;" >&2
+    echo "  · ¿cambió el bucle de membresía (WHERE NOT rolsuper) o las cuentas 1/2/3?" >&2
+    echo "Si no es ninguna de las dos, la sentencia del error exige superusuario de" >&2
+    echo "verdad: léela arriba. NO se arregla con GATE_APPLY_AS_SUPERUSER=1 — es un" >&2
+    echo "escape hatch documentado que reabre COPY … TO PROGRAM (ver el aviso que" >&2
+    echo "imprime), no un remedio para un 42501." >&2
+  fi
+  die "el baseline de PROD no cargó. El gate NO puede validar nada; esto es un fallo, no un skip."
+fi
+OBJ="$($PSQL "$APPLY_URI" -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema IN ('public','analytics')" 2>/dev/null | tr -d ' ')"
+# El conteo se AFIRMA, no se imprime y ya. Un aplicador que finge aplicar (un
+# `psycopg2` impostor, un stub) devuelve 0 sin tocar servidor alguno, y el
+# síntoma visible es justo este: "baseline cargado: 0 tablas/vistas" seguido de
+# un verde. Se imprimía y se ignoraba. Es una red ADICIONAL, no equivalente a
+# `-I`: solo caza a un aplicador que finge TODO. Contra uno que delegue el
+# baseline al driver real y mienta solo en las migraciones, esta cuenta sale
+# bien y no ve nada. Quien sostiene la defensa es `-I`.
+case "$OBJ" in
+  ''|*[!0-9]*) die "no se pudo contar los objetos del baseline en el destino (respuesta: '${OBJ:-<vacía>}'). Sin esa cuenta no consta que el baseline se haya cargado de verdad." ;;
+esac
+[ "$OBJ" -gt 0 ] || die "el aplicador dijo haber cargado el baseline, pero el destino tiene CERO tablas/vistas en public+analytics. El baseline de PROD no puede estar vacío: o el aplicador no aplicó nada de verdad (driver sustituido o stub), o el baseline no es el que se cree. El gate NO valida migraciones contra una base vacía."
+echo "   baseline cargado: $OBJ tablas/vistas en public+analytics"
+
+# Único punto de salida en verde sin migraciones nuevas: ya se han ejecutado la
+# invariante, las tres cuentas, los dos canarios y la carga del baseline (ver paso 1).
+if [ "${#ADDED[@]}" -eq 0 ]; then
+  echo "---"; echo "migration-gate: 0 fail (sin migraciones nuevas; baseline de PROD cargado y verificado)"
+  exit 0
+fi
+
+# ── 6. Aplicar ──────────────────────────────────────────────────────────────
+echo "== aplicando =="
+FAILED=0; APPLIED=0
+for f in "${ADDED[@]}"; do
+  if grep -qiE '^[[:space:]]*(COMMIT|ROLLBACK)[[:space:]]*;' "$f"; then
+    echo "   AVISO: $f trae COMMIT/ROLLBACK propio; lo confirmado antes de ese punto"
+    echo "          NO se revierte si falla algo después. El 'todo o nada' no aplica aquí."
+  fi
+  LOG="$(mktemp)"; TMPFILES+=("$LOG")
+  # Una transacción por archivo, SALVO que el propio .sql haga COMMIT explícito:
+  # entonces lo confirmado antes del COMMIT sobrevive a un error posterior
+  # (medido). Hay 7 migraciones con BEGIN/COMMIT propio (046, 048b, 049b, 050,
+  # 051, 052, 076); el gate no las reaplica, pero una futura sí rompería la
+  # garantía. Por eso se avisa abajo en vez de prometer lo que no se cumple.
+  # (Y no es "igual que aplica Supabase": eso nunca se comprobó.)
+  apply_sql "$f" >"$LOG" 2>&1; APPLY_RC=$?
+  # Igual que con el baseline: una caída de conexión NO es "esta migración no
+  # aplica sobre PROD". Muere antes de imprimir el FAIL y la pista de drift.
+  die_si_no_es_del_archivo "$APPLY_RC" "$LOG" "aplicar $f"
+  if [ "$APPLY_RC" -eq 0 ]; then
+    echo "   ok    $f"
+    APPLIED=$((APPLIED+1))
+  else
+    echo "   FAIL  $f"
+    echo "         ------------------------------------------------------------"
+    sed 's/^/         /' "$LOG" | head -25
+    echo "         ------------------------------------------------------------"
+    FAILED=$((FAILED+1))
+    rm -f "$LOG"
+    break   # las migraciones son secuenciales: seguir tras un fallo no informa
+  fi
+  rm -f "$LOG"
+done
+
+echo "---"
+if [ "$FAILED" -gt 0 ]; then
+  echo "migration-gate: $FAILED fail — una migración nueva NO aplica sobre el esquema real de PROD."
+  echo "Si el error dice que un objeto YA EXISTE, la causa probable es drift: la migración"
+  echo "ya se aplicó a PROD fuera de este flujo. Compara list_migrations contra git (AIR-162 §4)."
+  exit 1
+fi
+echo "migration-gate: 0 fail ($APPLIED migración(es) aplicada(s) sobre el esquema real de PROD)"
+exit 0

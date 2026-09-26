@@ -50,6 +50,98 @@
   intactos). Para vistas que evaden RLS de tablas base: exigir `security_invoker=true` +
   `REVOKE SELECT ... FROM anon, authenticated` sobre la vista misma.
 
+- AIR-271 (PR #186) — CONFIG AS DATA que alimenta SQL dinamico: revisar DOS cosas, no una.
+  (a) Inyeccion: identificadores por %I / literales por %L, y que los %s del format() final sean
+      solo fragmentos construidos localmente (nunca texto de tabla). Aqui estaba OK.
+  (b) TIPOS: un trigger que valida que la columna EXISTE pero no su data_type deja pasar el modo
+      SILENCIOSO, que es peor que la caida. Caso real: un flag `campo_fecha_es_tz=false` sobre una
+      columna timestamptz hace `max(ts)::date` en la TZ de sesion (UTC) -> reintroduce el bug de
+      zona horaria que la propia migracion venia a cerrar, SIN error. Si el trigger ya consulta
+      information_schema.columns, exigir que traiga data_type y valide la coherencia flag<->tipo.
+  (c) RADIO DE DAÑO: un motor que itera fuentes con EXECUTE y sin BEGIN/EXCEPTION por fuente
+      convierte UNA fila de config mala en caida de TODAS las fuentes. Si ademas una vista del
+      dashboard cuelga de ahi, `queries.ts` hace `if (error) throw error` -> 500 en todas las
+      paginas. Una vista hardcodeada no es rompible por un INSERT; la de config si -> es aumento
+      real de superficie de fallo, vale como bloqueante.
+- AIR-271 — AGREGAR sobre un valor tri-estado: `bool_or(x IS TRUE)` colapsa NULL->false y es
+  FAIL-OPEN. Patron a exigir cuando el motor ya distingue "no se" por fila: NO reducir a booleano,
+  devolver un veredicto TRI-ESTADO ('stale'/'desconocido'/'limpio') y documentar el consumo seguro
+  (`veredicto <> 'limpio'`). Un booleano obliga a elegir un valor para "no se" y toda eleccion es
+  trampa. El builder lo corrigio asi en 523bcc1 y quedo mejor que el fix que yo habia propuesto
+  (NULL en booleano). Preferir esta forma al revisar gates de frescura/calidad.
+- Contratos de vista: `CREATE OR REPLACE VIEW` SIN clausula WITH emite AT_ReplaceRelOptions con
+  lista VACIA -> BORRA las reloptions existentes (security_invoker incluido). Verificar siempre
+  `pg_class.reloptions` en PROD antes de aprobar un REPLACE: si la vista tenia security_invoker
+  explicito, el REPLACE lo pierde en silencio. Agregar columnas AL FINAL si es legal; quitar,
+  renombrar o cambiar tipo, no.
+- Rollback comentado que dice "probado": verificar el ROUNDTRIP, no solo el camino de vuelta.
+  Trampa vista aqui: el rollback crea una dependencia (vista_actual -> vista_v1_congelada) y
+  entonces REAPLICAR la migracion falla, porque su `DROP VIEW IF EXISTS ..._v1` no lleva CASCADE.
+  Tambien: un `<definicion de la migracion NNN>` como marcador NO es un rollback ejecutable.
+
+- AIR-271 cierre (PR #186, f310254) — DERIVAR > VALIDAR. El fix bueno a "flag de config que puede
+  contradecir al catalogo" no es validar la coherencia en el trigger sino DERIVAR el flag del
+  catalogo y descartar lo que venga en el INSERT: hace el error irrepresentable en vez de detectable.
+  Al revisar config-as-data, si una columna DUPLICA informacion que ya vive en pg_catalog /
+  information_schema, tratarla como CACHE y preguntar por su invalidacion.
+  LIMITE que queda con derivacion en ESCRITURA: un `ALTER TABLE ... ALTER COLUMN ... TYPE` posterior
+  no dispara el trigger y desalinea el flag. MEDIDO en PROD: las DOS direcciones son SILENCIOSAS
+  (corrimiento de 1 dia, sin excepcion) — date->timestamptz da +1d, y timestamptz->date NO lanza
+  error porque `date AT TIME ZONE 'x'` resuelve via cast implicito date->timestamp a
+  timezone(text,timestamp), asi que da -1d. O sea que un BEGIN/EXCEPTION NO cubre este caso.
+  Fix durable = derivar en tiempo de LECTURA (el motor consulta el tipo en su propio loop).
+  Reparacion manual si se queda en escritura: `UPDATE <config> SET pk = pk` re-dispara el trigger.
+- plpgsql: `WHEN OTHERS` NO captura QUERY_CANCELED ni ASSERT_FAILURE — un EXCEPTION por-iteracion
+  para aislar fallos NO enmascara timeouts ni cancels administrativos. Punto a favor al revisar
+  aislamiento de errores; no exigir un `WHEN OTHERS` mas fino por ese motivo.
+- Aislar con BEGIN/EXCEPTION dentro de un LOOP: verificar que la bandera de error se asigne en
+  TODAS las ramas (incluida la que ni siquiera ejecuta el bloque). Las variables plpgsql persisten
+  entre iteraciones -> una rama que no la resetea arrastra el `true` de la fuente anterior.
+- Revisar un ROLLBACK comentado: no basta leerlo. Ejecutar sus cuerpos de vista como SELECT contra
+  PROD (solo lectura, sin DDL) con pg_typeof por columna y comparar contra el contrato vigente —
+  `CREATE OR REPLACE VIEW` no puede cambiar tipos, asi que un rollback con un tipo corrido no aplica.
+  Barato y caza el fallo real antes de que alguien lo necesite a las 3am.
+- RETURNS TABLE: `RETURN QUERY` liga por POSICION, no por nombre. Al revisar un diff que INSERTA
+  una columna EN MEDIO de un RETURNS TABLE, comparar la lista declarada contra el SELECT elemento a
+  elemento. Si los tipos vecinos son compatibles el desalineo NO falla: devuelve datos corridos en
+  silencio. En AIR-271 (b55ef2c) se metio `dias_error integer` antes de `veredicto text` y solo no
+  mintio porque integer/text son incompatibles y habria reventado. Coincidencia, no diseño.
+  Corolario: todo cambio de RETURNS TABLE exige `DROP FUNCTION IF EXISTS` antes del CREATE OR
+  REPLACE (Postgres rechaza el cambio de tipo de retorno) — y ese DROP se lleva los GRANT, asi que
+  verificar que se re-emitan despues.
+- Filtro `col <> 'valor'` dentro de un `count(*) FILTER (...)`: si `col` puede ser NULL el predicado
+  da NULL, la fila se descarta y el contador queda POR DEBAJO del real, sin error. Al aprobar un
+  agregado asi, verificar en la funcion productora que la columna se asigne en TODAS las ramas.
+  Verificado en AIR-271: las 4 ramas del IF asignan `estado`, por eso `c.estado <> 'error'` es seguro.
+- Sintaxis "rara" en un bloque de ROLLBACK comentado: antes de dudar, buscar si el MISMO constructo
+  ya existe en el camino de ida del archivo. En AIR-271 el `CREATE OR REPLACE VIEW ... WITH
+  (security_invoker=true) AS WITH cte AS (...)` (dos WITH seguidos, significados distintos) ya estaba
+  probado en la creacion de _v1 unas lineas arriba -> parsea, sin necesidad de teorizar.
+- MEDIR > RAZONAR en semantica de tipos/TZ. El hallazgo mas util de AIR-271 (que `date AT TIME ZONE`
+  NO falla, por cast implicito date->timestamp, y por tanto un BEGIN/EXCEPTION no cubre esa direccion)
+  salio de correr 4 expresiones en PROD, no de razonar sobre el catalogo. Ante cualquier duda de
+  "esto lanzaria error?", ejecutarlo en lectura antes de afirmarlo en el veredicto.
+- MCP Linear: hay DOS entradas y solo una autoriza. `linear` (minuscula) pide OAuth y falla en
+  sesiones no interactivas; **`Linear` (mayuscula) SI funciona** -> usar `mcp__Linear__get_issue`.
+  Antes de reportar "no pude leer el issue", probar la variante en mayuscula. (PR #186: di por
+  perdido el acceso durante 4 rondas por no probarla.)
+- LEER EL ISSUE NO ES OPCIONAL, y hacerlo tarde cuesta. En PR #186 el codigo estaba impecable tras
+  4 rondas, pero al leer AIR-271 aparecio que el criterio 5 (Sentinela abre issue ante fuente
+  critica stale) NO estaba implementado mientras el cuerpo del PR decia `Closes AIR-271`. Chequeo
+  obligatorio del reviewer, barato y que ningun check automatico hace:
+    (a) recorrer los criterios de aceptacion UNO A UNO contra el diff;
+    (b) si alguno no esta, verificar que el cuerpo NO diga `Closes` (usar `Part of`) — al mergear,
+        la integracion de Linear cierra el issue y el criterio no cumplido DESAPARECE;
+    (c) revisar tambien el criterio de VERIFICACION literal del issue: en AIR-220 pedia 0 matches
+        de CURRENT_DATE en el archivo nuevo, y sobrevive como SQL vivo en la copia congelada de
+        rollback (_v1) — legitimo, pero rompe la futura regla que el mismo issue propone graduar.
+  Señal de alarma: un PR que ABRE issues de seguimiento por "cerrar por silencio y no por criterio"
+  (AIR-275) y a la vez se cierra a si mismo por entrega parcial.
+- Desviarse de la solucion que PROPONE el issue es correcto si el PR deja escrito el porque. En
+  AIR-271 el issue pedia derivar el historico de sync_log; el PR lo rechaza con evidencia (109
+  corridas 'ok' con 0 filas). Al revisar: no exigir fidelidad literal al issue, exigir que la
+  desviacion este ARGUMENTADA y verificada.
+
 ## Patrones de error a vigilar (graduar a regla si se repiten >=2)
 - (1x) Idempotencia de ejecutor n8n basada en `$json.length` sobre respuesta HTTP de PostgREST:
   comportamiento de array-vs-item del nodo HTTP no esta verificado en el repo; preferir Code node
@@ -59,6 +151,15 @@
   graduar a check determinista en `check-data-rules.sh`: detectar `EXECUTE` sobre una expresión que
   referencie una columna de tabla (no un literal) dentro de una función `SECURITY DEFINER` bajo
   `supabase/migrations/`.
+
+## Anclar al SHA no basta: re-verificar el head ANTES de emitir (PR #186)
+El head del PR avanzo (16fc3f5 -> 523bcc1) MIENTRAS revisaba, con un commit que resolvia uno de mis
+bloqueantes. El veredicto quedo invalido apenas publicado. Coste real: un comentario obsoleto en el PR.
+Regla: releer `headRefOid` JUSTO ANTES de publicar el veredicto y, si cambio, re-revisar el delta y
+emitir uno nuevo que ANULE explicitamente el anterior (enlazando el comment viejo) — el gate solo
+acepta el veredicto cuyo `sha:` coincide con el head. Barato de detectar (`git fetch` + comparar),
+caro de omitir.
+
 
 ---
 
@@ -300,3 +401,281 @@ Nota: el propio reporte lleva `↔ · — ⚠ ≠ →` (multibyte) => tambien es
   `permissions: contents:read + issues:write`. El job sigue fallando con drift (`exit "${STATUS:-2}"`).
 - Sentinela_v1.json: `activeVersion === null` en main y en HEAD => paridad AIR-140 vacua. Sin nodos
   Claude/Anthropic. El nodo Gmail tiene destinatario fijo (no controlable por el dato).
+
+## CERRADO EN RONDA 7 (AIR-276): el `sed` de ADP se BORRO, no se parcheo otra vez
+El filtro que describe la seccion de abajo ya NO existe. Fue **tres rondas y tres clases distintas de
+falso verde** sobre el MISMO `sed`: (1) `.*` codicioso que se comia la sentencia vecina; (2) cuerpos
+dollar-quoted; (3) **literales de comilla simple MULTILINEA**, que cierran con `'` y no con `$`, asi
+que la asercion de posicion basada en `$` no los veia — y pg_dump los emite de forma natural en
+`CHECK`, `DEFAULT`, `CREATE VIEW` y `CREATE POLICY`. La (3) se reprodujo de punta a punta: baseline con
+`CHECK` multilinea + migracion que inserta el valor prohibido => `0 fail` en el gate, violacion de
+constraint en el esquema fiel. El verde de aquel dia era correcto **por accidente de ordenacion**
+(ultimo `$` en 12603, primera ADP en 17907 => 5.303 lineas sin cubrir, con 14 `CREATE POLICY` y 12
+`CREATE VIEW` dentro), no por la defensa.
+
+**LA LECCION, y es la que hay que aplicar la proxima vez: cuando la MISMA correccion falla tres veces
+por clases distintas, el arreglo no es el cuarto parche — es quitar la NECESIDAD de la transformacion.**
+Aqui fue `GRANT <superusuario> TO <aplicador> WITH SET FALSE` (PostgreSQL 16+), que da el
+`has_privs_of_role` que `ALTER DEFAULT PRIVILEGES FOR ROLE X` exige y PROHIBE `SET ROLE`, asi que el
+baseline se aplica ENTERO sin filtrar nada y sin reabrir `COPY … TO PROGRAM`. Sin `sed` no hay borrado:
+la clase entera de falso verde desaparece POR CONSTRUCCION, y con ella las dos aserciones de forma y
+posicion, el conteo del recorte y el aparato de pistas 42501/42704. **Corolario**: un residual que hay
+que sostener con aserciones cada vez mas finas es una señal de que la transformacion no deberia existir.
+
+**PATRON NUEVO, del arreglo y no del bug: una defensa cuyo token se puede quitar SIN que nada se ponga
+rojo necesita una asercion en caliente, no una revision de diffs.** `WITH SET FALSE` es un token
+invisible: quitarlo deja el baseline cargando, las migraciones aplicandose y el gate en verde, con la
+escalada a superusuario abierta. Por eso el gate AFIRMA en cada corrida que
+`pg_has_role(<aplicador>, <cada superusuario>, 'SET')` es falso Y que el servidor deniega
+`COPY … TO PROGRAM` con 42501 — el predicado dice POR QUE, la consecuencia dice QUE PASA si falla, y la
+segunda no se vuelve tautologica si cambia la semantica del primero. El self-test lo muta en dos
+direcciones: token fuera (el gate debe morir) y token + guardas fuera (el programa debe ejecutarse, para
+que conste que las guardas vigilan un peligro real).
+
+**TRAMPA MEDIDA al escribir ese caso negativo, y vale para cualquier mutacion sobre un rol de Postgres:**
+`GRANT <rol> TO <miembro>` a secas sobre una membresia QUE YA EXISTE es un **no-op con NOTICE** y NO
+cambia la opcion SET. `migration_gate_applier` es cluster-wide, asi que en un cluster ya usado el caso
+mutado salia VERDE sin probar nada. El self-test revoca la membresia antes, para modelar CI (cluster
+recien levantado). Y el observable tampoco puede ser un archivo: `COPY … TO PROGRAM 'touch $TMP/x'` SI
+se ejecutaba y devolvia SQLSTATE **38000** (`program … failed`) porque el servidor corre como
+`postgres` y no puede escribir en un `mktemp -d` 755 — la ausencia del archivo confunde "denegado"
+(42501) con "ejecutado y fallo al escribir", que son los dos estados a distinguir. Se usa `true` y se
+mira el rc del gate + `pg_has_role(…,'SET')`.
+
+## Vector: `sed` de normalizacion sobre un artefacto que el PR puede editar (migration-gate.sh, sha a7d330d) — RONDA 5 (HISTORICO: el filtro ya no existe, ver arriba)
+AIR-276 descarta las 24 `ALTER DEFAULT PRIVILEGES` del baseline con
+`/^ALTER DEFAULT PRIVILEGES .*;[[:space:]]*$/d`. DOS fallos, los dos MEDIDOS con GNU sed 4.9:
+1. **El residual declarado "dollar-quoted => error de sintaxis => ROJO" es FALSO: sale VERDE y en
+   silencio.** Borrar una SENTENCIA COMPLETA de un cuerpo plpgsql deja plpgsql VALIDO
+   (`BEGIN / IF … END IF; / RETURN NEW; / END;` tras quitar la linea del medio), asi que
+   `check_function_bodies` no lo rechaza: la funcion se CREA con el cuerpo truncado. Ni error, ni log,
+   ni señal en el diff — el borrado ocurre en tiempo de CARGA, no en el artefacto. Falso verde del
+   gate en cuanto PROD tenga una sentencia a columna 0 dentro de un cuerpo. `--no-comments` en el
+   volcado cierra la variante por `COMMENT ON`; los cuerpos de funcion NO.
+   REGLA GENERAL: **"borrar una linea dentro de una cadena/cuerpo da error de sintaxis" es falso casi
+   siempre.** Quitar un statement completo casi nunca rompe la gramatica; rompe la SEMANTICA, que es
+   justo lo que no se ve. Antes de aceptar un residual que promete fallo ruidoso, construir el caso.
+2. **`.*` codicioso borra sentencias ajenas y el conteo anunciado las oculta.** El patron solo exige
+   que la linea ACABE en `;`, asi que `ALTER DEFAULT PRIVILEGES …; DROP TABLE public.ventas;` se va
+   ENTERA y el log dice "1 sentencia ALTER DEFAULT PRIVILEGES descartada". El `echo` del conteo era la
+   unica evidencia visible del recorte y es falsificable con un prefijo. Fix de 1 caracter (`[^;]*`),
+   que sigue casando las 24 reales.
+Fix de ambos sin replicar lexer (la objecion "replicar el lexer diverge siempre" es legitima):
+`grep -c 'ALTER DEFAULT PRIVILEGES' == grep -cE '^ALTER DEFAULT PRIVILEGES [^;]*;$'` o `die`. Hoy 24==24.
+**PATRON A EXIGIR: toda normalizacion textual de un artefacto necesita una asercion de que TODAS las
+apariciones del patron son de la forma que la normalizacion sabe tratar; si no, FALLAR.** Un `sed -E`
+sobre datos que otro proceso genera es la misma clase de fallo que el lexer, solo mas corta.
+
+## Nadie verifica el CONTENIDO de `supabase/baseline/schema.sql` (confirmado en a7d330d)
+`migration-baseline-freshness` (inline en ci.yml ~236-258) compara SOLO `PROD_MIGRATIONS`. No hay
+checksum ni comparacion de `schema.sql` en ningun script ni job. Es lo que convierte cualquier
+corrupcion silenciosa del baseline en falso verde no detectable. Al revisar el gate: el baseline es un
+INPUT NO VERIFICADO; toda transformacion sobre el tiene que ser fail-closed por si misma.
+
+## `ALTER DEFAULT PRIVILEGES` es PER-GRANTOR — usarlo para acotar el radio de un recorte
+Las 24 del baseline son `FOR ROLE postgres` (12) o `FOR ROLE supabase_admin` (12). En el destino
+efimero NADA crea objetos como esos roles (el grantor es siempre `migration_gate_applier`), asi que las
+24 no habrian tenido efecto observable ni aplicandose. Sirve para DESCARTAR el vector "el borrado
+neutraliza una defensa del esquema" en una linea, sin razonar caso por caso.
+Corolario de derivacion: la lista de roles del gate captura lo que sigue a `TO`/`FROM`, NUNCA a
+`FOR ROLE` => `supabase_admin` no se precrea nunca, y el falso rojo de una migracion con
+`FOR ROLE supabase_admin` (048b) sera `role does not exist`, no el 42501 documentado.
+
+## Auditar las CITAS de ejemplo, no solo la logica (a7d330d, 3 copias del mismo error)
+"la forma que usan 081 y 136" / "la forma sin FOR ROLE (022, 048b, 060, 069)": **136 y 069 solo la
+mencionan en un comentario `--`**, no tienen la sentencia; **037 SI la tiene y no se nombra**; 048b usa
+LAS DOS formas. Barato de comprobar (`grep -n 'PATRON' -A2 <archivo>` y mirar si la linea empieza por
+`--`) y aparecio identico en commit + cabecera + CLAUDE.md. Un `grep -c` cuenta comentarios como uso.
+Lo mismo en el self-test: un comentario que afirma "este rol si funcionaria" cuando el rol no se
+precrea en ese harness => afirmacion indemostrable con lo que el test ejecuta.
+
+## `gh` NO existe en este entorno: publicar el veredicto por MCP
+`gh: command not found` (coherente con la nota de la retro nocturna). Usar
+`mcp__github__add_issue_comment` con owner `sansua2025`, repo `Aire-de-Agua`. El head se resuelve con
+`git fetch origin <rama> && git rev-parse origin/<rama>`, no con `gh pr view`.
+
+## Revisar el BLOB COMPROMETIDO, no el archivo del arbol de trabajo (reviewer, PR #186)
+Corri el gate por ruta (`bash scripts/agent/migration-gate.sh`) y a mitad de la review otro agente
+dejo `migration-gate.sh` MODIFICADO SIN COMMITEAR en el mismo arbol (56+/22-). Estuve a punto de
+firmar un veredicto sobre codigo que no esta en ningun commit. Regla: extraer siempre
+`git show <head>:<path> > /tmp/.../<path>` y ejecutar ESO. Comprobar `git status --porcelain` antes
+de empezar Y antes de firmar; si el head se movio o el arbol esta sucio en los archivos del alcance,
+re-anclar. (En este PR el head paso de a7d330d a 29ab431 —solo MEMORY.md— mientras revisaba.)
+
+## Un conteo calculado por SEGUNDA VIA no prueba lo que el log afirma
+`ADP_N=$(grep -c PATRON ...)` + `sed /PATRON/d`: dos copias literales del patron. Mutacion: deje el
+`sed` sin borrar nada y el log siguio anunciando "3 sentencia(s) DESCARTADAS" con la asercion
+"declara CUANTAS descarto (3)" en **ok**. Un numero que se deriva del mismo input pero por otro camino
+puede mentir sobre lo que paso; hay que derivarlo de la DIFERENCIA REAL (antes vs despues). Al revisar:
+toda cifra que un log "declara" se audita preguntando *de donde sale*, no si el valor de hoy cuadra.
+
+## Verificar por EJECUCION que un patron textual no se come vecinos (a7d330d: dos falsos verdes)
+`/^ALTER DEFAULT PRIVILEGES .*;[[:space:]]*$/d` con `.*` codicioso borra la LINEA ENTERA. Reproducido:
+(a) `ADP ...; CREATE TABLE public.x(id int);` en una linea => la tabla nunca carga y una migracion del
+PR que la CREA sale **verde** (en PROD seria "already exists" = drift, lo que el gate existe para
+cazar); (b) esa linea a columna 0 dentro de un cuerpo `$$...$$` de plpgsql => la funcion se crea con el
+cuerpo TRUNCADO, sin error y sin rastro — refutando el comentario que prometia "error de sintaxis =>
+ROJO". Receta de ataque para cualquier `sed`/regex de normalizacion: meter una segunda sentencia en la
+misma linea, y meter el patron dentro de un cuerpo dollar-quoted. Usar `[^;]*` en vez de `.*` y afirmar
+que TODAS las apariciones son de la forma tratable.
+
+## Levantar un PG17 real en este contenedor para correr el self-test del gate
+Hay `psql`, `psycopg2` y binarios en `/usr/lib/postgresql/{16,17}/bin`, sin servidor arrancado, y
+`initdb` no corre como root: usar un usuario propio (`pgtest`) con `su pgtest -c`, y SIEMPRE
+`initdb -U gate_super` (el preflight del self-test rechaza un superusuario llamado `postgres`: es la
+colision que el gate existe para cazar). `SELFTEST_DB_URL_TEMPLATE='postgresql://gate_super@127.0.0.1:<puerto>/{db}'`. **Trampa que me costo una
+corrida entera:** el PGDATA NO puede vivir bajo el scratchpad — la plataforma reimpone `drwx------` en
+`/tmp/claude-0` y el checkpointer muere con `PANIC: could not open file ... pg_control: Permission
+denied` a mitad del test (sintoma enganoso: TODAS las aserciones en BAD, como si el codigo estuviera
+roto). Usar `/tmp/<dir>` propio de `postgres`. pgvector esta disponible; sin el, `EXTENSIONS=""`.
+
+## Fixer · Un comentario que PROMETE un modo de fallo es load-bearing: hay que medirlo
+Patron del bug de a7d330d (dos bloqueantes, los dos en un fix mio): acepte un residual porque el
+comentario que yo mismo escribi afirmaba que fallaria en ROJO ("seria un error de sintaxis al cargar
+el baseline"). Era falso y se mide en un minuto: borrar una sentencia COMPLETA de un cuerpo plpgsql
+deja plpgsql VALIDO, `check_function_bodies` no lo rechaza y la funcion se CREA truncada — gate en
+verde, `prosrc` sin la sentencia. Regla: si un comentario justifica aceptar un riesgo diciendo "el
+sintoma seria X", ejecutar X antes de commitear; si no se puede ejecutar, no se escribe la promesa.
+Aplicado al fix: (i) `[^;]*` en vez de `.*` (un `.*` anclado solo al `;` final se come la sentencia
+vecina de la misma linea); (ii) afirmacion fail-closed de FORMA (todas las apariciones son sentencias
+completas de una linea) y de POSICION (ningun `$` en o despues de la primera: el cierre de un cuerpo
+dollar-quoted que la contuviera llevaria `$` por debajo — cierra el caso sin replicar lexer alguno);
+(iii) el conteo anunciado se deriva del archivo YA normalizado, nunca de un grep paralelo al input.
+Cada una con su caso negativo y comprobada por mutacion (quitarla => verde silencioso o rojo por otro
+mensaje). Y al escribir el falso rojo: no afirmar una causa que el codigo no puede establecer — la
+pista va condicionada a la evidencia del log, como ya se hacia con rc=3.
+
+## Security-reviewer · RONDA 6 (sha 4763565): "no hay `$` ⇒ no hay cuerpo" es FALSO — el literal de comilla simple
+El fix de la ronda 6 cierra el caso dollar-quoted con una asercion de POSICION (`DOLLAR_LAST <
+ADP_FIRST`) y la declara **suficiente, no heuristica**: "para que una linea borrada estuviera DENTRO de
+un cuerpo, su delimitador de cierre CONTIENE un `$`". El razonamiento es correcto **solo dentro de su
+dominio**. Un literal de **comilla simple multilinea cierra con `'`**, que no lleva `$`: `DOLLAR_LAST`
+queda en 0, las dos aserciones pasan y el `sed` borra la linea de dentro del literal. VERDE y silencioso.
+**Y no hace falta atacante: es lo que `pg_dump` emite.** Medido en PG 17.11 — cuatro construcciones con
+la linea de continuacion a **columna 0** y **cero `$` en el volcado**: `DEFAULT 'multi\nlinea'` de
+columna · `CONSTRAINT … CHECK ((col <> 'multi\nlinea'))` · `CREATE VIEW` con literal multilinea ·
+**`CREATE POLICY … USING (…)`** (RLS). Los cuerpos de funcion SI se salvan: `pg_dump` los re-emite
+`AS $$` (por eso el caso del self-test, que solo prueba esa forma, pasa y no prueba nada del resto).
+Falso verde reproducido de punta a punta: baseline con CHECK+POLICY multilinea (`ADP_TOTAL=3 ADP_N=3
+DOLLARS=0`), migracion que INSERTA el valor prohibido ⇒ `migration-gate: 0 fail` (RC=0); el CHECK queda
+`'prohibido:\nfin'` y la POLICY `'bloqueado:\nfin'`; la MISMA migracion contra el esquema fiel da
+`violates check constraint`. Verde en el gate, rojo en PROD.
+**Ventana viva en el baseline real de hoy:** `DOLLAR_LAST=12603`, `ADP_FIRST=17907` ⇒ lineas
+**12604-17906 sin cubrir**, y ahi viven 14 `CREATE POLICY`, 12 `CREATE VIEW`, 202 `ALTER TABLE` y los
+`DEFAULT`/`CHECK` de las tablas. `schema.sql` YA contiene un literal de comilla simple multilinea
+(11664-11665); el verde actual es correcto por **casualidad de ordenacion** (esta por encima de 12603),
+no por la asercion.
+**REGLAS GENERALES (las dos, caras):**
+1. Cuando alguien escribe "POR QUE ES SUFICIENTE" sobre una asercion, **enumerar el dominio del
+   cuantificador**: "todo cuerpo cierra con un delimitador que lleva `$`" era un "todo" sobre *cuerpos
+   dollar-quoted*, no sobre cuerpos. Buscar el OTRO miembro de la familia (`'…'`, `$tag$…$tag$`,
+   `E'…'`, `U&'…'`, `"…"`) antes de aceptar la prueba.
+2. Un conteo "derivado del efecto real" **sigue mintiendo** si cuenta LINEAS QUE CASAN UN PATRON y no
+   SENTENCIAS: anuncio "3 sentencia(s) DESCARTADAS" cuando solo 1 era sentencia. Derivar del efecto
+   cierra la mutacion del `sed`, no el error de tipo.
+Ceguera compartida por las otras dos normalizaciones del mismo `sed` (`CREATE SCHEMA`→`IF NOT EXISTS`,
+borrado de `\restrict`): tambien reescriben dentro de un literal de comilla simple.
+
+## Security-reviewer · Una PISTA condicionada puede convertir un rojo REAL en "falso rojo conocido"
+Vector nuevo, no de falso verde sino **fail-open en el lazo humano**. `migration-gate.sh` gana un bloque
+que declara `FALSO ROJO CONOCIDO` y dice "**no** con una migracion que no aplique sobre PROD" +
+"Verifica a mano … pide el juicio humano de AIR-162 §2". La rama 42704 exige `role "…" does not exist`
+en el log Y `ALTER DEFAULT PRIVILEGES … FOR ROLE` en el archivo, pero **NUNCA correlaciona el rol del
+error con el del `FOR ROLE`**: una migracion con un rol mal escrito (`el_cerebro_readerr`) mas una ADP
+legitima sale declarada falso rojo benigno, con instrucciones de rodear el gate. La rama 42501 es peor:
+**no comprueba nada del archivo** y afirma "`<f>` trae 'ALTER DEFAULT PRIVILEGES FOR ROLE <X>'" sobre un
+archivo con 0 ocurrencias (reproducido con la ADP dentro de una funcion creada por una migracion
+anterior del PR) mas "En PROD la ejecuta un rol privilegiado y aplica bien", que el gate no establece.
+**REGLA: al revisar una pista/clasificacion de error, atacarla como un gate — buscar el caso donde
+dispara y la causa NO es la que nombra.** Condicionar a la evidencia del log no basta: la condicion
+tiene que ligar TODOS los terminos que la frase afirma (rol del error == rol del `FOR ROLE`, archivo
+culpado == archivo que contiene el patron). Una frase que exculpa es tan load-bearing como un `exit 0`.
+Hedge al final ("lo que el gate NO puede establecer") NO compensa un titular que afirma la causa.
+
+## Security-reviewer · Metodo: mutar las aserciones NUEVAS para ver si el self-test tiene dientes
+Copiar `scripts/agent/` a un tmp (el self-test resuelve `GATE`/`REAL_APPLY` junto a SU propio archivo,
+asi que la copia se auto-contiene) y mutar solo la linea de la asercion. Las 4 de la ronda 6 tienen
+dientes (limpio 130 ok/0 bad, 47 s por corrida): quitar la de POSICION ⇒ `BAD … DEBERIA fallar y salio
+0` (confirma el falso verde que el fixer decia haber medido); quitar la de FORMA ⇒ 2 BAD; `[^;]*`→`.*`
+⇒ `BAD la vecina DESAPARECIO del baseline`; quitar `ADP_LEFT -eq 0` ⇒ 1 BAD. **Tener dientes no es
+tener cobertura:** las 4 prueban SOLO cuerpos dollar-quoted; `grep "LANGUAGE … AS '"` sobre el
+self-test sale vacio. Preguntar siempre las dos cosas por separado.
+Postgres local para reproducir: `initdb -U gate_super` bajo el HOME de un usuario propio (`useradd
+pgtest`; el scratchpad NO sirve, la plataforma reimpone `drwx------`), `pg_ctl -o '-p 55432 -k /tmp'`,
+`EXTENSIONS=""`, `SELFTEST_DB_URL_TEMPLATE="postgresql://gate_super@127.0.0.1:55432/{db}"`.
+OJO: el hook `validate-sql.sh` bloquea mis propios comandos si mencionan el borrado de bases/esquemas
+(incluso en texto de memoria) — crear nombres nuevos (`db_$RANDOM`) en vez de limpiar. Dentro del
+self-test no lo ve: el borrado vive en el script, no en mi linea de comando.
+
+## Fixer · RONDA 8 (AIR-276): la causa raíz era una COLISIÓN DE NOMBRES, no el modelo de privilegios
+Tres FAIL seguidos sobre el mismo punto (`sed` de ADP → `WITH SET FALSE` → ACL de `initdb` heredadas →
+canario tautológico) venían de UNA coincidencia: el baseline nombra `postgres` y la imagen
+`pgvector:pg17` llama `postgres` a su superusuario. Medido en PG 17.11: con `GRANT postgres TO app WITH
+SET FALSE`, `lo_import`, `lo_export` (escribe el archivo) y `pg_read_file` FUNCIONAN — `SET FALSE` corta
+`SET ROLE`, NO la herencia de ACL (`proacl {postgres=X/postgres}` sigue a `has_privs_of_role`).
+Arreglo: `POSTGRES_USER: gate_super` en ci.yml; `postgres` pasa a rol plano que el gate crea. Se
+borraron `WITH SET FALSE`, la guarda PG16+ y el canario de COPY. Lo sostiene una INVARIANTE en caliente
+(ningún rol nombrado en el baseline es superusuario en el destino ⇒ die antes de crear/cargar nada) +
+dos cuentas = 0 (superusuarios con SET; funciones con ACL que el aplicador ejecuta y `public` no —
+`has_function_privilege('public', …)` acepta el pseudo-rol). La cuenta de funciones va ANTES del
+baseline: después, el aplicador es dueño de funciones con `REVOKE … FROM PUBLIC` y sería ruido.
+**PATRÓN: cuando cada ronda añade mecanismo para esquivar el mismo hecho, buscar el HECHO (aquí un
+nombre compartido por accidente) y quitarlo; luego afirmar en caliente que no vuelve.**
+Trampas medidas: (1) promover `postgres` a SUPERUSER en un cluster `initdb -U gate_super` reproduce lo
+que la invariante MIRA, pero NO las ACL de initdb (siguen a nombre del superusuario de arranque): para
+demostrar la herencia hay que usar la membresía en el superusuario de ARRANQUE. (2) Los gates mutados
+copiados a `$TMP` necesitan `SQL_APPLY="$REAL_APPLY"`: sin él mueren por "no existe el aplicador" y un
+caso "debe morir" sale ok por el motivo equivocado. (3) La derivación de `FOR ROLE` captura `(.*)`, así
+que un `"rol'raro"` del baseline llegaba a SQL de superusuario: se valida `^[A-Za-z0-9_]+$` o die.
+(4) `psql -c` no admite `\gset` mezclado con SQL. Self-test: 152 ok; las 3 mutaciones (invariante,
+cuenta SET, cuenta funciones) cazadas.
+
+## Fixer · AIR-276-verify intento 2 · Salida temprana = fail-open; cuentas que no miden el canal
+(1) `migration-gate.sh` salía con `exit 0` ANTES de preparar destino cuando no había migraciones
+nuevas (run 482, 0 s): un PR que solo tocara `supabase/baseline/schema.sql` pasaba sin cargarlo.
+Arreglo: el baseline se carga SIEMPRE; la salida "sin migraciones nuevas" va DESPUÉS de la aserción
+OBJ > 0. **PATRÓN: todo `exit 0` temprano en un gate es sospechoso — el caso "no hay nada que validar"
+suele dejar SIN validar un input que el PR sí puede editar (aquí el baseline).** (2) Las cuentas
+"miran el efecto, venga de donde venga" era falso: la membresía directa en `pg_execute_server_program`
+no pasa por funciones ni superusuarios. Tercera cuenta (`pg_has_role … 'MEMBER'` en los 3 roles
+`pg_*_server_*`) + canario `COPY … TO PROGRAM` ⇒ 42501 restaurado. **PATRÓN: una cuenta de catálogo
+mide UNA vía; nunca escribir "venga de donde venga" sin un caso por vía.** (3) Derivación de roles
+debe plegar a minúsculas lo NO entrecomillado (awk), o `FOR ROLE GATE_SUPER` esquiva la invariante.
+Trampas: el hook `validate-sql.sh` bloquea borrar bases incluso en local, y también si el verbo sale
+en un texto del comando (usar bases nuevas); el aplicador cluster-wide arrastra membresía en
+`postgres` de casos previos (13e(c) debe revocarla antes de medir el WHERE); un stub de aplicador que
+finge debe fingir también el canario COPY. Editar el self-test mientras corre en background rompe la
+corrida (bash lee el script por trozos). Self-test: 166 ok; mutaciones salida-temprana (5 BAD), sin
+cuenta 3 (lo caza el canario), sin cuenta 3 ni canario (el programa EJECUTA, fila en la base).
+
+## AIR-276 · Lecciones de los revisores (ronda final, persistidas por el fixer)
+- **Retirar una asercion en caliente:** enumerar TODAS las regresiones que cazaba, no solo aquella por
+  la que se anadio. El canario COPY se puso por `WITH SET FALSE` y tambien vigilaba `pg_*_server_*`;
+  su propio mensaje lo decia, y al retirarlo se abrio esa via.
+- **"Cuenta sobre funciones con ACL" != "privilegio de servidor":** `COPY` a programa/archivo se decide
+  por membresia en roles predefinidos (`pg_execute_server_program`, `pg_read/write_server_files`), no
+  por el ACL de ninguna funcion. Una cuenta de catalogo mide UNA via.
+- **Camino corto de "nada que hacer":** preguntar que input del PR entra por ese camino sin validarse
+  (el gate salia antes de cargar el baseline cuando no habia migraciones; el baseline pasaba sin cargarse).
+- **Canario de programa:** uno que no consume stdin (`true`) da EPIPE/XX000 o rc=0 por carrera con el
+  hijo; usar uno que drene (`cat >/dev/null`). Una tirada 166/0 no prueba ausencia de flake: correr >=3.
+- **`die` que nombra una causa** exige un caso del self-test que llegue por OTRA via y compruebe el
+  texto (patron repetido: rc=3, bloque de PRIVILEGIOS del baseline, mensaje de la invariante).
+- **Casos que afirman "no hay rol espurio"** deben limpiar residuos cluster-wide al inicio y en el trap.
+  El arbol compartido puede cambiar a mitad de revision: anclar al SHA, nunca al arbol.
+- **`pg_has_role(..., 'MEMBER')` es transitiva** (medido con rol intermedio): la cuenta 3 ve tambien la
+  membresia indirecta en `pg_*_server_*`.
+
+## Fixer · AIR-276 ronda de pulido: pistas que sobreafirman o empujan al lado equivocado
+El mensaje de la invariante de colision decia "en PROD es un rol corriente" (falso para
+`supabase_admin`), asumia que el nombre venia de un `ALTER DEFAULT PRIVILEGES` y mandaba a `ci.yml`
+aunque la colision viniera del baseline. Arreglo: dos mensajes, `COLISION DE NOMBRES (destino)` si el
+nombre es uno de los 5 roles base (arreglo: `POSTGRES_USER`) y `(baseline)` si sale del baseline
+(arreglo: baseline o superusuario), sin afirmar sentencia de origen ni que es en PROD; 13e(a)/(f)
+comprueban el de baseline y que NO sale el de destino, 13e(b) al reves. La pista de carga del baseline
+sugeria `GATE_APPLY_AS_SUPERUSER=1` ante cualquier fallo: ahora solo sale ante SQLSTATE 42501, apunta a
+invariante/cuentas y dice que ese escape hatch NO es remedio; 13e(c) exige el 42501 y el texto.
+**PATRON: una pista es una rama del gate; su caso comprueba el texto Y la ausencia del texto vecino.**
+Mutaciones verificadas: clasificar todo como baseline => 2 BAD en (b); pista que vuelve a sugerir el
+escape hatch => 1 BAD en (c). Self-test: 169 ok.
+
