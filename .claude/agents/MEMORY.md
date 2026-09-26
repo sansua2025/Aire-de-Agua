@@ -503,3 +503,65 @@ dollar-quoted que la contuviera llevaria `$` por debajo — cierra el caso sin r
 Cada una con su caso negativo y comprobada por mutacion (quitarla => verde silencioso o rojo por otro
 mensaje). Y al escribir el falso rojo: no afirmar una causa que el codigo no puede establecer — la
 pista va condicionada a la evidencia del log, como ya se hacia con rc=3.
+
+## Security-reviewer · RONDA 6 (sha 4763565): "no hay `$` ⇒ no hay cuerpo" es FALSO — el literal de comilla simple
+El fix de la ronda 6 cierra el caso dollar-quoted con una asercion de POSICION (`DOLLAR_LAST <
+ADP_FIRST`) y la declara **suficiente, no heuristica**: "para que una linea borrada estuviera DENTRO de
+un cuerpo, su delimitador de cierre CONTIENE un `$`". El razonamiento es correcto **solo dentro de su
+dominio**. Un literal de **comilla simple multilinea cierra con `'`**, que no lleva `$`: `DOLLAR_LAST`
+queda en 0, las dos aserciones pasan y el `sed` borra la linea de dentro del literal. VERDE y silencioso.
+**Y no hace falta atacante: es lo que `pg_dump` emite.** Medido en PG 17.11 — cuatro construcciones con
+la linea de continuacion a **columna 0** y **cero `$` en el volcado**: `DEFAULT 'multi\nlinea'` de
+columna · `CONSTRAINT … CHECK ((col <> 'multi\nlinea'))` · `CREATE VIEW` con literal multilinea ·
+**`CREATE POLICY … USING (…)`** (RLS). Los cuerpos de funcion SI se salvan: `pg_dump` los re-emite
+`AS $$` (por eso el caso del self-test, que solo prueba esa forma, pasa y no prueba nada del resto).
+Falso verde reproducido de punta a punta: baseline con CHECK+POLICY multilinea (`ADP_TOTAL=3 ADP_N=3
+DOLLARS=0`), migracion que INSERTA el valor prohibido ⇒ `migration-gate: 0 fail` (RC=0); el CHECK queda
+`'prohibido:\nfin'` y la POLICY `'bloqueado:\nfin'`; la MISMA migracion contra el esquema fiel da
+`violates check constraint`. Verde en el gate, rojo en PROD.
+**Ventana viva en el baseline real de hoy:** `DOLLAR_LAST=12603`, `ADP_FIRST=17907` ⇒ lineas
+**12604-17906 sin cubrir**, y ahi viven 14 `CREATE POLICY`, 12 `CREATE VIEW`, 202 `ALTER TABLE` y los
+`DEFAULT`/`CHECK` de las tablas. `schema.sql` YA contiene un literal de comilla simple multilinea
+(11664-11665); el verde actual es correcto por **casualidad de ordenacion** (esta por encima de 12603),
+no por la asercion.
+**REGLAS GENERALES (las dos, caras):**
+1. Cuando alguien escribe "POR QUE ES SUFICIENTE" sobre una asercion, **enumerar el dominio del
+   cuantificador**: "todo cuerpo cierra con un delimitador que lleva `$`" era un "todo" sobre *cuerpos
+   dollar-quoted*, no sobre cuerpos. Buscar el OTRO miembro de la familia (`'…'`, `$tag$…$tag$`,
+   `E'…'`, `U&'…'`, `"…"`) antes de aceptar la prueba.
+2. Un conteo "derivado del efecto real" **sigue mintiendo** si cuenta LINEAS QUE CASAN UN PATRON y no
+   SENTENCIAS: anuncio "3 sentencia(s) DESCARTADAS" cuando solo 1 era sentencia. Derivar del efecto
+   cierra la mutacion del `sed`, no el error de tipo.
+Ceguera compartida por las otras dos normalizaciones del mismo `sed` (`CREATE SCHEMA`→`IF NOT EXISTS`,
+borrado de `\restrict`): tambien reescriben dentro de un literal de comilla simple.
+
+## Security-reviewer · Una PISTA condicionada puede convertir un rojo REAL en "falso rojo conocido"
+Vector nuevo, no de falso verde sino **fail-open en el lazo humano**. `migration-gate.sh` gana un bloque
+que declara `FALSO ROJO CONOCIDO` y dice "**no** con una migracion que no aplique sobre PROD" +
+"Verifica a mano … pide el juicio humano de AIR-162 §2". La rama 42704 exige `role "…" does not exist`
+en el log Y `ALTER DEFAULT PRIVILEGES … FOR ROLE` en el archivo, pero **NUNCA correlaciona el rol del
+error con el del `FOR ROLE`**: una migracion con un rol mal escrito (`el_cerebro_readerr`) mas una ADP
+legitima sale declarada falso rojo benigno, con instrucciones de rodear el gate. La rama 42501 es peor:
+**no comprueba nada del archivo** y afirma "`<f>` trae 'ALTER DEFAULT PRIVILEGES FOR ROLE <X>'" sobre un
+archivo con 0 ocurrencias (reproducido con la ADP dentro de una funcion creada por una migracion
+anterior del PR) mas "En PROD la ejecuta un rol privilegiado y aplica bien", que el gate no establece.
+**REGLA: al revisar una pista/clasificacion de error, atacarla como un gate — buscar el caso donde
+dispara y la causa NO es la que nombra.** Condicionar a la evidencia del log no basta: la condicion
+tiene que ligar TODOS los terminos que la frase afirma (rol del error == rol del `FOR ROLE`, archivo
+culpado == archivo que contiene el patron). Una frase que exculpa es tan load-bearing como un `exit 0`.
+Hedge al final ("lo que el gate NO puede establecer") NO compensa un titular que afirma la causa.
+
+## Security-reviewer · Metodo: mutar las aserciones NUEVAS para ver si el self-test tiene dientes
+Copiar `scripts/agent/` a un tmp (el self-test resuelve `GATE`/`REAL_APPLY` junto a SU propio archivo,
+asi que la copia se auto-contiene) y mutar solo la linea de la asercion. Las 4 de la ronda 6 tienen
+dientes (limpio 130 ok/0 bad, 47 s por corrida): quitar la de POSICION ⇒ `BAD … DEBERIA fallar y salio
+0` (confirma el falso verde que el fixer decia haber medido); quitar la de FORMA ⇒ 2 BAD; `[^;]*`→`.*`
+⇒ `BAD la vecina DESAPARECIO del baseline`; quitar `ADP_LEFT -eq 0` ⇒ 1 BAD. **Tener dientes no es
+tener cobertura:** las 4 prueban SOLO cuerpos dollar-quoted; `grep "LANGUAGE … AS '"` sobre el
+self-test sale vacio. Preguntar siempre las dos cosas por separado.
+Postgres local para reproducir: `initdb` bajo el HOME de un usuario propio (`useradd pgtest`; el
+scratchpad NO sirve, la plataforma reimpone `drwx------`), `pg_ctl -o '-p 55432 -k /tmp'`,
+`EXTENSIONS=""`, `SELFTEST_DB_URL_TEMPLATE="postgresql://postgres@127.0.0.1:55432/{db}"`.
+OJO: el hook `validate-sql.sh` bloquea mis propios comandos si mencionan el borrado de bases/esquemas
+(incluso en texto de memoria) — crear nombres nuevos (`db_$RANDOM`) en vez de limpiar. Dentro del
+self-test no lo ve: el borrado vive en el script, no en mi linea de comando.
