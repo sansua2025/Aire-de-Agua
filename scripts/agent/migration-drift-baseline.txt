@@ -132,9 +132,11 @@ vista_atribucion_web_v4_bulletproof
 # se extrajo del catálogo de PROD y se verificó IDÉNTICO por md5 en tres
 # dimensiones: definición de vista, columnas y constraints. SOLO esas tres — la
 # comprobación NO cubre reloptions ni ACLs/grants, así que "sin divergencia de
-# contenido" vale dentro de ese alcance, no en absoluto. Los ocho slugs de PROD y
-# el slug del archivo nuevo se bendicen aquí: la divergencia de NOMBRES es real y
-# permanente. Ver el bloque ALCANCE de la cabecera de la 148 (que además explica
+# contenido" vale dentro de ese alcance, no en absoluto. Se bendicen SOLO los ocho
+# slugs de PROD: git nunca tendrá esos archivos, así que su divergencia de NOMBRES
+# es real y permanente. La 148 NO se bendice: se aplica a PROD con su slug exacto
+# (air279_reconciliacion_geocoding) y deja de ser divergencia. Hasta entonces este
+# job queda ROJO a propósito. Ver el bloque ALCANCE de la cabecera de la 148 (que
 # por qué esto no arregla el orden de replay: la 143 sigue haciendo ALTER antes
 # de que la 148 cree la tabla).
 create_direcciones_web_geocoded
