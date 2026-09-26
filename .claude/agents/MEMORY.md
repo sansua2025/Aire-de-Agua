@@ -605,3 +605,26 @@ scratchpad NO sirve, la plataforma reimpone `drwx------`), `pg_ctl -o '-p 55432 
 OJO: el hook `validate-sql.sh` bloquea mis propios comandos si mencionan el borrado de bases/esquemas
 (incluso en texto de memoria) — crear nombres nuevos (`db_$RANDOM`) en vez de limpiar. Dentro del
 self-test no lo ve: el borrado vive en el script, no en mi linea de comando.
+
+## Fixer · RONDA 8 (AIR-276): la causa raíz era una COLISIÓN DE NOMBRES, no el modelo de privilegios
+Tres FAIL seguidos sobre el mismo punto (`sed` de ADP → `WITH SET FALSE` → ACL de `initdb` heredadas →
+canario tautológico) venían de UNA coincidencia: el baseline nombra `postgres` y la imagen
+`pgvector:pg17` llama `postgres` a su superusuario. Medido en PG 17.11: con `GRANT postgres TO app WITH
+SET FALSE`, `lo_import`, `lo_export` (escribe el archivo) y `pg_read_file` FUNCIONAN — `SET FALSE` corta
+`SET ROLE`, NO la herencia de ACL (`proacl {postgres=X/postgres}` sigue a `has_privs_of_role`).
+Arreglo: `POSTGRES_USER: gate_super` en ci.yml; `postgres` pasa a rol plano que el gate crea. Se
+borraron `WITH SET FALSE`, la guarda PG16+ y el canario de COPY. Lo sostiene una INVARIANTE en caliente
+(ningún rol nombrado en el baseline es superusuario en el destino ⇒ die antes de crear/cargar nada) +
+dos cuentas = 0 (superusuarios con SET; funciones con ACL que el aplicador ejecuta y `public` no —
+`has_function_privilege('public', …)` acepta el pseudo-rol). La cuenta de funciones va ANTES del
+baseline: después, el aplicador es dueño de funciones con `REVOKE … FROM PUBLIC` y sería ruido.
+**PATRÓN: cuando cada ronda añade mecanismo para esquivar el mismo hecho, buscar el HECHO (aquí un
+nombre compartido por accidente) y quitarlo; luego afirmar en caliente que no vuelve.**
+Trampas medidas: (1) promover `postgres` a SUPERUSER en un cluster `initdb -U gate_super` reproduce lo
+que la invariante MIRA, pero NO las ACL de initdb (siguen a nombre del superusuario de arranque): para
+demostrar la herencia hay que usar la membresía en el superusuario de ARRANQUE. (2) Los gates mutados
+copiados a `$TMP` necesitan `SQL_APPLY="$REAL_APPLY"`: sin él mueren por "no existe el aplicador" y un
+caso "debe morir" sale ok por el motivo equivocado. (3) La derivación de `FOR ROLE` captura `(.*)`, así
+que un `"rol'raro"` del baseline llegaba a SQL de superusuario: se valida `^[A-Za-z0-9_]+$` o die.
+(4) `psql -c` no admite `\gset` mezclado con SQL. Self-test: 152 ok; las 3 mutaciones (invariante,
+cuenta SET, cuenta funciones) cazadas.

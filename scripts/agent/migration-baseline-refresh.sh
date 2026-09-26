@@ -39,24 +39,32 @@
 #
 # EL VOLCADO ES FIEL Y SE USA ENTERO. Este script NO filtra nada, y el gate
 # tampoco: `migration-gate.sh` carga el baseline COMPLETO, sus 24 `ALTER DEFAULT
-# PRIVILEGES` incluidas. Puede hacerlo porque su aplicador NOSUPERUSER recibe
-# membresía en los roles superusuario con `GRANT … WITH SET FALSE` (PostgreSQL
-# 16+), que da el `has_privs_of_role` que esas sentencias exigen y PROHÍBE `SET
-# ROLE` — o sea, sin reabrir `COPY … TO PROGRAM`. Detalle y mediciones en la
-# sección "LOS DEFAULT PRIVILEGES DEL BASELINE SE APLICAN" de la cabecera de
-# migration-gate.sh.
+# PRIVILEGES` incluidas (12 `FOR ROLE postgres`, 12 `FOR ROLE supabase_admin`).
 #
-# HISTORIA, porque cambia qué hay que mirar si algo se pone rojo: hubo tres rondas
-# en que el gate DESCARTABA esas sentencias con un `sed`, y cada ronda encontró una
-# clase nueva de falso verde (sentencia vecina pegada; cuerpos dollar-quoted;
-# literales de comilla simple MULTILÍNEA, que pg_dump emite de forma natural en
-# CHECK/DEFAULT/CREATE VIEW/CREATE POLICY). Ese filtro YA NO EXISTE, y con él se
-# fueron sus exigencias sobre la FORMA del volcado: hoy este archivo puede traer
-# `ALTER DEFAULT PRIVILEGES` donde quiera, partida en varias líneas o dentro de un
-# literal, y el gate no la interpreta — la ejecuta. Si el gate se pone rojo
-# nombrando este volcado, es un problema REAL del esquema o del entorno, no una
-# exigencia de forma del gate. Lo único que sí exige es un destino PostgreSQL 16+
-# (`WITH SET FALSE`), y lo dice con ese mensaje.
+# POR QUÉ PUEDE: EL VOLCADO NOMBRA A `postgres`, Y EN CI ESE NOMBRE NO ES EL
+# SUPERUSUARIO. En PROD `postgres` es un rol corriente; en la imagen de Postgres,
+# por defecto, es el superusuario. Si el superusuario efímero se llamara igual,
+# cargar esas sentencias exigiría hacer al aplicador miembro de un superusuario,
+# y eso arrastra las ACL que `initdb` le pone (medido en PG 17.11, aun con `WITH
+# SET FALSE`: `lo_import`, `lo_export` y `pg_read_file` pasan a funcionar =
+# lectura y escritura de archivos del servidor). Por eso en ci.yml el
+# superusuario efímero se llama `gate_super`, `postgres` es un rol plano que el
+# gate crea, y el gate AFIRMA en cada corrida que ningún rol nombrado por este
+# volcado es superusuario en el destino. Detalle y mediciones en la sección "EL
+# SUPERUSUARIO EFÍMERO NO SE LLAMA `postgres`" de la cabecera de migration-gate.sh.
+#
+# QUÉ PUEDE PONER ROJO AL GATE POR CAUSA DE ESTE VOLCADO (cada uno con su caso en
+# migration-gate.selftest.sh):
+#  · que nombre un rol que en el destino es superusuario — p.ej. un `FOR ROLE
+#    gate_super` — ⇒ "COLISIÓN DE NOMBRES" (caso 13e);
+#  · que nombre un rol con caracteres fuera de [A-Za-z0-9_] (p.ej. un
+#    identificador entrecomillado con comilla simple dentro) ⇒ el gate se niega a
+#    interpolarlo en SQL de superusuario (caso 13e(e)).
+# Fuera de eso, un rojo que nombre este volcado es un problema REAL del esquema o
+# del entorno. HISTORIA: hubo tres rondas en que el gate DESCARTABA las ADP con un
+# `sed`, cada una con una clase nueva de falso verde (sentencia vecina pegada;
+# cuerpos dollar-quoted; literales de comilla simple MULTILÍNEA). Ese filtro ya no
+# existe: el gate no interpreta el volcado, lo ejecuta.
 set -uo pipefail
 
 PGBIN="${PGBIN:-}"

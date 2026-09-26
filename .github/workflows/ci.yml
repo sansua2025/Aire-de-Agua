@@ -414,12 +414,22 @@ jobs:
     services:
       pg:
         image: pgvector/pgvector:pg17
+        # EL SUPERUSUARIO NO SE LLAMA `postgres`, A PROPÓSITO (AIR-276). El
+        # baseline de PROD nombra a `postgres` (12 `ALTER DEFAULT PRIVILEGES FOR
+        # ROLE postgres`); si el superusuario efímero se llamara igual, cargarlo
+        # exigiría hacer al aplicador miembro de un superusuario, y eso hereda
+        # las ACL de initdb (medido en PG 17.11: lo_import/lo_export/
+        # pg_read_file = lectura y escritura de archivos del servidor). Con otro
+        # nombre, `postgres` es un rol plano que el gate crea. El gate AFIRMA en
+        # cada corrida que ningún rol nombrado en el baseline es superusuario:
+        # volver a `POSTGRES_USER: postgres` lo pone ROJO, no lo abre.
         env:
-          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: gate_super
+          POSTGRES_PASSWORD: gate_super
         ports:
           - 5432:5432
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U gate_super"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
@@ -533,16 +543,15 @@ jobs:
       # de psql y COPY … TO PROGRAM).
       - name: Self-test del gate de migraciones
         env:
-          SELFTEST_DB_URL_TEMPLATE: postgresql://postgres:postgres@localhost:5432/{db}
+          SELFTEST_DB_URL_TEMPLATE: postgresql://gate_super:gate_super@localhost:5432/{db}
         run: PSQL_BIN="$PGBIN/psql" bash scripts/agent/migration-gate.selftest.sh
 
       - name: Aplicar las migraciones nuevas sobre el esquema de PROD
         run: |
           set -euo pipefail
-          export PGPASSWORD=postgres
-          "$PGBIN/psql" "postgresql://postgres:postgres@localhost:5432/postgres" -q \
+          "$PGBIN/psql" "postgresql://gate_super:gate_super@localhost:5432/postgres" -q \
             -c "CREATE DATABASE migration_gate"
           PSQL_BIN="$PGBIN/psql" bash scripts/agent/migration-gate.sh \
-            --target "postgresql://postgres:postgres@localhost:5432/migration_gate" \
+            --target "postgresql://gate_super:gate_super@localhost:5432/migration_gate" \
             --baseline supabase/baseline/schema.sql \
             --base-ref origin/main | tee -a "$GITHUB_STEP_SUMMARY"

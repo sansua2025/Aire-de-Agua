@@ -19,8 +19,14 @@
 # mensaje.
 #
 # Requiere un Postgres desechable:
-#   SELFTEST_DB_URL_TEMPLATE  URL con el literal {db}, p.ej.
-#                             postgresql://postgres:postgres@localhost:5432/{db}
+#   SELFTEST_DB_URL_TEMPLATE  URL con el literal {db}, conectando como un
+#                             SUPERUSUARIO que NO se llame `postgres`, p.ej.
+#                             postgresql://gate_super:gate_super@localhost:5432/{db}
+#                             (initdb -U gate_super, o POSTGRES_USER=gate_super en
+#                             la imagen de Docker). Con el superusuario llamado
+#                             `postgres` el harness reproduciría la COLISIÓN que el
+#                             gate existe para rechazar y todos los casos morirían
+#                             por ella: el preflight lo detecta y se niega.
 # Uso: bash scripts/agent/migration-gate.selftest.sh   (exit 0 = OK)
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -65,7 +71,47 @@ if ! $GATE_PYTHON -I -c 'import psycopg2' >/dev/null 2>&1; then
   exit 1
 fi
 
+# PREFLIGHT DEL CLUSTER. El superusuario del harness NO puede llamarse
+# `postgres`: el baseline nombra ese rol, y el gate muere por colisión (caso 13e).
+# Además el caso 13e(b) convierte temporalmente al rol `postgres` en SUPERUSER y
+# lo devuelve a plano: sobre un cluster cuyo superusuario FUERA `postgres`, eso
+# lo degradaría. Por las dos razones, se comprueba y se aborta ANTES de tocar nada.
+SU_NAME="$($PSQL "${TPL//\{db\}/postgres}" -tAc "SELECT current_user || '|' || (SELECT rolsuper::text FROM pg_roles WHERE rolname = current_user) || '|' || (SELECT count(*) FROM pg_roles WHERE rolname = 'postgres' AND rolsuper)" 2>/dev/null | tr -d ' ')"
+case "$SU_NAME" in
+  postgres\|*)
+    echo "migration-gate.selftest: el cluster del harness se conecta como el superusuario 'postgres'." >&2
+    echo "  Eso reproduce la colisión de nombres que el gate rechaza. Arráncalo con otro" >&2
+    echo "  superusuario (initdb -U gate_super / POSTGRES_USER=gate_super)." >&2
+    exit 1 ;;
+  *\|true\|0) SU_NAME="${SU_NAME%%|*}" ;;
+  *\|true\|*)
+    echo "migration-gate.selftest: en el cluster del harness el rol 'postgres' es SUPERUSUARIO." >&2
+    echo "  El gate moriría por colisión en todos los casos. Usa un cluster limpio" >&2
+    echo "  (o, si lo dejó así una corrida interrumpida: ALTER ROLE postgres NOSUPERUSER)." >&2
+    exit 1 ;;
+  *)
+    echo "migration-gate.selftest: no se pudo confirmar que el harness conecte como superusuario (respuesta: '${SU_NAME:-<vacía>}')." >&2
+    exit 1 ;;
+esac
+
+# El caso 13e(b) promueve al rol `postgres` a SUPERUSER para reproducir la
+# colisión. Se registra en un archivo y el trap de salida lo deshace pase lo que
+# pase: dejar el cluster con `postgres` superusuario rompería toda corrida
+# posterior (el preflight de arriba lo detectaría, pero mejor no llegar).
+PROMOVIDO_F=""
+promover_postgres() {
+  : > "$PROMOVIDO_F"   # ANTES del ALTER: si muere a mitad, el trap igual restaura
+  $PSQL "${TPL//\{db\}/postgres}" -q -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='postgres') THEN CREATE ROLE postgres NOLOGIN; END IF; END \$\$;" -c "ALTER ROLE postgres SUPERUSER" >/dev/null 2>&1 || return 1
+  [ "$($PSQL "${TPL//\{db\}/postgres}" -tAc "SELECT rolsuper FROM pg_roles WHERE rolname='postgres'" 2>/dev/null | tr -d ' ')" = "t" ]
+}
+restaurar_postgres() {
+  $PSQL "${TPL//\{db\}/postgres}" -q -c "ALTER ROLE postgres NOSUPERUSER" >/dev/null 2>&1
+  [ "$($PSQL "${TPL//\{db\}/postgres}" -tAc "SELECT rolsuper FROM pg_roles WHERE rolname='postgres'" 2>/dev/null | tr -d ' ')" = "f" ] || return 1
+  rm -f "$PROMOVIDO_F"
+}
+
 TMP="$(mktemp -d)"; chmod 755 "$TMP"
+PROMOVIDO_F="$TMP/.postgres_promovido"
 
 # LIMPIEZA DE LAS BASES EFÍMERAS. Este self-test crea ~90 bases por corrida y
 # durante un tiempo no borró ninguna: en la máquina de desarrollo se acumularon
@@ -81,6 +127,10 @@ TMP="$(mktemp -d)"; chmod 755 "$TMP"
 # (alguien conectado, permisos), la fuga volvería EN SILENCIO, que es
 # exactamente como se llegó a 2353. Se cuenta y se dice por stderr.
 limpiar() {
+  if [ -n "$PROMOVIDO_F" ] && [ -e "$PROMOVIDO_F" ]; then
+    restaurar_postgres \
+      || echo "migration-gate.selftest: AVISO — no se pudo devolver 'postgres' a NOSUPERUSER; hazlo a mano antes de otra corrida." >&2
+  fi
   rm -rf "$TMP"
   local db fallidas=0
   while IFS= read -r db; do
@@ -90,6 +140,7 @@ limpiar() {
   done < <($PSQL "${TPL//\{db\}/postgres}" -tAc \
              "SELECT datname FROM pg_database WHERE datname LIKE 'gate_selftest_%'" 2>/dev/null \
            | grep "^gate_selftest_$$_")
+  $PSQL "${TPL//\{db\}/postgres}" -q -c "DROP ROLE IF EXISTS gate_selftest_sonda" >/dev/null 2>&1 || true
   [ "$fallidas" -eq 0 ] \
     || echo "migration-gate.selftest: AVISO — $fallidas base(s) efímera(s) no se pudieron borrar (patrón gate_selftest_$$_*); siguen ocupando disco." >&2
 }
@@ -719,26 +770,16 @@ OUT="$(run_gate "$R" "$T" "$BASELINE")"; RC=$?
   || { bad "el rol NOSUPERUSER rompe una migración legítima (rc=$RC)"; echo "$OUT" | sed 's/^/      /'; }
 
 # ============================================================
-# 13. BASELINE CON `ALTER DEFAULT PRIVILEGES` — ahora SE APLICAN, no se filtran.
+# 13. BASELINE CON `ALTER DEFAULT PRIVILEGES` — SE APLICAN, no se filtran.
 #
-#     HISTORIA, porque explica por qué esta sección está escrita así. PROD emite
-#     24 de estas sentencias, 12 con `FOR ROLE postgres` (EL SUPERUSUARIO de la
-#     imagen de CI) y 12 con `FOR ROLE supabase_admin`. `ALTER DEFAULT PRIVILEGES
-#     FOR ROLE <X>` exige `has_privs_of_role(current_user, X)`, así que el
-#     baseline moría entero con 42501 y el gate no validaba NADA. Se intentó
-#     DESCARTARLAS con un `sed`, y hubo TRES rondas con TRES clases distintas de
-#     falso verde: un `.*` codicioso que se llevaba la sentencia pegada detrás;
-#     cuerpos dollar-quoted; y literales de comilla simple MULTILÍNEA (cierran con
-#     `'`, no con `$`, así que la aserción de posición no los veía) que pg_dump
-#     emite de forma natural en CHECK/DEFAULT/CREATE VIEW/CREATE POLICY. Era el
-#     lexer de psql otra vez. No se parcheó una cuarta vez: se quitó la NECESIDAD
-#     de filtrar con `GRANT <superusuario> TO <aplicador> WITH SET FALSE`
-#     (PostgreSQL 16+), que da `has_privs_of_role` y PROHÍBE `SET ROLE`.
-#
-#     Así que lo que estos casos prueban cambió de signo: ya no "el descarte
-#     ocurrió y está acotado", sino "las ADP APLICAN de verdad Y la contención
-#     sigue en pie". El caso que lleva el peso es 13e: quitar `WITH SET FALSE` no
-#     rompe nada visible, así que tiene que haber alguien atacándolo.
+#     PROD emite 24 de estas sentencias, 12 `FOR ROLE postgres` y 12 `FOR ROLE
+#     supabase_admin`, que exigen `has_privs_of_role(current_user, X)`. Se
+#     intentó DESCARTARLAS con un `sed` y hubo tres rondas con tres clases de
+#     falso verde (caso 13d). Hoy se aplican ENTERAS porque en el destino
+#     `postgres` es un rol PLANO: el superusuario efímero se llama distinto
+#     (ci.yml: `POSTGRES_USER=gate_super`) y el aplicador entra en `postgres` por
+#     el bucle de siempre (`WHERE NOT rolsuper`). Lo que lo sostiene es la
+#     invariante de colisión del gate, que atacan los casos 13e-13g.
 # ============================================================
 BASE_ADP="$TMP/baseline_adp.sql"
 # Mismas formas que emite pg_dump de PROD, verbatim: `FOR ROLE postgres` (el
@@ -842,46 +883,72 @@ OUT="$(run_gate "$R" "$T" "$BASE_ADP")"; RC=$?
   || { bad "se rompió la forma sin FOR ROLE, que las migraciones del repo SÍ usan (rc=$RC)"; echo "$OUT" | sed 's/^/      /'; }
 
 # ============================================================
-# 13c. LA CONTENCIÓN SIGUE EN PIE CON LA MEMBRESÍA CONCEDIDA. El aplicador es
-#      ahora MIEMBRO de los roles superusuario del destino; lo único que lo
-#      separa de ser superusuario es que no puede `SET ROLE`. Así que se ataca
-#      por las dos puertas, DESDE UNA MIGRACIÓN DEL PR y con el baseline que
-#      dispara la membresía.
+# 13c. LA CONTENCIÓN SIGUE EN PIE CON `postgres` COMO ROL PLANO. El aplicador
+#      es miembro de `postgres` y PUEDE hacer `SET ROLE postgres` —es un rol
+#      corriente, rolsuper=false—, así que se ataca por ahí: después del SET,
+#      ni `COPY … TO PROGRAM`, ni `lo_import`/`lo_export`/`pg_read_file`. Y lo
+#      mismo sin SET. Todo DESDE UNA MIGRACIÓN DEL PR y con el baseline que trae
+#      las `FOR ROLE postgres`.
 # ============================================================
-R="$(mkrepo)"; T="$(newdb)"
-commit_mig "$R" "223_set_role.sql" "SET ROLE postgres;"
+R="$(mkrepo)"; T="$(newdb)"; W2="$TMP/pwned_adp_copy"
+commit_mig "$R" "223_set_role_copy.sql" "SET ROLE postgres;
+COPY (SELECT 1) TO PROGRAM 'touch $W2';"
 OUT="$(run_gate "$R" "$T" "$BASE_ADP")"; RC=$?
-must_fail_with "el aplicador NO puede 'SET ROLE postgres' (WITH SET FALSE)" \
-  "$RC" "$OUT" 'permission denied to set role'
+must_fail_with "'SET ROLE postgres' + COPY … TO PROGRAM => DENEGADO (postgres es rol plano)" \
+  "$RC" "$OUT" "permission denied to COPY"
+[ -e "$W2" ] && bad "COPY … TO PROGRAM SE EJECUTÓ tras SET ROLE postgres" \
+  || ok "COPY … TO PROGRAM no creó el archivo tras SET ROLE postgres"
 
 R="$(mkrepo)"; T="$(newdb)"
-commit_mig "$R" "224_set_sess_auth.sql" "SET SESSION AUTHORIZATION postgres;"
+commit_mig "$R" "224_set_role_lo_import.sql" "SET ROLE postgres;
+SELECT lo_import('/etc/passwd');"
+OUT="$(run_gate "$R" "$T" "$BASE_ADP")"; RC=$?
+must_fail_with "'SET ROLE postgres' + lo_import('/etc/passwd') => DENEGADO" \
+  "$RC" "$OUT" "permission denied for function lo_import"
+
+R="$(mkrepo)"; T="$(newdb)"
+commit_mig "$R" "225_set_sess_auth.sql" "SET SESSION AUTHORIZATION postgres;"
 OUT="$(run_gate "$R" "$T" "$BASE_ADP")"; RC=$?
 must_fail_with "el aplicador NO puede 'SET SESSION AUTHORIZATION postgres'" \
   "$RC" "$OUT" 'permission denied to set session authorization'
 
-R="$(mkrepo)"; T="$(newdb)"; W2="$TMP/pwned_adp_copy"
-commit_mig "$R" "225_copy_program_con_membresia.sql" "COPY (SELECT 1) TO PROGRAM 'touch $W2';"
+# La aserción que faltaba en la ronda anterior: funciones de archivos del
+# servidor, directamente desde la migración.
+R="$(mkrepo)"; T="$(newdb)"
+commit_mig "$R" "225a_lo_import.sql" "SELECT lo_import('/etc/passwd');"
 OUT="$(run_gate "$R" "$T" "$BASE_ADP")"; RC=$?
-must_fail_with "con la membresía concedida, 'COPY … TO PROGRAM' sigue denegado" \
-  "$RC" "$OUT" "permission denied to COPY"
-[ -e "$W2" ] && bad "COPY … TO PROGRAM SE EJECUTÓ pese a WITH SET FALSE" \
-  || ok "COPY … TO PROGRAM no creó el archivo con la membresía concedida"
+must_fail_with "migración con lo_import('/etc/passwd') => FALLA con permission denied" \
+  "$RC" "$OUT" "permission denied for function lo_import"
 
-# `rolsuper` del aplicador sigue en false, y el gate lo AFIRMA en caliente.
-SUP="$($PSQL "$T" -tAc "SELECT rolsuper FROM pg_roles WHERE rolname='migration_gate_applier'" 2>/dev/null | tr -d ' ')"
-[ "$SUP" = "f" ] && ok "el aplicador sigue con rolsuper=false tras la membresía" \
-  || bad "el aplicador tiene rolsuper='$SUP': la membresía le dio el atributo (imposible por diseño, míralo)"
-SETN="$($PSQL "$T" -tAc "SELECT count(*) FROM pg_roles r WHERE r.rolsuper AND r.rolname<>'migration_gate_applier' AND pg_has_role('migration_gate_applier', r.oid, 'SET')" 2>/dev/null | tr -d ' ')"
-[ "${SETN:-1}" -eq 0 ] && ok "pg_has_role(aplicador, <superusuario>, 'SET') = false para TODOS" \
-  || bad "el aplicador puede SET ROLE sobre ${SETN:-?} rol(es) superusuario"
-echo "$OUT" | grep -q "membresía en roles superusuario con SET FALSE" \
-  && ok "el gate DECLARA en el log cómo concedió la membresía" \
-  || { bad "el gate no declara la membresía WITH SET FALSE en el log"; echo "$OUT" | sed 's/^/      /'; }
-echo "$OUT" | grep -q "denegó 'COPY … TO PROGRAM' al aplicador" \
-  && ok "el control positivo del gate DEMUESTRA en cada corrida que COPY … TO PROGRAM está cerrado" \
-  || { bad "el gate no demuestra la contención del canal (b) en caliente"; echo "$OUT" | sed 's/^/      /'; }
+R="$(mkrepo)"; T="$(newdb)"
+commit_mig "$R" "225b_lo_export.sql" "SELECT lo_from_bytea(424242, 'x');
+SELECT lo_export(424242, '$TMP/escrito_por_migracion');"
+OUT="$(run_gate "$R" "$T" "$BASE_ADP")"; RC=$?
+must_fail_with "migración con lo_export(…) => FALLA con permission denied" \
+  "$RC" "$OUT" "permission denied for function lo_export"
 
+R="$(mkrepo)"; T="$(newdb)"
+commit_mig "$R" "225c_pg_read_file.sql" "SELECT pg_read_file('postgresql.conf');"
+OUT="$(run_gate "$R" "$T" "$BASE_ADP")"; RC=$?
+must_fail_with "migración con pg_read_file('postgresql.conf') => FALLA con permission denied" \
+  "$RC" "$OUT" "permission denied for function pg_read_file"
+
+# Estado del catálogo tras el gate: `postgres` plano, aplicador no superusuario,
+# y las dos cuentas que el gate afirma, recalculadas aquí por fuera.
+SUP="$($PSQL "$T" -tAc "SELECT string_agg(rolname || '=' || rolsuper::text, ',' ORDER BY rolname) FROM pg_roles WHERE rolname IN ('migration_gate_applier','postgres')" 2>/dev/null | tr -d ' ')"
+[ "$SUP" = "migration_gate_applier=false,postgres=false" ] \
+  && ok "en el destino ni el aplicador ni 'postgres' son superusuario ($SUP)" \
+  || bad "rolsuper inesperado en el destino: '$SUP'"
+CUENTAS_T="$($PSQL "$T" -tAc "SELECT (SELECT count(*) FROM pg_roles r WHERE r.rolsuper AND pg_has_role('migration_gate_applier', r.oid, 'SET')) || '|' || (SELECT count(*) FROM pg_proc p WHERE p.proacl IS NOT NULL AND pg_get_userbyid(p.proowner) <> 'migration_gate_applier' AND has_function_privilege('migration_gate_applier', p.oid, 'EXECUTE') AND NOT has_function_privilege('public', p.oid, 'EXECUTE'))" 2>/dev/null | tr -d ' ')"
+[ "$CUENTAS_T" = "0|0" ] \
+  && ok "superusuarios con SET = 0 y funciones restringidas heredadas = 0 (medido por fuera del gate)" \
+  || bad "las cuentas del aplicador no son 0|0: '$CUENTAS_T'"
+echo "$OUT" | grep -q "0 superusuarios con SET, 0 funciones restringidas heredadas" \
+  && ok "el gate DECLARA en el log las dos cuentas en 0" \
+  || { bad "el gate no declara las dos cuentas en el log"; echo "$OUT" | sed 's/^/      /'; }
+echo "$OUT" | grep -qE "invariante de colisión: ninguno de los [1-9][0-9]* roles nombrados es superusuario" \
+  && ok "el gate DECLARA en el log la invariante de colisión" \
+  || { bad "el gate no declara la invariante de colisión"; echo "$OUT" | sed 's/^/      /'; }
 # ============================================================
 # 13d. BASELINE CON UN LITERAL DE COMILLA SIMPLE MULTILÍNEA — la clase de falso
 #      verde de la TERCERA ronda, y el motivo por el que el filtro se borró.
@@ -942,46 +1009,32 @@ CHK="$($PSQL "$T" -tAc "SELECT count(*) FROM pg_constraint WHERE conname='ventas
   || bad "el constraint 'ventas_estado_chk' no está en el destino (el baseline se cargó mutilado)"
 
 # ============================================================
-# 13e. EL CASO QUE LLEVA EL PESO: QUITAR `WITH SET FALSE` TIENE QUE CAZARSE.
+# 13e. LA INVARIANTE DE COLISIÓN — lo que sostiene todo el arreglo.
 #
-#      Es la regresión que un diff NO delata. Con `GRANT postgres TO <aplicador>`
-#      a secas no se rompe nada visible: el baseline carga igual, las migraciones
-#      se aplican igual, el gate sale verde — y el aplicador puede hacer `SET ROLE
-#      postgres` y con ello `COPY … TO PROGRAM`. O sea que este arreglo se
-#      convertiría, en silencio, en la escalada que venía a evitar.
+#      Si un rol que el baseline NOMBRA es superusuario en el destino, cargar
+#      sus `FOR ROLE <rol>` exigiría hacer al aplicador miembro de un
+#      superusuario, y eso hereda las ACL de initdb. El gate tiene que MORIR
+#      nombrando el rol, ANTES de cargar el baseline, por las dos vías:
+#       (a) el baseline nombra al superusuario efímero (`FOR ROLE gate_super`);
+#       (b) el superusuario del destino se llama `postgres` (volver a
+#           `POSTGRES_USER: postgres`). Se reproduce convirtiendo al rol
+#           cluster-wide `postgres` en SUPERUSER durante el caso —desde el
+#           catálogo, que es lo único que el gate mira, es exactamente ese
+#           estado— y se restaura al terminar (también en el trap de salida).
+#       (c) MUTACIÓN: sin la invariante, el mensaje de (b) no aparece ⇒ este
+#           caso se pondría rojo. La invariante tiene dientes.
+#       (d) el peligro que vigila es REAL, reproducido tal cual lo cita la
+#           cabecera: un rol miembro del superusuario de `initdb` con `WITH SET
+#           FALSE` (sin poder SET ROLE) EJECUTA lo_import, y la cuenta de
+#           funciones heredadas del gate lo ve.
 #
-#      DOS mitades, y las dos hacen falta:
-#       (a) el gate MUTADO (token fuera, guardas intactas) tiene que MORIR. Prueba
-#           que las guardas tienen dientes.
-#       (b) el gate mutado CON LAS GUARDAS TAMBIÉN FUERA tiene que crear el
-#           archivo del `COPY … TO PROGRAM`. Prueba que las guardas de (a) no
-#           están vigilando un peligro imaginario. Sin (b), (a) podría volverse
-#           tautológica si mañana cambia la semántica de `pg_has_role`.
+#      LÍMITE DE FIDELIDAD DE (b), dicho: promover `postgres` reproduce lo que
+#      la invariante MIRA (un superusuario con ese nombre en `pg_roles`), no las
+#      ACL que `initdb` puso a nombre del superusuario de arranque (aquí
+#      `lo_import` = {<SU_NAME>=X/<SU_NAME>}, no {postgres=X/postgres}). Por eso
+#      (d) usa al superusuario de ARRANQUE del harness: con la imagen por
+#      defecto ese es `postgres`, y es el que el baseline nombra.
 # ============================================================
-# `migration_gate_applier` es un rol CLUSTER-WIDE y `GRANT <rol> TO <miembro>` a
-# secas sobre una membresía QUE YA EXISTE es un NO-OP con NOTICE: NO cambia la
-# opción SET (medido en PG17.11). Consecuencia para ESTE caso: si el rol llega con
-# el `WITH SET FALSE` que le pusieron los casos de arriba, el gate MUTADO no
-# escalaría nada y las tres aserciones de 13e saldrían verdes sin probar nada — pasó
-# exactamente así la primera vez que se corrió. En CI no aplica (cada job levanta su
-# cluster y el rol nace limpio), pero el self-test tiene que MODELAR CI, no el
-# cluster sucio de la máquina de desarrollo. Así que se revoca antes, y se COMPRUEBA
-# que la revocación surtió efecto: sin eso el caso volvería a bendecir el vacío.
-#
-# (El gate REAL no depende de esto: emite `WITH SET FALSE` explícito, que SÍ baja
-# una membresía plana preexistente —medido—, y además afirma el estado final.)
-resetear_membresia_aplicador() { # target
-  $PSQL "$1" -q -c "DO \$\$ DECLARE r record; BEGIN
-      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='migration_gate_applier') THEN RETURN; END IF;
-      FOR r IN SELECT rolname FROM pg_roles WHERE rolsuper LOOP
-        EXECUTE format('REVOKE %I FROM %I', r.rolname, 'migration_gate_applier');
-      END LOOP;
-    END \$\$;" >/dev/null 2>&1
-  local n
-  n="$($PSQL "$1" -tAc "SELECT count(*) FROM pg_auth_members m JOIN pg_roles r ON r.oid=m.roleid JOIN pg_roles g ON g.oid=m.member WHERE r.rolsuper AND g.rolname='migration_gate_applier'" 2>/dev/null | tr -d ' ')"
-  [ "${n:-1}" -eq 0 ]
-}
-
 mutar_gate() { # destino, needle→reemplazo pares (2 por mutación)
   local dst="$1"; shift
   "$GATE_PYTHON" - "$GATE" "$dst" "$@" <<'PYMUT'
@@ -997,137 +1050,153 @@ for i in range(0, len(pares), 2):
 io.open(sys.argv[2], 'w', encoding='utf-8').write(src)
 PYMUT
 }
-N_TOKEN="GRANT %I TO %I WITH SET FALSE"
-N_ASERC='[ "$SET_OK" -eq 0 ] \'
-# El canario COPY se neutraliza por su `if` EXTERIOR, no por el `if [ "$COPY_RC"
-# -eq 0 ]` de dentro: neutralizando solo ese, el `else` del `grep` de 42501 sigue
-# ahí y mata el gate igual (medido: rc=1 y el COPY nunca llegaba a ejecutarse, así
-# que la mitad (b) no demostraba la escalada). El `if` exterior aparece dos veces en
-# el gate; el ancla es la línea siguiente, que es única.
-N_COPY='if [ "$APPLY_AS_SUPERUSER" != "1" ]; then
-  COPY_LOG="$(mktemp)"'
+N_INVARIANTE='[ -z "$COLISION" ] \'
+N_SET='[ "$SUPER_SET" -eq 0 ] \'
+N_FUNC='[ "$FUNC_HEREDADAS" -eq 0 ] \'
+TABLAS() { $PSQL "$1" -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema IN ('public','analytics')" 2>/dev/null | tr -d ' '; }
 
-# (a) solo el token fuera.
-GATE_SINSET="$TMP/gate_sin_with_set_false.sh"
-if ! mutar_gate "$GATE_SINSET" "$N_TOKEN" "GRANT %I TO %I"; then
-  bad "no se pudo mutar el gate para quitar WITH SET FALSE (¿cambió la línea?) — el caso no probó nada"
-else
-  R="$(mkrepo)"; T="$(newdb)"
-  commit_mig "$R" "228_tras_token_fuera.sql" "ALTER TABLE public.ventas ADD COLUMN tras_token text;"
-  resetear_membresia_aplicador "$T" \
-    && ok "membresía del aplicador revocada: el gate mutado arranca como en CI (rol limpio)" \
-    || bad "no se pudo revocar la membresía del aplicador: (a) correría sobre un rol que YA trae WITH SET FALSE y no probaría nada"
-  OUT="$( cd "$R" && SQL_APPLY="$REAL_APPLY" bash "$GATE_SINSET" --target "$T" --baseline "$BASE_ADP" --base-ref HEAD~1 2>&1 )"; RC=$?
-  must_fail_with "sin WITH SET FALSE => el gate MUERE (la aserción de escalada tiene dientes)" \
-    "$RC" "$OUT" "rol(es) SUPERUSUARIO"
-  echo "$OUT" | grep -q "migration-gate: 0 fail" \
-    && bad "el gate sin WITH SET FALSE llegó a declarar 0 fail: la regresión pasaría en verde" \
-    || ok "el gate sin WITH SET FALSE no llega a declarar 0 fail"
-fi
+# (a) el baseline nombra al superusuario efímero.
+BASE_SU="$TMP/baseline_for_role_superusuario.sql"
+cp "$BASE_ADP" "$BASE_SU"
+printf 'ALTER DEFAULT PRIVILEGES FOR ROLE %s IN SCHEMA public GRANT ALL ON TABLES TO anon;\n' "$SU_NAME" >> "$BASE_SU"
+chmod 644 "$BASE_SU"
+assert_contiene "$BASE_SU" "FOR ROLE $SU_NAME IN SCHEMA" "el baseline del caso nombra al superusuario efímero ('$SU_NAME')"
+R="$(mkrepo)"; T="$(newdb)"
+commit_mig "$R" "232_tras_colision_a.sql" "ALTER TABLE public.ventas ADD COLUMN col_a text;"
+OUT="$(run_gate "$R" "$T" "$BASE_SU")"; RC=$?
+must_fail_with "baseline con 'FOR ROLE $SU_NAME' (el superusuario efímero) => MUERE por COLISIÓN" \
+  "$RC" "$OUT" "COLISIÓN DE NOMBRES: el/los rol(es) '$SU_NAME'"
+N_TAB="$(TABLAS "$T")"
+[ "$N_TAB" = "0" ] && ! echo "$OUT" | grep -q "cargando esquema de PROD" \
+  && ok "(a) el gate murió ANTES de cargar el baseline (0 tablas en el destino)" \
+  || bad "(a) el gate llegó a intentar cargar el baseline pese a la colisión (tablas=$N_TAB)"
 
-# (b) token fuera Y guardas fuera: el peligro es real, no hipotético.
-#
-# EL OBSERVABLE NO ES UN ARCHIVO, y es una corrección medida. La primera versión
-# exigía que `COPY … TO PROGRAM 'touch $TMP/…'` CREARA el archivo, y salía BAD
-# diciendo "la escalada no ocurrió" — pero sí ocurría: el servidor EJECUTÓ el
-# programa y devolvió SQLSTATE 38000 «program … failed» porque el proceso de
-# Postgres corre como el usuario `postgres` y no puede escribir en `$TMP`
-# (mktemp -d + chmod 755: atravesable, no escribible). O sea que el archivo sirve
-# como prueba NEGATIVA ("no se creó ⇒ no se ejecutó", caso 12 y 13c) pero NO como
-# prueba POSITIVA: su ausencia confunde "denegado" con "ejecutado y falló al
-# escribir", que son exactamente los dos estados que hay que distinguir.
-#
-# Se usa un programa que no toca el disco (`true`) y se mira lo que SÍ distingue:
-# el SERVIDOR deja pasar el `COPY` (el gate llega a `0 fail`) y
-# `pg_has_role(…,'SET')` pasa a ser verdadero. Es el DIFERENCIAL exacto contra el
-# caso 13c, que corre el MISMO SQL con el gate real y obtiene 42501.
-GATE_ABIERTO="$TMP/gate_sin_token_ni_guardas.sh"
-ESCALADA_SQL="SET ROLE postgres;
-COPY (SELECT 1) TO PROGRAM 'true';"
-if ! mutar_gate "$GATE_ABIERTO" \
-      "$N_TOKEN" "GRANT %I TO %I" \
-      "$N_ASERC" '[ "$SET_OK" -ge 0 ] \' \
-      "$N_COPY" 'if false; then
-  COPY_LOG="$(mktemp)"'; then
-  bad "no se pudo mutar el gate para desactivar token Y guardas — no consta que el peligro sea real"
-else
-  # DIFERENCIAL, primera mitad: con el gate REAL el mismo SQL es 42501.
-  R="$(mkrepo)"; T="$(newdb)"
-  commit_mig "$R" "229a_escalada_gate_real.sql" "$ESCALADA_SQL"
+# (b) superusuario del destino llamado `postgres`.
+R="$(mkrepo)"; T="$(newdb)"
+commit_mig "$R" "233_tras_colision_b.sql" "ALTER TABLE public.ventas ADD COLUMN col_b text;"
+if promover_postgres; then
   OUT="$(run_gate "$R" "$T" "$BASE_ADP")"; RC=$?
-  must_fail_with "gate REAL: 'SET ROLE postgres' + COPY … TO PROGRAM => DENEGADO" \
-    "$RC" "$OUT" "permission denied to set role"
+  must_fail_with "superusuario del destino llamado 'postgres' => MUERE por COLISIÓN" \
+    "$RC" "$OUT" "COLISIÓN DE NOMBRES: el/los rol(es) 'postgres'"
+  N_TAB="$(TABLAS "$T")"
+  [ "$N_TAB" = "0" ] && ! echo "$OUT" | grep -q "cargando esquema de PROD" \
+    && ok "(b) el gate murió ANTES de cargar el baseline (0 tablas en el destino)" \
+    || bad "(b) el gate llegó a intentar cargar el baseline pese a la colisión (tablas=$N_TAB)"
 
-  # …y segunda mitad: con el token y las guardas fuera, el MISMO SQL pasa.
-  R="$(mkrepo)"; T="$(newdb)"
-  commit_mig "$R" "229b_escalada_gate_abierto.sql" "$ESCALADA_SQL"
-  resetear_membresia_aplicador "$T" \
-    || bad "no se pudo revocar la membresía del aplicador: (b) no podría demostrar la escalada"
-  OUT="$( cd "$R" && SQL_APPLY="$REAL_APPLY" bash "$GATE_ABIERTO" --target "$T" --baseline "$BASE_ADP" --base-ref HEAD~1 2>&1 )"; RC=$?
-  if [ "$RC" -eq 0 ] && echo "$OUT" | grep -q "migration-gate: 0 fail"; then
-    ok "sin el token y sin guardas, 'SET ROLE postgres' + COPY … TO PROGRAM SÍ EJECUTA: el peligro es REAL"
+  # (c) MUTACIÓN: sin la invariante, el caso (b) deja de ver su mensaje.
+  GATE_SININV="$TMP/gate_sin_invariante.sh"
+  if ! mutar_gate "$GATE_SININV" "$N_INVARIANTE" 'true \'; then
+    bad "no se pudo mutar el gate para quitar la invariante (¿cambió la línea?) — (c) no probó nada"
   else
-    bad "sin el token y sin guardas el COPY … TO PROGRAM no ejecutó (rc=$RC): este harness no prueba la escalada que dice, o el servidor la corta por otra vía — revísalo antes de fiarte de (a)"
-    echo "$OUT" | sed 's/^/      /' | tail -12
+    R="$(mkrepo)"; T="$(newdb)"
+    commit_mig "$R" "234_sin_invariante.sql" "ALTER TABLE public.ventas ADD COLUMN col_c text;"
+    OUT="$( cd "$R" && SQL_APPLY="$REAL_APPLY" bash "$GATE_SININV" --target "$T" --baseline "$BASE_ADP" --base-ref HEAD~1 2>&1 )"; RC=$?
+    echo "$OUT" | grep -q "COLISIÓN DE NOMBRES" \
+      && bad "(c) el gate SIN invariante sigue diciendo COLISIÓN: la mutación no quitó nada y (b) no tiene dientes" \
+      || ok "(c) sin la invariante, el mensaje de colisión desaparece: el caso (b) la caza"
   fi
-  SETMUT="$($PSQL "$T" -tAc "SELECT pg_has_role('migration_gate_applier','postgres','SET')" 2>/dev/null | tr -d ' ')"
-  [ "$SETMUT" = "t" ] \
-    && ok "y el catálogo lo confirma: sin el token, pg_has_role(aplicador,'postgres','SET') = true" \
-    || bad "el catálogo dice SET='$SETMUT' tras el gate mutado: la mutación no reprodujo la membresía plana"
+
+  # (d) el peligro es real: miembro del superusuario de initdb, WITH SET FALSE.
+  T="$(newdb)"
+  $PSQL "$T" -q -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='gate_selftest_sonda') THEN CREATE ROLE gate_selftest_sonda LOGIN NOSUPERUSER PASSWORD 'sonda'; END IF; END \$\$;" \
+    -c "REVOKE \"$SU_NAME\" FROM gate_selftest_sonda" -c "GRANT \"$SU_NAME\" TO gate_selftest_sonda WITH SET FALSE" >/dev/null 2>&1
+  case "$T" in *\?*) T_SONDA="$T&user=gate_selftest_sonda&password=sonda" ;; *) T_SONDA="$T?user=gate_selftest_sonda&password=sonda" ;; esac
+  SONDA="$($PSQL "$T_SONDA" -qtA -c "SELECT current_user || '|' || pg_has_role(current_user, '$SU_NAME', 'SET')::text" -c "BEGIN" -c "SELECT (lo_import('/etc/hostname') > 0)::text" -c "SELECT (lo_from_bytea(4242421, 'x') = 4242421)::text" -c "SELECT (lo_export(4242421, '/tmp/gate_selftest_lo_export_$$') = 1)::text" -c "SELECT (length(pg_read_file('postgresql.conf')) > 0)::text" -c "ROLLBACK" 2>&1 | tr -d ' ' | tr '\n' '|')"
+  case "$SONDA" in
+    gate_selftest_sonda\|false\|true\|true\|true\|true\|) ok "(d) miembro del superusuario de initdb ('$SU_NAME') SIN poder SET ROLE: lo_import, lo_export y pg_read_file EJECUTAN (el peligro es real)" ;;
+    *) bad "(d) no se reprodujo la herencia de ACL que cita la cabecera: '$SONDA'" ;;
+  esac
+  HEREDA="$($PSQL "$T" -tAc "SELECT count(*) FROM pg_proc p WHERE p.proacl IS NOT NULL AND has_function_privilege('gate_selftest_sonda', p.oid, 'EXECUTE') AND NOT has_function_privilege('public', p.oid, 'EXECUTE')" 2>/dev/null | tr -d ' ')"
+  [ "${HEREDA:-0}" -gt 0 ] \
+    && ok "(d) y la cuenta de funciones heredadas del gate lo ve ($HEREDA > 0)" \
+    || bad "(d) la cuenta de funciones heredadas no ve la herencia (='${HEREDA:-?}')"
+  $PSQL "$T" -q -c "REVOKE \"$SU_NAME\" FROM gate_selftest_sonda" >/dev/null 2>&1
+else
+  bad "no se pudo convertir a 'postgres' en superusuario para el caso (b): la colisión principal quedó SIN probar"
 fi
+restaurar_postgres \
+  && ok "'postgres' vuelve a ser rol plano tras el caso (b)" \
+  || bad "'postgres' SIGUE siendo superusuario tras el caso (b): el resto del cluster queda contaminado"
+
+# (e) Los nombres de rol salen de un archivo que el PR edita y la invariante los
+#     interpola en SQL que corre como SUPERUSUARIO. Un identificador
+#     entrecomillado con una comilla simple dentro es SQL válido; el gate tiene
+#     que negarse, no "limpiarlo" y seguir.
+BASE_RARO="$TMP/baseline_rol_raro.sql"
+cp "$BASE_ADP" "$BASE_RARO"
+cat >> "$BASE_RARO" <<'SQL'
+ALTER DEFAULT PRIVILEGES FOR ROLE "rol'raro" IN SCHEMA public GRANT ALL ON TABLES TO anon;
+SQL
+chmod 644 "$BASE_RARO"
+assert_contiene "$BASE_RARO" "FOR ROLE \"rol'raro\"" "el baseline del caso (e) trae un rol con comilla simple en el nombre"
+R="$(mkrepo)"; T="$(newdb)"
+commit_mig "$R" "234e_tras_rol_raro.sql" "ALTER TABLE public.ventas ADD COLUMN raro text;"
+OUT="$(run_gate "$R" "$T" "$BASE_RARO")"; RC=$?
+must_fail_with "(e) rol con caracteres fuera de [A-Za-z0-9_] en el baseline => MUERE sin interpolarlo" \
+  "$RC" "$OUT" "caracteres fuera de \[A-Za-z0-9_\]: rol'raro"
+[ "$(TABLAS "$T")" = "0" ] && ok "(e) murió ANTES de cargar el baseline" || bad "(e) llegó a intentar cargar el baseline"
 
 # ============================================================
-# 13f. `WITH SET FALSE` ES PostgreSQL 16+. En PG15 es un ERROR DE SINTAXIS, y el
-#      GRANT del gate va con `>/dev/null 2>&1`: sin esta comprobación el
-#      aplicador se quedaría SIN la membresía y el baseline moriría más abajo con
-#      un 42501 desconcertante. Peor sería "reintentar sin el token", que es
-#      degradarse en silencio a la escalada. Se exige un mensaje CLARO.
-#
-#      Cómo se prueba sin un PG15: un `psql` de mentira que solo miente en
-#      `SHOW server_version_num` y delega todo lo demás en el real. Es la misma
-#      vía (`PSQL_BIN`) que el gate ya documenta para el SQL de preparación.
+# 13f. CUENTA 1 — superusuarios sobre los que el aplicador puede SET ROLE = 0.
+#      `migration_gate_applier` es CLUSTER-WIDE: una membresía rancia en el
+#      superusuario (de otra corrida, de un GRANT manual) sobreviviría al
+#      `CREATE/ALTER ROLE` del gate. Se siembra y el gate tiene que morir.
+#      MUTACIÓN: sin la cuenta 1, la cuenta 2 lo caza igual (la membresía en el
+#      superusuario hereda sus ACL): dos capas, no una.
 # ============================================================
-PSQL_VIEJO="$TMP/psql_pg15"
-cat > "$PSQL_VIEJO" <<PSQLFAKE
-#!/bin/sh
-for a in "\$@"; do
-  case "\$a" in *server_version_num*) echo 150000; exit 0 ;; esac
-done
-exec $PSQL "\$@"
-PSQLFAKE
-chmod 755 "$PSQL_VIEJO"
-# Que el falso psql MIENTE donde debe y delega el resto: si delegara también la
-# versión, el caso quedaría verde sin haber probado nada.
-[ "$("$PSQL_VIEJO" "${TPL//\{db\}/postgres}" -tAc 'SHOW server_version_num' 2>/dev/null | tr -d ' ')" = "150000" ] \
-  && ok "el psql de mentira reporta server_version_num=150000" \
-  || bad "el psql de mentira no miente la versión: el caso 13f no probaría nada"
-[ "$("$PSQL_VIEJO" "${TPL//\{db\}/postgres}" -tAc 'SELECT 42' 2>/dev/null | tr -d ' ')" = "42" ] \
-  && ok "el psql de mentira delega el resto en el psql real" \
-  || bad "el psql de mentira no delega: el caso 13f fallaría por el motivo equivocado"
 R="$(mkrepo)"; T="$(newdb)"
-commit_mig "$R" "230_en_pg15.sql" "ALTER TABLE public.ventas ADD COLUMN pg15 text;"
-OUT="$( cd "$R" && PSQL_BIN="$PSQL_VIEJO" bash "$GATE" --target "$T" --baseline "$BASE_ADP" --base-ref HEAD~1 2>&1 )"; RC=$?
-must_fail_with "destino PostgreSQL 15 => ROJO con mensaje claro, NUNCA degradarse sin el token" \
-  "$RC" "$OUT" "necesita 16+"
-echo "$OUT" | grep -q "migration-gate: 0 fail" \
-  && bad "el gate declaró 0 fail sobre un destino sin WITH SET FALSE" \
-  || ok "el gate no valida nada sobre un destino que no soporta WITH SET FALSE"
+commit_mig "$R" "235_tras_membresia_rancia.sql" "ALTER TABLE public.ventas ADD COLUMN rancia text;"
+sembrar_rancia() { $PSQL "$T" -q -c "GRANT \"$SU_NAME\" TO migration_gate_applier" >/dev/null 2>&1; }
+quitar_rancia() {
+  $PSQL "$T" -q -c "REVOKE \"$SU_NAME\" FROM migration_gate_applier" >/dev/null 2>&1
+  [ "$($PSQL "$T" -tAc "SELECT count(*) FROM pg_auth_members m JOIN pg_roles r ON r.oid=m.roleid JOIN pg_roles g ON g.oid=m.member WHERE r.rolsuper AND g.rolname='migration_gate_applier'" 2>/dev/null | tr -d ' ')" = "0" ]
+}
+if sembrar_rancia; then
+  OUT="$(run_gate "$R" "$T" "$BASE_ADP")"; RC=$?
+  must_fail_with "membresía rancia del aplicador en el superusuario => MUERE (cuenta 1)" \
+    "$RC" "$OUT" "PUEDE hacer 'SET ROLE' sobre 1 rol(es) SUPERUSUARIO"
+  GATE_SINSET="$TMP/gate_sin_cuenta_set.sh"
+  if mutar_gate "$GATE_SINSET" "$N_SET" 'true \'; then
+    R="$(mkrepo)"; T2="$(newdb)"
+    commit_mig "$R" "236_sin_cuenta_set.sql" "ALTER TABLE public.ventas ADD COLUMN sin_set text;"
+    OUT="$( cd "$R" && SQL_APPLY="$REAL_APPLY" bash "$GATE_SINSET" --target "$T2" --baseline "$BASE_ADP" --base-ref HEAD~1 2>&1 )"; RC=$?
+    must_fail_with "sin la cuenta 1, la cuenta 2 caza la misma membresía rancia" \
+      "$RC" "$OUT" "función(es) con ACL restringida"
+  else
+    bad "no se pudo mutar el gate para quitar la cuenta 1"
+  fi
+else
+  bad "no se pudo sembrar la membresía rancia: 13f no probó nada"
+fi
+quitar_rancia && ok "membresía rancia retirada (el resto del self-test corre limpio)" \
+  || bad "la membresía rancia del aplicador en el superusuario NO se pudo retirar"
 
-# …y si la versión no se puede LEER, tampoco se concede nada a ciegas.
-PSQL_MUDO="$TMP/psql_sin_version"
-cat > "$PSQL_MUDO" <<PSQLFAKE2
-#!/bin/sh
-for a in "\$@"; do
-  case "\$a" in *server_version_num*) echo ""; exit 0 ;; esac
-done
-exec $PSQL "\$@"
-PSQLFAKE2
-chmod 755 "$PSQL_MUDO"
+# ============================================================
+# 13g. CUENTA 2 — funciones con ACL que el aplicador ejecuta y PUBLIC no = 0.
+#      Se siembra `GRANT EXECUTE ON FUNCTION lo_import(text) TO anon` en el
+#      destino (anon es un rol plano en el que el aplicador entra). Gate real ⇒
+#      MUERE. MUTACIÓN sin la cuenta 2 ⇒ la migración con lo_import('/etc/passwd')
+#      sale VERDE: el peligro que vigila es real.
+# ============================================================
 R="$(mkrepo)"; T="$(newdb)"
-commit_mig "$R" "231_version_ilegible.sql" "ALTER TABLE public.ventas ADD COLUMN sinver text;"
-OUT="$( cd "$R" && PSQL_BIN="$PSQL_MUDO" bash "$GATE" --target "$T" --baseline "$BASE_ADP" --base-ref HEAD~1 2>&1 )"; RC=$?
-must_fail_with "versión del servidor ILEGIBLE => ROJO (no se concede la membresía a ciegas)" \
-  "$RC" "$OUT" "server_version_num"
+commit_mig "$R" "237_lo_import_heredado.sql" "SELECT lo_import('/etc/passwd');"
+$PSQL "$T" -q -c "GRANT EXECUTE ON FUNCTION lo_import(text) TO anon" >/dev/null 2>&1 \
+  || bad "no se pudo sembrar el GRANT de lo_import a anon"
+OUT="$(run_gate "$R" "$T" "$BASE_ADP")"; RC=$?
+must_fail_with "lo_import heredado vía anon => el gate MUERE antes de aplicar (cuenta 2)" \
+  "$RC" "$OUT" "función(es) con ACL restringida"
+GATE_SINFUNC="$TMP/gate_sin_cuenta_func.sh"
+if mutar_gate "$GATE_SINFUNC" "$N_FUNC" 'true \'; then
+  R="$(mkrepo)"; T="$(newdb)"
+  commit_mig "$R" "238_lo_import_sin_cuenta.sql" "SELECT lo_import('/etc/passwd');"
+  $PSQL "$T" -q -c "GRANT EXECUTE ON FUNCTION lo_import(text) TO anon" >/dev/null 2>&1
+  OUT="$( cd "$R" && SQL_APPLY="$REAL_APPLY" bash "$GATE_SINFUNC" --target "$T" --baseline "$BASE_ADP" --base-ref HEAD~1 2>&1 )"; RC=$?
+  [ "$RC" -eq 0 ] && echo "$OUT" | grep -q "migration-gate: 0 fail" \
+    && ok "sin la cuenta 2, lo_import('/etc/passwd') heredado sale VERDE: el peligro es real" \
+    || { bad "sin la cuenta 2 el lo_import heredado no pasó (rc=$RC): el caso no demuestra el peligro"; echo "$OUT" | tail -8 | sed 's/^/      /'; }
+else
+  bad "no se pudo mutar el gate para quitar la cuenta 2"
+fi
 
 echo "---"
 echo "migration-gate.selftest: $PASS ok / $FAIL bad"
