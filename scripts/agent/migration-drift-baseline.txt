@@ -136,9 +136,9 @@ vista_atribucion_web_v4_bulletproof
 # slugs de PROD: git nunca tendrá esos archivos, así que su divergencia de NOMBRES
 # es real y permanente. La 148 NO se bendice: se aplica a PROD con su slug exacto
 # (air279_reconciliacion_geocoding) y deja de ser divergencia. Hasta entonces este
-# job queda ROJO a propósito. Ver el bloque ALCANCE de la cabecera de la 148 (que
-# por qué esto no arregla el orden de replay: la 143 sigue haciendo ALTER antes
-# de que la 148 cree la tabla).
+# job queda ROJO a propósito. Ver el bloque ALCANCE de la cabecera de la 148, que
+# además explica por qué esto no arregla el orden de replay: la 143 sigue
+# haciendo ALTER antes de que la 148 cree la tabla.
 create_direcciones_web_geocoded
 enable_postgis
 create_municipios_divipola_reference
