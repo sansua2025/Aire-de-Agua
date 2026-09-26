@@ -360,7 +360,10 @@ jobs:
     # regenerado a mano con migration-baseline-refresh.sh) en un Postgres 17
     # efímero, y aplica encima SOLO las migraciones que el PR AGREGA. Es la
     # pregunta que de verdad importa: "¿esto aplica sobre lo que hay en
-    # producción?". Este job NO hace pg_dump y NO se conecta a PROD: no recibe
+    # producción?". El baseline se carga en CADA corrida, haya o no migraciones
+    # nuevas: un PR que solo toque el baseline no pasa sin cargarlo, y cada push
+    # a `main` re-verifica que el baseline vigente carga bajo la contención
+    # vigente. Este job NO hace pg_dump y NO se conecta a PROD: no recibe
     # ningún secreto, precisamente porque aquí sí corre código del PR.
     #
     # NUNCA PASA EN SILENCIO. Si falta el baseline, si no carga, si el base-ref no

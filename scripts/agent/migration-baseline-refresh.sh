@@ -40,6 +40,9 @@
 # EL VOLCADO ES FIEL Y SE USA ENTERO. Este script NO filtra nada, y el gate
 # tampoco: `migration-gate.sh` carga el baseline COMPLETO, sus 24 `ALTER DEFAULT
 # PRIVILEGES` incluidas (12 `FOR ROLE postgres`, 12 `FOR ROLE supabase_admin`).
+# Y lo carga en CADA corrida, haya o no migraciones nuevas: un PR que solo
+# cambie este volcado no puede pasar sin que se cargue, y cada push a `main`
+# re-verifica que el baseline vigente carga bajo la contención vigente.
 #
 # POR QUÉ PUEDE: EL VOLCADO NOMBRA A `postgres`, Y EN CI ESE NOMBRE NO ES EL
 # SUPERUSUARIO. En PROD `postgres` es un rol corriente; en la imagen de Postgres,
@@ -56,7 +59,10 @@
 # QUÉ PUEDE PONER ROJO AL GATE POR CAUSA DE ESTE VOLCADO (cada uno con su caso en
 # migration-gate.selftest.sh):
 #  · que nombre un rol que en el destino es superusuario — p.ej. un `FOR ROLE
-#    gate_super` — ⇒ "COLISIÓN DE NOMBRES" (caso 13e);
+#    gate_super`, en cualquier grafía NO entrecomillada (`FOR ROLE GATE_SUPER`
+#    también: el gate pliega a minúsculas como Postgres) — ⇒ "COLISIÓN DE
+#    NOMBRES" (casos 13e y 13e(f)). Uno entrecomillado (`"GATE_SUPER"`) es para
+#    Postgres OTRO rol, y así lo trata el gate;
 #  · que nombre un rol con caracteres fuera de [A-Za-z0-9_] (p.ej. un
 #    identificador entrecomillado con comilla simple dentro) ⇒ el gate se niega a
 #    interpolarlo en SQL de superusuario (caso 13e(e)).

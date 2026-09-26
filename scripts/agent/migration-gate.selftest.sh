@@ -141,6 +141,9 @@ limpiar() {
              "SELECT datname FROM pg_database WHERE datname LIKE 'gate_selftest_%'" 2>/dev/null \
            | grep "^gate_selftest_$$_")
   $PSQL "${TPL//\{db\}/postgres}" -q -c "DROP ROLE IF EXISTS gate_selftest_sonda" >/dev/null 2>&1 || true
+  # 13h siembra membresía del aplicador (rol CLUSTER-WIDE) en roles de servidor:
+  # quedarse ahí envenenaría toda corrida posterior contra este cluster.
+  $PSQL "${TPL//\{db\}/postgres}" -q -c "DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='migration_gate_applier') THEN REVOKE pg_execute_server_program, pg_read_server_files, pg_write_server_files FROM migration_gate_applier; END IF; END \$\$;" >/dev/null 2>&1 || true
   [ "$fallidas" -eq 0 ] \
     || echo "migration-gate.selftest: AVISO — $fallidas base(s) efímera(s) no se pudieron borrar (patrón gate_selftest_$$_*); siguen ocupando disco." >&2
 }
@@ -244,6 +247,22 @@ commit_mig() { # repo, nombre, sql
 run_gate() { # repo, target, baseline
   ( cd "$1" && bash "$GATE" --target "$2" --baseline "$3" --base-ref HEAD~1 2>&1 )
 }
+# Copia del gate con sustituciones EXACTAS (cada needle debe aparecer 1 vez).
+mutar_gate() { # destino, needle→reemplazo pares (2 por mutación)
+  local dst="$1"; shift
+  "$GATE_PYTHON" - "$GATE" "$dst" "$@" <<'PYMUT'
+import io, sys
+src = io.open(sys.argv[1], encoding='utf-8').read()
+pares = sys.argv[3:]
+for i in range(0, len(pares), 2):
+    needle, repl = pares[i], pares[i+1]
+    if src.count(needle) != 1:
+        sys.stderr.write('mutacion imposible: %r aparece %d veces\n' % (needle, src.count(needle)))
+        sys.exit(9)
+    src = src.replace(needle, repl, 1)
+io.open(sys.argv[2], 'w', encoding='utf-8').write(src)
+PYMUT
+}
 
 # Baseline mínimo pero realista: una tabla + un GRANT (ejercita la derivación de roles).
 BASELINE="$TMP/baseline.sql"
@@ -318,8 +337,59 @@ must_fail_with "sin directorio de migraciones => FALLA (no 'nada que validar')" 
 R="$(mkrepo)"; T="$(newdb)"
 ( cd "$R" && echo y >> README && git add -A && git commit -qm "sin migraciones" ) >/dev/null 2>&1
 OUT="$(run_gate "$R" "$T" "$BASELINE")"; RC=$?
-[ $RC -eq 0 ] && ok "sin migraciones nuevas => exit 0" || bad "sin migraciones debería pasar"
+[ $RC -eq 0 ] && ok "sin migraciones nuevas => exit 0" || { bad "sin migraciones debería pasar (rc=$RC)"; echo "$OUT" | tail -8 | sed 's/^/      /'; }
 echo "$OUT" | grep -q "sin migraciones nuevas" && ok "lo dice explícitamente (no silencio ambiguo)" || bad "debería declarar que no validó nada"
+# …y aun sin migraciones CARGA el baseline, con la invariante y el canario antes.
+# Antes salía en 0 segundos sin tocar la base (run 482 de CI): fail-open.
+echo "$OUT" | grep -q "baseline cargado: [1-9][0-9]* tablas/vistas" \
+  && echo "$OUT" | grep -q "invariante de colisión" \
+  && echo "$OUT" | grep -q "control positivo del aplicador" \
+  && echo "$OUT" | grep -q "0 roles de servidor" \
+  && echo "$OUT" | grep -q "denegó COPY … TO PROGRAM" \
+  && [ "$($PSQL "$T" -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema IN ('public','analytics')" 2>/dev/null | tr -d ' ')" -gt 0 ] \
+  && ok "sin migraciones nuevas, el gate prepara el destino y CARGA el baseline (invariante + tres cuentas + dos canarios + tablas en el destino)" \
+  || { bad "sin migraciones nuevas el gate NO cargó el baseline"; echo "$OUT" | tail -8 | sed 's/^/      /'; }
+
+# ============================================================
+# 6b. FAIL-OPEN CERRADO — sin migraciones nuevas Y baseline ROTO => ROJO
+#     Un PR que solo edite `supabase/baseline/schema.sql` salía verde sin que
+#     nadie cargara ese baseline. MUTACIÓN: con la salida temprana restaurada,
+#     el mismo caso sale VERDE — el caso tiene dientes.
+# ============================================================
+BASE_ROTO="$TMP/baseline_roto.sql"
+cp "$BASELINE" "$BASE_ROTO"
+printf 'ALTER TABLE public.tabla_que_no_existe ADD COLUMN x int;\n' >> "$BASE_ROTO"
+chmod 644 "$BASE_ROTO"
+R="$(mkrepo)"; T="$(newdb)"
+( cd "$R" && echo y >> README && git add -A && git commit -qm "solo toca el baseline" ) >/dev/null 2>&1
+OUT="$(run_gate "$R" "$T" "$BASE_ROTO")"; RC=$?
+must_fail_with "sin migraciones nuevas + baseline ROTO => FALLA (no verde sin cargar)" "$RC" "$OUT" "el baseline de PROD no cargó"
+echo "$OUT" | grep -q "sin migraciones nuevas" \
+  && bad "baseline roto sin migraciones se anuncia como 'sin migraciones nuevas'" \
+  || ok "baseline roto sin migraciones NO se anuncia como verde"
+
+# Baseline que CARGA pero no deja ninguna tabla: lo caza la aserción OBJ > 0,
+# también sin migraciones nuevas.
+BASE_SIN_TABLAS="$TMP/baseline_sin_tablas.sql"
+printf 'SELECT 1;\n' > "$BASE_SIN_TABLAS"; chmod 644 "$BASE_SIN_TABLAS"
+R="$(mkrepo)"; T="$(newdb)"
+( cd "$R" && echo y >> README && git add -A && git commit -qm "solo toca el baseline" ) >/dev/null 2>&1
+OUT="$(run_gate "$R" "$T" "$BASE_SIN_TABLAS")"; RC=$?
+must_fail_with "sin migraciones nuevas + baseline sin tablas => FALLA (aserción OBJ > 0)" "$RC" "$OUT" "CERO tablas/vistas"
+
+# MUTACIÓN: se restaura la salida temprana de antes. El baseline roto debe
+# salir entonces VERDE; si no, el caso de arriba no estaría probando nada.
+GATE_TEMPRANO="$TMP/gate_salida_temprana.sh"
+if mutar_gate "$GATE_TEMPRANO" 'echo "   ninguna."' 'echo "   ninguna. Nada que validar por ejecución."; echo "---"; echo "migration-gate: 0 fail (sin migraciones nuevas)"; exit 0'; then
+  R="$(mkrepo)"; T="$(newdb)"
+  ( cd "$R" && echo y >> README && git add -A && git commit -qm "solo toca el baseline" ) >/dev/null 2>&1
+  OUT="$( cd "$R" && SQL_APPLY="$REAL_APPLY" bash "$GATE_TEMPRANO" --target "$T" --baseline "$BASE_ROTO" --base-ref HEAD~1 2>&1 )"; RC=$?
+  [ "$RC" -eq 0 ] && ! echo "$OUT" | grep -q "baseline cargado" \
+    && ok "MUTACIÓN salida temprana: el baseline roto sale VERDE sin cargarse — el fail-open era real" \
+    || { bad "con la salida temprana restaurada el baseline roto no salió verde (rc=$RC): el caso no demuestra el fail-open"; echo "$OUT" | tail -6 | sed 's/^/      /'; }
+else
+  bad "no se pudo mutar el gate para restaurar la salida temprana"
+fi
 
 # ============================================================
 # 7. Aviso por MODIFICAR una migración existente (AIR-90)
@@ -729,6 +799,10 @@ if open(f, "rb").read().lstrip().startswith(b"\\"):        # el canario
     sys.stderr.write('ERROR:  syntax error at or near "\\"\n')
     sys.stderr.write('SQLSTATE:  42601\n')
     sys.exit(1)
+if b"TO PROGRAM" in open(f, "rb").read():                  # el canario COPY
+    sys.stderr.write('ERROR:  permission denied to COPY to or from an external program\n')
+    sys.stderr.write('SQLSTATE:  42501\n')
+    sys.exit(1)
 sys.exit(0)                                                # "aplicado" (mentira)
 PYSTUB
 OUT="$( cd "$R" && SQL_APPLY="$FSTUB" bash "$GATE" --target "$T" --baseline "$BASELINE" --base-ref HEAD~1 2>&1 )"; RC=$?
@@ -934,18 +1008,21 @@ must_fail_with "migración con pg_read_file('postgresql.conf') => FALLA con perm
   "$RC" "$OUT" "permission denied for function pg_read_file"
 
 # Estado del catálogo tras el gate: `postgres` plano, aplicador no superusuario,
-# y las dos cuentas que el gate afirma, recalculadas aquí por fuera.
+# y las tres cuentas que el gate afirma, recalculadas aquí por fuera.
 SUP="$($PSQL "$T" -tAc "SELECT string_agg(rolname || '=' || rolsuper::text, ',' ORDER BY rolname) FROM pg_roles WHERE rolname IN ('migration_gate_applier','postgres')" 2>/dev/null | tr -d ' ')"
 [ "$SUP" = "migration_gate_applier=false,postgres=false" ] \
   && ok "en el destino ni el aplicador ni 'postgres' son superusuario ($SUP)" \
   || bad "rolsuper inesperado en el destino: '$SUP'"
-CUENTAS_T="$($PSQL "$T" -tAc "SELECT (SELECT count(*) FROM pg_roles r WHERE r.rolsuper AND pg_has_role('migration_gate_applier', r.oid, 'SET')) || '|' || (SELECT count(*) FROM pg_proc p WHERE p.proacl IS NOT NULL AND pg_get_userbyid(p.proowner) <> 'migration_gate_applier' AND has_function_privilege('migration_gate_applier', p.oid, 'EXECUTE') AND NOT has_function_privilege('public', p.oid, 'EXECUTE'))" 2>/dev/null | tr -d ' ')"
-[ "$CUENTAS_T" = "0|0" ] \
-  && ok "superusuarios con SET = 0 y funciones restringidas heredadas = 0 (medido por fuera del gate)" \
-  || bad "las cuentas del aplicador no son 0|0: '$CUENTAS_T'"
-echo "$OUT" | grep -q "0 superusuarios con SET, 0 funciones restringidas heredadas" \
-  && ok "el gate DECLARA en el log las dos cuentas en 0" \
-  || { bad "el gate no declara las dos cuentas en el log"; echo "$OUT" | sed 's/^/      /'; }
+CUENTAS_T="$($PSQL "$T" -tAc "SELECT (SELECT count(*) FROM pg_roles r WHERE r.rolsuper AND pg_has_role('migration_gate_applier', r.oid, 'SET')) || '|' || (SELECT count(*) FROM pg_proc p WHERE p.proacl IS NOT NULL AND pg_get_userbyid(p.proowner) <> 'migration_gate_applier' AND has_function_privilege('migration_gate_applier', p.oid, 'EXECUTE') AND NOT has_function_privilege('public', p.oid, 'EXECUTE')) || '|' || (SELECT count(*) FROM pg_roles r WHERE r.rolname IN ('pg_execute_server_program','pg_read_server_files','pg_write_server_files') AND pg_has_role('migration_gate_applier', r.oid, 'MEMBER'))" 2>/dev/null | tr -d ' ')"
+[ "$CUENTAS_T" = "0|0|0" ] \
+  && ok "superusuarios con SET = 0, funciones restringidas heredadas = 0 y roles de servidor = 0 (medido por fuera del gate)" \
+  || bad "las cuentas del aplicador no son 0|0|0: '$CUENTAS_T'"
+echo "$OUT" | grep -q "0 superusuarios con SET, 0 funciones restringidas heredadas, 0 roles de servidor" \
+  && ok "el gate DECLARA en el log las tres cuentas en 0" \
+  || { bad "el gate no declara las tres cuentas en el log"; echo "$OUT" | sed 's/^/      /'; }
+echo "$OUT" | grep -q "denegó COPY … TO PROGRAM al aplicador con SQLSTATE 42501" \
+  && ok "el gate DECLARA en el log el canario COPY … TO PROGRAM denegado con 42501" \
+  || { bad "el gate no declara el canario COPY"; echo "$OUT" | sed 's/^/      /'; }
 echo "$OUT" | grep -qE "invariante de colisión: ninguno de los [1-9][0-9]* roles nombrados es superusuario" \
   && ok "el gate DECLARA en el log la invariante de colisión" \
   || { bad "el gate no declara la invariante de colisión"; echo "$OUT" | sed 's/^/      /'; }
@@ -1021,8 +1098,16 @@ CHK="$($PSQL "$T" -tAc "SELECT count(*) FROM pg_constraint WHERE conname='ventas
 #           cluster-wide `postgres` en SUPERUSER durante el caso —desde el
 #           catálogo, que es lo único que el gate mira, es exactamente ese
 #           estado— y se restaura al terminar (también en el trap de salida).
-#       (c) MUTACIÓN: sin la invariante, el mensaje de (b) no aparece ⇒ este
-#           caso se pondría rojo. La invariante tiene dientes.
+#       (c) MUTACIÓN: sin la invariante, el mensaje de (b) desaparece ⇒ este
+#           caso se pondría rojo. Y afirma lo que la invariante NO aporta: el
+#           gate mutado SIGUE en rojo (el baseline muere con 42501 al cargar)
+#           y el aplicador NO es miembro de `postgres` superusuario, porque
+#           quien impide esa membresía es el `WHERE NOT rolsuper`, no la
+#           invariante. Lo que la invariante aporta es el fallo TEMPRANO (antes
+#           de cargar nada) y NOMBRADO.
+#       (f) plegado de mayúsculas: `FOR ROLE GATE_SUPER` (sin comillas) ES el
+#           superusuario para Postgres; la derivación pliega igual ⇒ muere por
+#           la invariante nombrando el rol en minúsculas.
 #       (d) el peligro que vigila es REAL, reproducido tal cual lo cita la
 #           cabecera: un rol miembro del superusuario de `initdb` con `WITH SET
 #           FALSE` (sin poder SET ROLE) EJECUTA lo_import, y la cuenta de
@@ -1035,21 +1120,7 @@ CHK="$($PSQL "$T" -tAc "SELECT count(*) FROM pg_constraint WHERE conname='ventas
 #      (d) usa al superusuario de ARRANQUE del harness: con la imagen por
 #      defecto ese es `postgres`, y es el que el baseline nombra.
 # ============================================================
-mutar_gate() { # destino, needle→reemplazo pares (2 por mutación)
-  local dst="$1"; shift
-  "$GATE_PYTHON" - "$GATE" "$dst" "$@" <<'PYMUT'
-import io, sys
-src = io.open(sys.argv[1], encoding='utf-8').read()
-pares = sys.argv[3:]
-for i in range(0, len(pares), 2):
-    needle, repl = pares[i], pares[i+1]
-    if src.count(needle) != 1:
-        sys.stderr.write('mutacion imposible: %r aparece %d veces\n' % (needle, src.count(needle)))
-        sys.exit(9)
-    src = src.replace(needle, repl, 1)
-io.open(sys.argv[2], 'w', encoding='utf-8').write(src)
-PYMUT
-}
+# (mutar_gate está definida arriba, junto a run_gate: la usa también el caso 6b.)
 N_INVARIANTE='[ -z "$COLISION" ] \'
 N_SET='[ "$SUPER_SET" -eq 0 ] \'
 N_FUNC='[ "$FUNC_HEREDADAS" -eq 0 ] \'
@@ -1090,10 +1161,19 @@ if promover_postgres; then
   else
     R="$(mkrepo)"; T="$(newdb)"
     commit_mig "$R" "234_sin_invariante.sql" "ALTER TABLE public.ventas ADD COLUMN col_c text;"
+    # El aplicador es CLUSTER-WIDE y los casos anteriores (con `postgres` aún
+    # plano) le dieron membresía en `postgres`. Esa membresía RANCIA la caza la
+    # cuenta 1 (caso 13f), no es lo que (c) mide: se retira para que el caso
+    # observe solo lo que hace el gate en esta corrida (¿la concede el bucle?).
+    $PSQL "$T" -q -c "DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='migration_gate_applier') THEN REVOKE postgres FROM migration_gate_applier CASCADE; END IF; END \$\$;" >/dev/null 2>&1
     OUT="$( cd "$R" && SQL_APPLY="$REAL_APPLY" bash "$GATE_SININV" --target "$T" --baseline "$BASE_ADP" --base-ref HEAD~1 2>&1 )"; RC=$?
     echo "$OUT" | grep -q "COLISIÓN DE NOMBRES" \
       && bad "(c) el gate SIN invariante sigue diciendo COLISIÓN: la mutación no quitó nada y (b) no tiene dientes" \
       || ok "(c) sin la invariante, el mensaje de colisión desaparece: el caso (b) la caza"
+    MIEMBRO_PG="$($PSQL "$T" -tAc "SELECT pg_has_role('migration_gate_applier', 'postgres', 'MEMBER')::text" 2>/dev/null | tr -d ' ')"
+    [ "$RC" -ne 0 ] && echo "$OUT" | grep -q "el baseline de PROD no cargó" && [ "$MIEMBRO_PG" = "false" ] \
+      && ok "(c) sin la invariante el gate SIGUE en rojo, pero TARDE y anónimo (el baseline no carga) y el aplicador NO es miembro de 'postgres' superusuario: la contención es el WHERE NOT rolsuper; la invariante aporta el fallo temprano y nombrado" \
+      || { bad "(c) sin la invariante: rc=$RC, miembro de postgres='$MIEMBRO_PG' — no es lo que el texto del gate afirma"; echo "$OUT" | tail -6 | sed 's/^/      /'; }
   fi
 
   # (d) el peligro es real: miembro del superusuario de initdb, WITH SET FALSE.
@@ -1135,6 +1215,24 @@ OUT="$(run_gate "$R" "$T" "$BASE_RARO")"; RC=$?
 must_fail_with "(e) rol con caracteres fuera de [A-Za-z0-9_] en el baseline => MUERE sin interpolarlo" \
   "$RC" "$OUT" "caracteres fuera de \[A-Za-z0-9_\]: rol'raro"
 [ "$(TABLAS "$T")" = "0" ] && ok "(e) murió ANTES de cargar el baseline" || bad "(e) llegó a intentar cargar el baseline"
+
+# (f) `FOR ROLE GATE_SUPER` sin comillas: Postgres lo pliega al superusuario
+#     efímero. Antes la derivación lo guardaba en mayúsculas, la invariante no
+#     lo veía, se precreaba un rol espurio "GATE_SUPER" y el gate moría DESPUÉS
+#     con un 42501 anónimo. Ahora muere por la invariante, nombrándolo.
+SU_MAYUS="$(printf '%s' "$SU_NAME" | tr '[:lower:]' '[:upper:]')"
+BASE_MAYUS="$TMP/baseline_for_role_mayusculas.sql"
+cp "$BASE_ADP" "$BASE_MAYUS"
+printf 'ALTER DEFAULT PRIVILEGES FOR ROLE %s IN SCHEMA public GRANT ALL ON TABLES TO anon;\n' "$SU_MAYUS" >> "$BASE_MAYUS"
+chmod 644 "$BASE_MAYUS"
+R="$(mkrepo)"; T="$(newdb)"
+commit_mig "$R" "234f_tras_mayusculas.sql" "ALTER TABLE public.ventas ADD COLUMN mayus text;"
+OUT="$(run_gate "$R" "$T" "$BASE_MAYUS")"; RC=$?
+must_fail_with "(f) 'FOR ROLE $SU_MAYUS' sin comillas => MUERE por COLISIÓN nombrando '$SU_NAME'" \
+  "$RC" "$OUT" "COLISIÓN DE NOMBRES: el/los rol(es) '$SU_NAME'"
+[ "$(TABLAS "$T")" = "0" ] && [ "$($PSQL "$T" -tAc "SELECT count(*) FROM pg_roles WHERE rolname = '$SU_MAYUS'" 2>/dev/null | tr -d ' ')" = "0" ] \
+  && ok "(f) murió ANTES de cargar el baseline y sin precrear un rol espurio '$SU_MAYUS'" \
+  || bad "(f) llegó a cargar el baseline o precreó el rol espurio '$SU_MAYUS'"
 
 # ============================================================
 # 13f. CUENTA 1 — superusuarios sobre los que el aplicador puede SET ROLE = 0.
@@ -1197,6 +1295,71 @@ if mutar_gate "$GATE_SINFUNC" "$N_FUNC" 'true \'; then
 else
   bad "no se pudo mutar el gate para quitar la cuenta 2"
 fi
+
+# ============================================================
+# 13h. CUENTA 3 + CANARIO COPY — membresía DIRECTA del aplicador en
+#      `pg_execute_server_program`. No pasa por ninguna función ni por ningún
+#      superusuario: las cuentas 1 y 2 dan 0 (reproducido por el
+#      security-reviewer sobre 155a09d: la migración con COPY … TO PROGRAM
+#      salía verde tras ejecutar el programa). Se siembra (el aplicador es
+#      CLUSTER-WIDE: la membresía sobrevive al ALTER ROLE del gate) y:
+#       · gate real ⇒ MUERE en la cuenta 3, sin cargar nada;
+#       · mutado SIN la cuenta 3 ⇒ lo para el canario COPY (segunda capa);
+#       · mutado SIN las dos ⇒ la migración EJECUTA el programa y sale VERDE:
+#         el peligro que vigilan es real. Se comprueba por el EFECTO dentro de
+#         la base (`COPY … FROM PROGRAM 'echo …'` deja una fila), así vale
+#         también con el Postgres en otro contenedor, como en CI.
+#      La membresía se revoca al final del caso y en el trap de salida.
+# ============================================================
+N_CUENTA3='[ "$SERVER_ROLES" -eq 0 ] \'
+N_CANARIO_COPY='if [ "$APPLY_AS_SUPERUSER" != "1" ]; then
+  COPY_CANARY='
+MIG_PROGRAM="CREATE TABLE public.gate_pwned (x text);
+COPY public.gate_pwned FROM PROGRAM 'echo ejecutado_por_el_pr';"
+sembrar_server() { $PSQL "${TPL//\{db\}/postgres}" -q -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='migration_gate_applier') THEN CREATE ROLE migration_gate_applier NOLOGIN; END IF; END \$\$;" -c "GRANT pg_execute_server_program TO migration_gate_applier" >/dev/null 2>&1; }
+quitar_server() {
+  $PSQL "${TPL//\{db\}/postgres}" -q -c "REVOKE pg_execute_server_program, pg_read_server_files, pg_write_server_files FROM migration_gate_applier" >/dev/null 2>&1
+  [ "$($PSQL "${TPL//\{db\}/postgres}" -tAc "SELECT count(*) FROM pg_roles r WHERE r.rolname IN ('pg_execute_server_program','pg_read_server_files','pg_write_server_files') AND pg_has_role('migration_gate_applier', r.oid, 'MEMBER')" 2>/dev/null | tr -d ' ')" = "0" ]
+}
+if sembrar_server; then
+  R="$(mkrepo)"; T="$(newdb)"
+  commit_mig "$R" "239_copy_program_por_membresia.sql" "$MIG_PROGRAM"
+  OUT="$(run_gate "$R" "$T" "$BASE_ADP")"; RC=$?
+  must_fail_with "membresía del aplicador en pg_execute_server_program => MUERE (cuenta 3)" \
+    "$RC" "$OUT" "es MIEMBRO de 1 rol(es) predefinido(s) de servidor"
+  [ "$(TABLAS "$T")" = "0" ] && ! echo "$OUT" | grep -q "cargando esquema de PROD" \
+    && ok "(13h) murió ANTES de cargar el baseline y de aplicar la migración" \
+    || bad "(13h) llegó a cargar el baseline pese a la membresía en pg_execute_server_program"
+
+  GATE_SINC3="$TMP/gate_sin_cuenta3.sh"
+  if mutar_gate "$GATE_SINC3" "$N_CUENTA3" 'true \'; then
+    R="$(mkrepo)"; T="$(newdb)"
+    commit_mig "$R" "240_copy_program_sin_cuenta3.sql" "$MIG_PROGRAM"
+    OUT="$( cd "$R" && SQL_APPLY="$REAL_APPLY" bash "$GATE_SINC3" --target "$T" --baseline "$BASE_ADP" --base-ref HEAD~1 2>&1 )"; RC=$?
+    must_fail_with "sin la cuenta 3, el canario COPY … TO PROGRAM caza la misma membresía" \
+      "$RC" "$OUT" "el servidor EJECUTÓ 'COPY (SELECT 1) TO PROGRAM'"
+  else
+    bad "no se pudo mutar el gate para quitar la cuenta 3"
+  fi
+
+  GATE_SINC3C="$TMP/gate_sin_cuenta3_ni_canario.sh"
+  if mutar_gate "$GATE_SINC3C" "$N_CUENTA3" 'true \' "$N_CANARIO_COPY" 'if false; then
+  COPY_CANARY='; then
+    R="$(mkrepo)"; T="$(newdb)"
+    commit_mig "$R" "241_copy_program_sin_nada.sql" "$MIG_PROGRAM"
+    OUT="$( cd "$R" && SQL_APPLY="$REAL_APPLY" bash "$GATE_SINC3C" --target "$T" --baseline "$BASE_ADP" --base-ref HEAD~1 2>&1 )"; RC=$?
+    EFECTO="$($PSQL "$T" -tAc "SELECT string_agg(x, ',') FROM public.gate_pwned" 2>/dev/null | tr -d ' ')"
+    [ "$RC" -eq 0 ] && echo "$OUT" | grep -q "migration-gate: 0 fail" && [ "$EFECTO" = "ejecutado_por_el_pr" ] \
+      && ok "sin la cuenta 3 NI el canario, la migración EJECUTA el programa en el servidor y sale VERDE: el peligro es real" \
+      || { bad "sin cuenta 3 ni canario el COPY … FROM PROGRAM no se ejecutó en verde (rc=$RC, efecto='$EFECTO'): el caso no demuestra el peligro"; echo "$OUT" | tail -6 | sed 's/^/      /'; }
+  else
+    bad "no se pudo mutar el gate para quitar la cuenta 3 y el canario COPY"
+  fi
+else
+  bad "no se pudo sembrar la membresía en pg_execute_server_program: 13h no probó nada"
+fi
+quitar_server && ok "membresía en roles de servidor retirada (el resto del cluster queda limpio)" \
+  || bad "la membresía del aplicador en pg_execute_server_program NO se pudo retirar"
 
 echo "---"
 echo "migration-gate.selftest: $PASS ok / $FAIL bad"

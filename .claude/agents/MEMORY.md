@@ -628,3 +628,21 @@ caso "debe morir" sale ok por el motivo equivocado. (3) La derivación de `FOR R
 que un `"rol'raro"` del baseline llegaba a SQL de superusuario: se valida `^[A-Za-z0-9_]+$` o die.
 (4) `psql -c` no admite `\gset` mezclado con SQL. Self-test: 152 ok; las 3 mutaciones (invariante,
 cuenta SET, cuenta funciones) cazadas.
+
+## Fixer · AIR-276-verify intento 2 · Salida temprana = fail-open; cuentas que no miden el canal
+(1) `migration-gate.sh` salía con `exit 0` ANTES de preparar destino cuando no había migraciones
+nuevas (run 482, 0 s): un PR que solo tocara `supabase/baseline/schema.sql` pasaba sin cargarlo.
+Arreglo: el baseline se carga SIEMPRE; la salida "sin migraciones nuevas" va DESPUÉS de la aserción
+OBJ > 0. **PATRÓN: todo `exit 0` temprano en un gate es sospechoso — el caso "no hay nada que validar"
+suele dejar SIN validar un input que el PR sí puede editar (aquí el baseline).** (2) Las cuentas
+"miran el efecto, venga de donde venga" era falso: la membresía directa en `pg_execute_server_program`
+no pasa por funciones ni superusuarios. Tercera cuenta (`pg_has_role … 'MEMBER'` en los 3 roles
+`pg_*_server_*`) + canario `COPY … TO PROGRAM` ⇒ 42501 restaurado. **PATRÓN: una cuenta de catálogo
+mide UNA vía; nunca escribir "venga de donde venga" sin un caso por vía.** (3) Derivación de roles
+debe plegar a minúsculas lo NO entrecomillado (awk), o `FOR ROLE GATE_SUPER` esquiva la invariante.
+Trampas: el hook `validate-sql.sh` bloquea borrar bases incluso en local, y también si el verbo sale
+en un texto del comando (usar bases nuevas); el aplicador cluster-wide arrastra membresía en
+`postgres` de casos previos (13e(c) debe revocarla antes de medir el WHERE); un stub de aplicador que
+finge debe fingir también el canario COPY. Editar el self-test mientras corre en background rompe la
+corrida (bash lee el script por trozos). Self-test: 166 ok; mutaciones salida-temprana (5 BAD), sin
+cuenta 3 (lo caza el canario), sin cuenta 3 ni canario (el programa EJECUTA, fila en la base).
