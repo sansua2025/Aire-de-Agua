@@ -49,6 +49,16 @@
 #
 # No filtrar aquí es la decisión: el recorte vive en el CONSUMIDOR, así que el
 # artefacto no miente y regenerarlo nunca hace falta para desbloquear el gate.
+#
+# ⚠ SI EL GATE SE PONE ROJO NOMBRANDO ESTE VOLCADO, no es drift: el gate no
+# descarta a ciegas. Exige que TODAS las apariciones de `ALTER DEFAULT
+# PRIVILEGES` sean sentencias completas de una línea y que no haya ningún `$` en
+# o después de la primera (si lo hubiera, un borrado podría caer dentro de un
+# cuerpo dollar-quoted y la función se cargaría TRUNCADA sin ningún error). Hoy
+# pg_dump cumple las dos —24/24, último `$` 5.300 líneas antes— pero si algún día
+# deja de cumplirlas el gate MUERE en vez de mutilar el baseline en silencio. El
+# arreglo es del CONSUMIDOR (migration-gate.sh), no de este volcado: sigue
+# fiel.
 set -uo pipefail
 
 PGBIN="${PGBIN:-}"

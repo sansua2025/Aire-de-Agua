@@ -74,11 +74,18 @@
 # └───────────────────────────────────────────────────────────────────────────┘
 #
 # ┌─ LO QUE EL GATE NO MODELA: LOS DEFAULT PRIVILEGES DE PROD ────────────────┐
-# │ RECORTE DELIBERADO DE FIDELIDAD, aceptado y escrito. Al cargar el          │
-# │ baseline se DESCARTAN sus sentencias `ALTER DEFAULT PRIVILEGES`. A partir  │
-# │ de aquí el gate NO reproduce los default privileges de PROD: valida que    │
-# │ una migración APLICA sobre el esquema real, no que los privilegios por     │
-# │ defecto de objetos futuros salgan idénticos.                               │
+# │ Al cargar el baseline se DESCARTAN sus sentencias `ALTER DEFAULT           │
+# │ PRIVILEGES`. A partir de aquí el gate NO reproduce los default privileges  │
+# │ de PROD: valida que una migración APLICA sobre el esquema real, no que los │
+# │ privilegios por defecto de objetos futuros salgan idénticos.                │
+# │                                                                            │
+# │ LA MAGNITUD DEL RECORTE ES ~NULA, y conviene decirlo así en vez de         │
+# │ presentarlo como un sacrificio: `ALTER DEFAULT PRIVILEGES` es PER-GRANTOR  │
+# │ (la lección de mig 037), y en la base efímera el grantor SIEMPRE es        │
+# │ `migration_gate_applier`. Las 24 sentencias hablan de objetos que creen    │
+# │ `postgres` o `supabase_admin`, roles que aquí no crean nada: NO habrían    │
+# │ tenido efecto observable NI APLICÁNDOSE. Lo que se pierde no es fidelidad  │
+# │ útil, es una línea que no hacía nada en este contexto.                     │
 # │                                                                            │
 # │ POR QUÉ. `ALTER DEFAULT PRIVILEGES FOR ROLE <X>` exige ser MIEMBRO de <X>. │
 # │ pg_dump de PROD emite 24 de estas, y 12 con `FOR ROLE postgres` — que en   │
@@ -110,13 +117,29 @@
 # │ divergió CUATRO veces, cada una un bypass— pero con la ejecución como      │
 # │ superusuario como premio. No se hace.                                      │
 # │                                                                            │
-# │ CONSECUENCIA CONOCIDA (fail-closed, no silenciosa): una migración NUEVA    │
-# │ del PR con `ALTER DEFAULT PRIVILEGES FOR ROLE postgres` (la forma que usan │
-# │ 081 y 136) pondrá el gate ROJO, aunque en PROD se aplique bien porque allí │
-# │ la ejecuta un rol privilegiado. Es un FALSO ROJO. Se acepta a propósito:   │
-# │ las migraciones del PR NO se normalizan nunca —silenciar SQL del PR sería  │
-# │ fail-OPEN—. La forma SIN `FOR ROLE` (`ALTER DEFAULT PRIVILEGES IN SCHEMA   │
-# │ … `, la de 022/048b/060/069) aplica al usuario actual y pasa sin problema. │
+# │ CONSECUENCIAS CONOCIDAS (fail-closed, no silenciosas). Son TRES clases de  │
+# │ FALSO ROJO, y conviene distinguirlas porque el error que sale es distinto: │
+# │  (1) 42501 «permission denied to change default privileges». Una migración │
+# │      NUEVA del PR con `FOR ROLE <X>` siendo <X> SUPERUSUARIO (`postgres`   │
+# │      en esta imagen). La usan de verdad 037 y 081 — 069 y 136 solo la      │
+# │      mencionan en un comentario. En PROD aplica bien (la ejecuta un rol    │
+# │      privilegiado).                                                        │
+# │  (2) 42704 «role "<X>" does not exist». Una migración del PR con `FOR ROLE │
+# │      <X>` donde <X> NO se precrea: los roles se derivan de lo que sigue a  │
+# │      `TO`/`FROM` en el baseline, JAMÁS de `FOR ROLE`. Es el caso de los    │
+# │      tres `FOR ROLE supabase_admin` de 048b (que usa LAS DOS formas).      │
+# │  (3) Rojo del ARTEFACTO, no del PR: al normalizar, el gate exige que TODAS │
+# │      las apariciones de `ALTER DEFAULT PRIVILEGES` en el baseline sean     │
+# │      sentencias completas de una línea, y que no haya ningún `$` en o tras │
+# │      la primera. Si el volcado de PROD deja de cumplirlo —una mención en   │
+# │      un comentario, una sentencia partida, un `$` ahí abajo— el gate muere │
+# │      antes de cargar nada. Ver la nota del paso 5. Es el precio de no      │
+# │      descartar a ciegas, y se paga a propósito.                            │
+# │ Las (1) y (2) se aceptan porque las migraciones del PR NO se normalizan    │
+# │ nunca —silenciar SQL del PR sería fail-OPEN—, y el gate las ANUNCIA como   │
+# │ falso rojo cuando el log lo evidencia, en vez de afirmar "no aplica sobre  │
+# │ PROD". La forma SIN `FOR ROLE` (`ALTER DEFAULT PRIVILEGES IN SCHEMA … `,   │
+# │ la de 022, 048b y 060) aplica al usuario actual y pasa sin problema.       │
 # └───────────────────────────────────────────────────────────────────────────┘
 #
 # Uso:
@@ -469,10 +492,13 @@ TMPFILES+=("$BASE_NORM" "$BASE_LOG")
 # línea tiene EXACTAMENTE esa forma, y SOLO aquí: una migración del PR nunca las
 # necesita y no recibe ningún trato especial.
 # TERCERA normalización, acotada al BASELINE: se DESCARTAN las sentencias
-# `ALTER DEFAULT PRIVILEGES`. Es un RECORTE DELIBERADO DE FIDELIDAD y va
-# explicado en la cabecera (sección "LO QUE EL GATE NO MODELA"). Resumen:
-# `ALTER DEFAULT PRIVILEGES FOR ROLE <X>` exige ser MIEMBRO de <X>, y PROD las
-# emite con `FOR ROLE postgres`, que en la imagen de CI es EL SUPERUSUARIO. Darle
+# `ALTER DEFAULT PRIVILEGES`, y va explicado en la cabecera (sección "LO QUE EL
+# GATE NO MODELA"). Resumen: `ALTER DEFAULT PRIVILEGES FOR ROLE <X>` exige ser
+# MIEMBRO de <X>, y PROD las emite con `FOR ROLE postgres`, que en la imagen de
+# CI es EL SUPERUSUARIO. Lo descartado no hacía nada aquí de todos modos: estas
+# sentencias son PER-GRANTOR y en la base efímera el grantor siempre es
+# `migration_gate_applier`, así que las 24 no habrían tenido efecto observable ni
+# aplicándose — el "recorte de fidelidad" es ~nulo, no un sacrificio. Darle
 # al aplicador esa membresía es exactamente la escalada que el rol NOSUPERUSER
 # viene a cerrar (medido: con `GRANT postgres TO <aplicador>`, un `SET ROLE
 # postgres` deja `rolsuper=true` y `COPY … TO PROGRAM` vuelve a ejecutar). Los
@@ -485,24 +511,78 @@ TMPFILES+=("$BASE_NORM" "$BASE_LOG")
 #    normaliza: se aplica tal cual y, si el aplicador no puede, el gate se pone
 #    ROJO. Silenciar SQL del PR sería fail-OPEN, que es el pecado que persigue
 #    todo este archivo. Consecuencia conocida, en la cabecera: eso es un FALSO
-#    ROJO para la forma `FOR ROLE postgres` (081, 136 la usan) — molesto, seguro.
-#  · SOLO sentencias COMPLETAS en UNA línea (ancladas a `^` y terminadas en `;`),
-#    que es como pg_dump las emite (verificado: 24/24 en el baseline de PROD).
-#    Así nunca se parte una sentencia en dos. Si algún día pg_dump la partiera en
-#    varias líneas, el resto quedaría huérfano y la carga fallaría → ROJO. Ese es
-#    el modo de fallo correcto: nunca un verde a medias.
-#  · Residual asumido: el patrón es textual, así que una línea que EMPIECE por
-#    `ALTER DEFAULT PRIVILEGES` dentro de un cuerpo dollar-quoted del baseline se
-#    descartaría y corrompería esa función. No se replica el lexer de SQL para
-#    evitarlo —esa vía divergió cuatro veces en este mismo PR— y el síntoma sería
-#    un error de sintaxis al cargar el baseline: ROJO, no un pase silencioso.
+#    ROJO para la forma `FOR ROLE postgres` (la usan 037 y 081; 069 y 136 solo la
+#    nombran en un comentario) — molesto, seguro.
+#  · SOLO sentencias COMPLETAS en UNA línea: ancladas a `^`, y con el `;` FINAL
+#    como ÚNICO `;` de la línea (`[^;]*`, no `.*`). El `.*` era codicioso y
+#    borraba la línea ENTERA, así que cualquier sentencia pegada detrás en la
+#    misma línea —`ALTER DEFAULT PRIVILEGES … TO anon; DROP TABLE public.ventas;`—
+#    desaparecía con ella, y el único rastro era un conteo que seguía diciendo
+#    «1 sentencia descartada». Con `[^;]*` esa línea ya no casa (sigue casando
+#    24/24 del baseline real de PROD, verificado).
+#  · Y NO SE DESCARTA A CIEGAS: antes del sed se AFIRMA que TODAS las apariciones
+#    de `ALTER DEFAULT PRIVILEGES` en el baseline son de esa forma tratable
+#    (mismo conteo por las dos vías). Si aparece una que no lo es —pg_dump
+#    partiéndola en varias líneas, un `;` interno, o una dentro de un cuerpo
+#    dollar-quoted (indentada o sin terminar en `;`)— el gate MUERE aquí, en
+#    ROJO, antes de tocar nada. Hoy da 24 == 24, así que no cambia ningún verde.
+#    Nota: el conteo de "todas las apariciones" es por LÍNEA y no distingue un
+#    comentario (`-- ALTER DEFAULT PRIVILEGES …`), así que una mención en un
+#    comentario del baseline también pondría el gate rojo. Falso rojo aceptado:
+#    el lado seguro es no descartar lo que no se reconoce.
+#  · SEGUNDA AFIRMACIÓN, la que cierra el caso peligroso de verdad: ninguna
+#    línea que contenga un `$` puede aparecer EN o DESPUÉS de la primera ADP.
+#    POR QUÉ ES SUFICIENTE, y no es una heurística: para que una línea borrada
+#    estuviera DENTRO de un cuerpo dollar-quoted, ese cuerpo tendría que cerrarse
+#    en esa línea o más abajo, y su delimitador de cierre CONTIENE un `$`. Si no
+#    hay ningún `$` de ahí en adelante, ningún borrado cae dentro de un cuerpo.
+#    No se lexa nada: solo se pregunta "¿esta línea tiene el carácter `$`?", que
+#    es la razón de que no pueda divergir como divergió el escáner de psql
+#    (dollar-quote con etiqueta, `$` legal dentro de identificadores, etiquetas
+#    no ASCII: todas contienen `$` y todas se cazan). Es una SOBREaproximación:
+#    un `$` inocente ahí abajo (un `[^[:alpha:]]` en un regexp) pondría el gate
+#    rojo sin que nada estuviera roto — se acepta, es el lado seguro. En el
+#    baseline real de PROD el último `$` está en la línea 12603 y la primera ADP
+#    en la 17907: margen de sobra, y pg_dump emite los default ACL al final por
+#    construcción.
+#    Sin esta afirmación el agujero era REAL y SILENCIOSO, y el comentario que
+#    estaba aquí antes afirmaba lo contrario ("el síntoma sería un error de
+#    sintaxis: ROJO"). Es falso, medido con GNU sed 4.9: borrar una sentencia
+#    COMPLETA de un cuerpo plpgsql deja plpgsql VÁLIDO (`BEGIN / IF … END IF; /
+#    RETURN NEW; / END;` sigue compilando), así que `check_function_bodies` no lo
+#    rechaza y la función se CREA con el cuerpo TRUNCADO: sin error, sin log y
+#    sin rastro en el diff —el borrado ocurre al CARGAR, no en el artefacto—.
+#    Tampoco hacía falta un atacante: en cuanto PROD tenga una función así, el
+#    siguiente `migration-baseline-refresh` produce un baseline FIEL que el gate
+#    cargaría mutilado ⇒ FALSO VERDE. Y nada verifica el CONTENIDO del baseline
+#    (`migration-baseline-freshness` solo compara `PROD_MIGRATIONS`; no hay
+#    checksum en ningún script ni job).
 # El conteo se IMPRIME siempre: un recorte de fidelidad que no se ve en el log es
 # un recorte que nadie recuerda que existe.
-ADP_N="$(grep -cE '^ALTER DEFAULT PRIVILEGES .*;[[:space:]]*$' "$BASELINE" 2>/dev/null || true)"
+ADP_TOTAL="$(grep -c 'ALTER DEFAULT PRIVILEGES' "$BASELINE" 2>/dev/null || true)"
+ADP_N="$(grep -cE '^ALTER DEFAULT PRIVILEGES [^;]*;[[:space:]]*$' "$BASELINE" 2>/dev/null || true)"
+[ "$ADP_TOTAL" = "$ADP_N" ] || die "el baseline '$BASELINE' tiene $ADP_TOTAL línea(s) con 'ALTER DEFAULT PRIVILEGES' pero solo $ADP_N de la forma que el gate sabe descartar (^ALTER DEFAULT PRIVILEGES [^;]*;\$). El gate NO descarta lo que no reconoce: descartar una línea que no sea una sentencia completa de nivel superior mutilaría el baseline EN SILENCIO (borrar una sentencia entera de un cuerpo plpgsql deja plpgsql válido, así que la función se crearía truncada sin error) y eso es un FALSO VERDE. Revisa las apariciones con: grep -nE 'ALTER DEFAULT PRIVILEGES' '$BASELINE' | grep -vE ':ALTER DEFAULT PRIVILEGES [^;]*;[[:space:]]*\$'"
+if [ "$ADP_N" -gt 0 ]; then
+  ADP_FIRST="$(grep -nE '^ALTER DEFAULT PRIVILEGES [^;]*;[[:space:]]*$' "$BASELINE" | head -1 | cut -d: -f1 || true)"
+  DOLLAR_LAST="$(grep -nF '$' "$BASELINE" | tail -1 | cut -d: -f1 || true)"
+  DOLLAR_LAST="${DOLLAR_LAST:-0}"
+  [ "$DOLLAR_LAST" -lt "$ADP_FIRST" ] || die "el baseline '$BASELINE' tiene una línea con el carácter '\$' en la línea $DOLLAR_LAST, en o después de la primera 'ALTER DEFAULT PRIVILEGES' (línea $ADP_FIRST). El gate no descarta ahí: una sentencia borrada DENTRO de un cuerpo dollar-quoted deja plpgsql VÁLIDO y la función se cargaría TRUNCADA sin ningún error (falso verde). Mientras no haya ningún '\$' de la primera ADP en adelante, ningún borrado puede caer dentro de un cuerpo —el delimitador de cierre contiene '\$' y estaría por debajo—. Si el '\$' es inocente (un regexp, p.ej.), sigue siendo un rojo a propósito: el gate no adivina. Mira la línea con: sed -n '${DOLLAR_LAST}p' '$BASELINE'"
+fi
 sed -E 's/^CREATE SCHEMA (IF NOT EXISTS )?/CREATE SCHEMA IF NOT EXISTS /;
         /^\\(un)?restrict [A-Za-z0-9]+[[:space:]]*$/d;
-        /^ALTER DEFAULT PRIVILEGES .*;[[:space:]]*$/d' "$BASELINE" > "$BASE_NORM"
-echo "   fidelidad recortada a propósito: $ADP_N sentencia(s) ALTER DEFAULT PRIVILEGES del baseline DESCARTADAS (el gate no modela los default privileges de PROD; exigirían membresía en un rol SUPERUSUARIO). Las migraciones del PR NO reciben este trato."
+        /^ALTER DEFAULT PRIVILEGES [^;]*;[[:space:]]*$/d' "$BASELINE" > "$BASE_NORM"
+# El conteo que se ANUNCIA se deriva del EFECTO REAL del sed sobre el archivo
+# normalizado (antes menos después), no de un `grep` paralelo sobre la entrada.
+# POR QUÉ: con el `sed` NEUTRALIZADO, el log seguía anunciando "3 sentencias
+# DESCARTADAS" —medido— porque la cifra venía de contar la ENTRADA por otra vía.
+# Una cifra obtenida por una segunda vía no es evidencia de lo que hizo la
+# primera; es exactamente el pecado que este bloque arregla. Y si queda alguna
+# ADP en la salida, el descarte NO ocurrió (sed neutralizado, patrón divergente,
+# normalización reordenada): ROJO aquí, no un recorte invisible más abajo.
+ADP_LEFT="$(grep -c 'ALTER DEFAULT PRIVILEGES' "$BASE_NORM" 2>/dev/null || true)"
+ADP_DROPPED=$(( ADP_TOTAL - ADP_LEFT ))
+[ "$ADP_LEFT" -eq 0 ] || die "el descarte de ALTER DEFAULT PRIVILEGES NO se aplicó: quedan $ADP_LEFT de $ADP_TOTAL en el baseline normalizado. El gate NO sigue: el baseline moriría más abajo con 42501 y el log habría anunciado un recorte que nunca ocurrió. Revisa la normalización del baseline en $0."
+echo "   fidelidad recortada a propósito: $ADP_DROPPED sentencia(s) ALTER DEFAULT PRIVILEGES del baseline DESCARTADAS (conteo derivado del archivo normalizado, no de un grep aparte; el gate no modela los default privileges de PROD: exigirían membresía en un rol SUPERUSUARIO). Las migraciones del PR NO reciben este trato."
 # Legible por el usuario que corra psql: en algunos entornos el cliente corre
 # bajo otra cuenta (p.ej. `runuser -u postgres`) y mktemp deja 0600.
 chmod 644 "$BASE_NORM" 2>/dev/null || true
@@ -539,6 +619,9 @@ echo "   baseline cargado: $OBJ tablas/vistas en public+analytics"
 # ── 6. Aplicar ──────────────────────────────────────────────────────────────
 echo "== aplicando =="
 FAILED=0; APPLIED=0
+# Pista del falso rojo de default privileges: se ARMA solo si el log lo
+# evidencia (ver el resumen del final). Vacía = no se afirma nada.
+ADP_HINT=""; ADP_HINT_FILE=""
 for f in "${ADDED[@]}"; do
   if grep -qiE '^[[:space:]]*(COMMIT|ROLLBACK)[[:space:]]*;' "$f"; then
     echo "   AVISO: $f trae COMMIT/ROLLBACK propio; lo confirmado antes de ese punto"
@@ -564,6 +647,15 @@ for f in "${ADDED[@]}"; do
     sed 's/^/         /' "$LOG" | head -25
     echo "         ------------------------------------------------------------"
     FAILED=$((FAILED+1))
+    # ¿El error es uno de los FALSOS ROJOS conocidos del recorte de default
+    # privileges? Se decide por la EVIDENCIA del log (mismo estándar que rc=3):
+    # la pista va CONDICIONADA, y si no hay evidencia no se insinúa nada.
+    if grep -qi 'change default privileges' "$LOG"; then
+      ADP_HINT=42501; ADP_HINT_FILE="$f"
+    elif grep -qiE 'role "[^"]*" does not exist' "$LOG" \
+         && grep -qiE 'ALTER[[:space:]]+DEFAULT[[:space:]]+PRIVILEGES[[:space:]]+FOR[[:space:]]+ROLE' "$f"; then
+      ADP_HINT=42704; ADP_HINT_FILE="$f"
+    fi
     rm -f "$LOG"
     break   # las migraciones son secuenciales: seguir tras un fallo no informa
   fi
@@ -571,6 +663,30 @@ for f in "${ADDED[@]}"; do
 done
 
 echo "---"
+if [ "$FAILED" -gt 0 ] && [ -n "$ADP_HINT" ]; then
+  # Rojo que el gate SÍ puede atribuir, así que no se afirma la causa genérica
+  # ("no aplica sobre PROD") ni se suelta la pista de drift, que aquí es ajena:
+  # las dos serían afirmar una causa que el código no establece.
+  echo "migration-gate: $FAILED fail — el error coincide con un FALSO ROJO CONOCIDO de este gate,"
+  echo "no con una migración que no aplique sobre PROD. El gate NO modela los default privileges"
+  echo "(ver 'LO QUE EL GATE NO MODELA' en la cabecera de $0)."
+  if [ "$ADP_HINT" = 42501 ]; then
+    echo "  · Qué pasó: $ADP_HINT_FILE trae 'ALTER DEFAULT PRIVILEGES FOR ROLE <X>' con <X> SUPERUSUARIO"
+    echo "    (en esta imagen, 'postgres'). Eso exige membresía en <X> y el aplicador es NOSUPERUSER"
+    echo "    a propósito: dársela reabriría COPY … TO PROGRAM. En PROD la ejecuta un rol privilegiado"
+    echo "    y aplica bien. Es la forma de 037 y 081."
+  else
+    echo "  · Qué pasó: $ADP_HINT_FILE trae 'ALTER DEFAULT PRIVILEGES FOR ROLE <X>' con un <X> que el gate"
+    echo "    no precrea. Los roles se derivan de lo que sigue a TO/FROM en el baseline, NUNCA de FOR ROLE,"
+    echo "    así que un 'FOR ROLE supabase_admin' (la forma de 048b) sale como 'role does not exist'."
+  fi
+  echo "  · Qué hacer: el SQL del PR NO se normaliza nunca (silenciarlo sería fail-OPEN), así que este rojo"
+  echo "    no se 'arregla' en el gate. Verifica a mano que la migración aplica en PROD y pide el juicio"
+  echo "    humano de AIR-162 §2; o usa la forma sin FOR ROLE (022, 048b, 060) si el default privilege"
+  echo "    debe quedar a nombre del rol que aplica."
+  echo "  · Lo que este gate NO puede establecer aquí: si además hay otro problema en la migración."
+  exit 1
+fi
 if [ "$FAILED" -gt 0 ]; then
   echo "migration-gate: $FAILED fail — una migración nueva NO aplica sobre el esquema real de PROD."
   echo "Si el error dice que un objeto YA EXISTE, la causa probable es drift: la migración"
