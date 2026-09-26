@@ -117,14 +117,15 @@
 # │    superusuario es el `WHERE NOT rolsuper` del paso 4, lo nombre el        │
 # │    baseline o no.                                                          │
 # │  · TRES cuentas que deben valer 0, cada una una vía CONCRETA (y nada       │
-# │    más): superusuarios sobre los que el aplicador puede `SET ROLE`;        │
-# │    funciones con ACL que el aplicador ejecuta y PUBLIC no (caza el         │
-# │    `lo_import` heredado de arriba); membresía en                           │
+# │    más): cuenta 1, superusuarios sobre los que el aplicador puede `SET     │
+# │    ROLE`; cuenta 2, funciones con ACL que el aplicador ejecuta y PUBLIC    │
+# │    no (caza el `lo_import` heredado de arriba); cuenta 3, membresía en     │
 # │    `pg_execute_server_program`/`pg_read_server_files`/                     │
 # │    `pg_write_server_files` (COPY a programa/archivo sin función).          │
-# │  · canario `COPY … TO PROGRAM` ⇒ 42501, que lo demuestra por su efecto.    │
+# │  · canario COPY (`COPY … TO PROGRAM` ⇒ 42501), que demuestra por su        │
+# │    efecto lo que la cuenta 3 mide; y canario `\!` (⇒ 42601), aparte.       │
 # │ Cada una tiene su caso en el self-test, y la invariante, la cuenta 3 +     │
-# │ canario y la salida sin migraciones, uno MUTADO.                           │
+# │ canario COPY y la salida sin migraciones, uno MUTADO.                      │
 # │                                                                            │
 # │ POR QUÉ EL BASELINE NO SE FILTRA. Antes se descartaban esas 24 sentencias  │
 # │ con un `sed`: tres rondas, tres clases de FALSO VERDE (un `.*` codicioso;  │
@@ -327,8 +328,30 @@ case "$COLISION" in
   *) die "no se pudo comprobar la invariante de colisión (respuesta: '${COLISION:-<vacía>}'): que ningún rol nombrado por el baseline sea superusuario en el destino. Sin esa comprobación el gate no prepara ni carga nada." ;;
 esac
 COLISION="${COLISION%|ok}"
+# Dos mensajes según DÓNDE está el arreglo, sin afirmar de qué sentencia salió el
+# nombre ni qué es ese rol en PROD (el gate no lo establece):
+#  (i)  el nombre es uno de los 5 roles base de Supabase, que el gate precrea
+#       como rol PLANO lo nombre el baseline o no ⇒ lo que sobra es el nombre
+#       del superusuario del DESTINO (caso 13e(b));
+#  (ii) cualquier otro nombre sale del baseline (GRANT/REVOKE/OWNER TO/FOR ROLE)
+#       y coincide con el superusuario del destino ⇒ puede sobrar en cualquiera
+#       de los dos lados (casos 13e(a) y 13e(f)).
+COLISION_MSG=""
+if [ -n "$COLISION" ]; then
+  COL_BASE=""; COL_BL=""
+  for r in $(printf '%s' "$COLISION" | tr ',' ' '); do
+    case " $BASE_ROLES " in
+      *" $r "*) COL_BASE="${COL_BASE:+$COL_BASE,}$r" ;;
+      *)        COL_BL="${COL_BL:+$COL_BL,}$r" ;;
+    esac
+  done
+  COL_RIESGO="cargar el baseline exigiría hacer al aplicador MIEMBRO de un superusuario, y esa membresía hereda lo concedido a su nombre (si es el superusuario de initdb, las ACL de lo_import/lo_export/pg_read_file: medido en PG 17.11, lectura y escritura de archivos del servidor aun con WITH SET FALSE). El gate NO concede esa membresía ni carga el baseline así."
+  [ -z "$COL_BASE" ] || COLISION_MSG="COLISIÓN DE NOMBRES (destino): el superusuario del destino se llama como uno de los roles base de Supabase que el gate precrea como rol PLANO para cargar el baseline: '$COL_BASE'. $COL_RIESGO Arranca el Postgres efímero con un superusuario de OTRO nombre (ci.yml: POSTGRES_USER) y conéctate como él."
+  [ -z "$COL_BL" ] || COLISION_MSG="${COLISION_MSG:+$COLISION_MSG | }COLISIÓN DE NOMBRES (baseline): el baseline nombra al superusuario del destino: '$COL_BL'. Alguna sentencia del baseline de las que el gate deriva roles (FOR ROLE, GRANT/REVOKE … TO/FROM, OWNER TO) usa ese nombre. $COL_RIESGO Revisa el baseline, o arranca el Postgres efímero con un superusuario de otro nombre (ci.yml: POSTGRES_USER)."
+fi
 [ -z "$COLISION" ] \
-  || die "COLISIÓN DE NOMBRES: el/los rol(es) '$COLISION' aparece(n) en el baseline de PROD y en el destino es/son SUPERUSUARIO. En PROD es un rol corriente; aquí, cargar sus 'ALTER DEFAULT PRIVILEGES FOR ROLE …' exigiría hacer al aplicador MIEMBRO de un superusuario, y esa membresía hereda las ACL que initdb pone a su nombre (medido en PG 17.11: lo_import, lo_export y pg_read_file = lectura y escritura de archivos del servidor, aun con WITH SET FALSE). Arranca el Postgres efímero con un superusuario de OTRO nombre (ci.yml: POSTGRES_USER=gate_super) y conéctate como él. El gate NO concede membresía en un superusuario ni carga el baseline así."
+  || die "$COLISION_MSG"
+
 echo "   invariante de colisión: ninguno de los $(printf '%s\n' "$ROLES_NOMBRADOS" | grep -c .) roles nombrados es superusuario en el destino"
 
 for r in $ROLES_NOMBRADOS; do
@@ -457,22 +480,22 @@ else
   # (la membresía en `pg_execute_server_program` no pasa por ninguna función ni
   # por ningún superusuario, y ninguna de las dos la veía). Las tres vías, cada
   # una con su caso sembrado en el self-test:
-  #  (1) superusuarios sobre los que el aplicador puede `SET ROLE` (13f);
-  #  (2) funciones con ACL que el aplicador puede ejecutar y PUBLIC no (13g). Es
-  #      la que caza el `lo_import`/`lo_export`/`pg_read_file` heredado de una
-  #      membresía en el superusuario (la medición de la cabecera). Va ANTES del
-  #      baseline a propósito: después, el aplicador es dueño de las funciones
-  #      del baseline y muchas llevan `REVOKE … FROM PUBLIC`, lo que la volvería
-  #      ruido. Aquí solo hay catálogo y extensiones, ninguna suya;
-  #  (3) membresía (directa o indirecta, `pg_has_role … 'MEMBER'`) en los roles
-  #      predefinidos de servidor `pg_execute_server_program`,
-  #      `pg_read_server_files` y `pg_write_server_files` (13h). Dan `COPY … TO/
-  #      FROM PROGRAM` y `COPY` contra archivos del servidor SIN superusuario y
-  #      SIN pasar por ninguna función. Reproducido: con `GRANT
-  #      pg_execute_server_program, pg_read_server_files TO` el aplicador (rol
-  #      CLUSTER-WIDE: la membresía sobrevive al `ALTER ROLE` de arriba), las
-  #      cuentas (1) y (2) daban 0 y una migración con `COPY … TO PROGRAM` salía
-  #      verde tras ejecutar el programa.
+  #  cuenta 1: superusuarios sobre los que el aplicador puede `SET ROLE` (13f);
+  #  cuenta 2: funciones con ACL que el aplicador puede ejecutar y PUBLIC no (13g). Es
+  #            la que caza el `lo_import`/`lo_export`/`pg_read_file` heredado de una
+  #            membresía en el superusuario (la medición de la cabecera). Va ANTES del
+  #            baseline a propósito: después, el aplicador es dueño de las funciones
+  #            del baseline y muchas llevan `REVOKE … FROM PUBLIC`, lo que la volvería
+  #            ruido. Aquí solo hay catálogo y extensiones, ninguna suya;
+  #  cuenta 3: membresía (directa o indirecta, `pg_has_role … 'MEMBER'`) en los roles
+  #            predefinidos de servidor `pg_execute_server_program`,
+  #            `pg_read_server_files` y `pg_write_server_files` (13h). Dan `COPY … TO/
+  #            FROM PROGRAM` y `COPY` contra archivos del servidor SIN superusuario y
+  #            SIN pasar por ninguna función. Reproducido: con `GRANT
+  #            pg_execute_server_program, pg_read_server_files TO` el aplicador (rol
+  #            CLUSTER-WIDE: la membresía sobrevive al `ALTER ROLE` de arriba), las
+  #            cuentas 1 y 2 daban 0 y una migración con `COPY … TO PROGRAM` salía
+  #            verde tras ejecutar el programa.
   # Otra vía que no sea una de estas tres no la ve ninguna cuenta; para el canal
   # COPY hay además un control positivo en caliente (paso 4b).
   CUENTAS="$($PSQL "$APPLY_URI" -v ON_ERROR_STOP=1 -tAc "SELECT (SELECT count(*) FROM pg_roles r WHERE r.rolsuper AND pg_has_role('$APPLIER', r.oid, 'SET')) || '|' || (SELECT count(*) FROM pg_proc p WHERE p.proacl IS NOT NULL AND has_function_privilege('$APPLIER', p.oid, 'EXECUTE') AND NOT has_function_privilege('public', p.oid, 'EXECUTE')) || '|' || (SELECT count(*) FROM pg_roles r WHERE r.rolname IN ('pg_execute_server_program','pg_read_server_files','pg_write_server_files') AND pg_has_role('$APPLIER', r.oid, 'MEMBER'))" 2>/dev/null | tr -d ' ')"
@@ -612,11 +635,11 @@ esac
 # guarda parecía no vigilar nada. VUELVE porque la amenaza que mira ahora es
 # OTRA y no está detrás de ningún `SET ROLE`: la MEMBRESÍA DIRECTA del aplicador
 # en `pg_execute_server_program` (o `pg_read/write_server_files`), que las
-# cuentas (1) y (2) no ven. La cuenta (3) la mide en el catálogo; este canario la
+# cuentas 1 y 2 no ven. La cuenta 3 la mide en el catálogo; este canario la
 # demuestra por su EFECTO en el servidor. Son dos capas: el self-test (13h) solo
 # pone rojo el caso sembrado cuando se quitan LAS DOS.
 # Con GATE_APPLY_AS_SUPERUSER=1 no se corre: ahí el riesgo está aceptado por
-# escrito y el canario, que ejecutaría `true`, no demostraría nada.
+# escrito y el canario, que ejecutaría `cat >/dev/null`, no demostraría nada.
 if [ "$APPLY_AS_SUPERUSER" != "1" ]; then
   COPY_CANARY="$(mktemp)"; COPY_CANARY_LOG="$(mktemp)"; TMPFILES+=("$COPY_CANARY" "$COPY_CANARY_LOG")
   printf "COPY (SELECT 1) TO PROGRAM 'cat >/dev/null';\n" > "$COPY_CANARY"; chmod 644 "$COPY_CANARY" 2>/dev/null || true
@@ -676,13 +699,23 @@ die_si_no_es_del_archivo "$BASE_RC" "$BASE_LOG" "cargar el baseline"
 if [ "$BASE_RC" -ne 0 ]; then
   echo "--- primeras 30 líneas del error ---" >&2
   head -30 "$BASE_LOG" >&2
-  if [ "$APPLY_AS_SUPERUSER" != "1" ]; then
-    echo "--- " >&2
-    echo "Si el error es de PRIVILEGIOS, es el rol NOSUPERUSER topando con algo" >&2
-    echo "que el baseline necesita. NO se degrada sola a superusuario: eso reabriría" >&2
-    echo "COPY … TO PROGRAM en silencio. Ajusta el privilegio concreto que falte, o, si" >&2
-    echo "hay que desbloquear ya, corre con GATE_APPLY_AS_SUPERUSER=1 asumiendo por" >&2
-    echo "escrito el riesgo residual que esa variable imprime." >&2
+  # La pista solo sale ante un 42501 y NO empuja a desactivar la contención: el
+  # aplicador ya es miembro de todo rol NO superusuario del destino, así que un
+  # 42501 aquí NO se lee como "falta un privilegio". La firma medida (13e(c)) es
+  # un rol que el baseline nombra y que en el destino es SUPERUSUARIO, que el
+  # `WHERE NOT rolsuper` deja fuera a propósito. Que un fallo empuje hacia
+  # GATE_APPLY_AS_SUPERUSER es el patrón que CLAUDE.md documenta como el error.
+  if [ "$APPLY_AS_SUPERUSER" != "1" ] && grep -q 'SQLSTATE:  *42501' "$BASE_LOG"; then
+    echo "--- PISTA 42501 AL CARGAR EL BASELINE ---" >&2
+    echo "Un 42501 aquí NO es 'falta un privilegio que conceder': el aplicador ya es" >&2
+    echo "miembro de todo rol NO superusuario del destino. Mira primero la contención:" >&2
+    echo "  · ¿el rol que nombra el error es SUPERUSUARIO en el destino? Eso es lo que la" >&2
+    echo "    invariante de colisión (paso 3) debía parar antes de cargar nada;" >&2
+    echo "  · ¿cambió el bucle de membresía (WHERE NOT rolsuper) o las cuentas 1/2/3?" >&2
+    echo "Si no es ninguna de las dos, la sentencia del error exige superusuario de" >&2
+    echo "verdad: léela arriba. NO se arregla con GATE_APPLY_AS_SUPERUSER=1 — es un" >&2
+    echo "escape hatch documentado que reabre COPY … TO PROGRAM (ver el aviso que" >&2
+    echo "imprime), no un remedio para un 42501." >&2
   fi
   die "el baseline de PROD no cargó. El gate NO puede validar nada; esto es un fallo, no un skip."
 fi

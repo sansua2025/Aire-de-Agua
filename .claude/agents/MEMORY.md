@@ -521,8 +521,9 @@ que TODAS las apariciones son de la forma tratable.
 
 ## Levantar un PG17 real en este contenedor para correr el self-test del gate
 Hay `psql`, `psycopg2` y binarios en `/usr/lib/postgresql/{16,17}/bin`, sin servidor arrancado, y
-`initdb` no corre como root: usar el usuario `postgres` (uid 102) con `su postgres -c`.
-`SELFTEST_DB_URL_TEMPLATE='postgresql://postgres@127.0.0.1:<puerto>/{db}'`. **Trampa que me costo una
+`initdb` no corre como root: usar un usuario propio (`pgtest`) con `su pgtest -c`, y SIEMPRE
+`initdb -U gate_super` (el preflight del self-test rechaza un superusuario llamado `postgres`: es la
+colision que el gate existe para cazar). `SELFTEST_DB_URL_TEMPLATE='postgresql://gate_super@127.0.0.1:<puerto>/{db}'`. **Trampa que me costo una
 corrida entera:** el PGDATA NO puede vivir bajo el scratchpad — la plataforma reimpone `drwx------` en
 `/tmp/claude-0` y el checkpointer muere con `PANIC: could not open file ... pg_control: Permission
 denied` a mitad del test (sintoma enganoso: TODAS las aserciones en BAD, como si el codigo estuviera
@@ -599,9 +600,9 @@ dientes (limpio 130 ok/0 bad, 47 s por corrida): quitar la de POSICION ⇒ `BAD 
 ⇒ `BAD la vecina DESAPARECIO del baseline`; quitar `ADP_LEFT -eq 0` ⇒ 1 BAD. **Tener dientes no es
 tener cobertura:** las 4 prueban SOLO cuerpos dollar-quoted; `grep "LANGUAGE … AS '"` sobre el
 self-test sale vacio. Preguntar siempre las dos cosas por separado.
-Postgres local para reproducir: `initdb` bajo el HOME de un usuario propio (`useradd pgtest`; el
-scratchpad NO sirve, la plataforma reimpone `drwx------`), `pg_ctl -o '-p 55432 -k /tmp'`,
-`EXTENSIONS=""`, `SELFTEST_DB_URL_TEMPLATE="postgresql://postgres@127.0.0.1:55432/{db}"`.
+Postgres local para reproducir: `initdb -U gate_super` bajo el HOME de un usuario propio (`useradd
+pgtest`; el scratchpad NO sirve, la plataforma reimpone `drwx------`), `pg_ctl -o '-p 55432 -k /tmp'`,
+`EXTENSIONS=""`, `SELFTEST_DB_URL_TEMPLATE="postgresql://gate_super@127.0.0.1:55432/{db}"`.
 OJO: el hook `validate-sql.sh` bloquea mis propios comandos si mencionan el borrado de bases/esquemas
 (incluso en texto de memoria) — crear nombres nuevos (`db_$RANDOM`) en vez de limpiar. Dentro del
 self-test no lo ve: el borrado vive en el script, no en mi linea de comando.
@@ -646,3 +647,35 @@ en un texto del comando (usar bases nuevas); el aplicador cluster-wide arrastra 
 finge debe fingir también el canario COPY. Editar el self-test mientras corre en background rompe la
 corrida (bash lee el script por trozos). Self-test: 166 ok; mutaciones salida-temprana (5 BAD), sin
 cuenta 3 (lo caza el canario), sin cuenta 3 ni canario (el programa EJECUTA, fila en la base).
+
+## AIR-276 · Lecciones de los revisores (ronda final, persistidas por el fixer)
+- **Retirar una asercion en caliente:** enumerar TODAS las regresiones que cazaba, no solo aquella por
+  la que se anadio. El canario COPY se puso por `WITH SET FALSE` y tambien vigilaba `pg_*_server_*`;
+  su propio mensaje lo decia, y al retirarlo se abrio esa via.
+- **"Cuenta sobre funciones con ACL" != "privilegio de servidor":** `COPY` a programa/archivo se decide
+  por membresia en roles predefinidos (`pg_execute_server_program`, `pg_read/write_server_files`), no
+  por el ACL de ninguna funcion. Una cuenta de catalogo mide UNA via.
+- **Camino corto de "nada que hacer":** preguntar que input del PR entra por ese camino sin validarse
+  (el gate salia antes de cargar el baseline cuando no habia migraciones; el baseline pasaba sin cargarse).
+- **Canario de programa:** uno que no consume stdin (`true`) da EPIPE/XX000 o rc=0 por carrera con el
+  hijo; usar uno que drene (`cat >/dev/null`). Una tirada 166/0 no prueba ausencia de flake: correr >=3.
+- **`die` que nombra una causa** exige un caso del self-test que llegue por OTRA via y compruebe el
+  texto (patron repetido: rc=3, bloque de PRIVILEGIOS del baseline, mensaje de la invariante).
+- **Casos que afirman "no hay rol espurio"** deben limpiar residuos cluster-wide al inicio y en el trap.
+  El arbol compartido puede cambiar a mitad de revision: anclar al SHA, nunca al arbol.
+- **`pg_has_role(..., 'MEMBER')` es transitiva** (medido con rol intermedio): la cuenta 3 ve tambien la
+  membresia indirecta en `pg_*_server_*`.
+
+## Fixer · AIR-276 ronda de pulido: pistas que sobreafirman o empujan al lado equivocado
+El mensaje de la invariante de colision decia "en PROD es un rol corriente" (falso para
+`supabase_admin`), asumia que el nombre venia de un `ALTER DEFAULT PRIVILEGES` y mandaba a `ci.yml`
+aunque la colision viniera del baseline. Arreglo: dos mensajes, `COLISION DE NOMBRES (destino)` si el
+nombre es uno de los 5 roles base (arreglo: `POSTGRES_USER`) y `(baseline)` si sale del baseline
+(arreglo: baseline o superusuario), sin afirmar sentencia de origen ni que es en PROD; 13e(a)/(f)
+comprueban el de baseline y que NO sale el de destino, 13e(b) al reves. La pista de carga del baseline
+sugeria `GATE_APPLY_AS_SUPERUSER=1` ante cualquier fallo: ahora solo sale ante SQLSTATE 42501, apunta a
+invariante/cuentas y dice que ese escape hatch NO es remedio; 13e(c) exige el 42501 y el texto.
+**PATRON: una pista es una rama del gate; su caso comprueba el texto Y la ausencia del texto vecino.**
+Mutaciones verificadas: clasificar todo como baseline => 2 BAD en (b); pista que vuelve a sugerir el
+escape hatch => 1 BAD en (c). Self-test: 169 ok.
+

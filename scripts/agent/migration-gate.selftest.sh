@@ -112,6 +112,8 @@ restaurar_postgres() {
 
 TMP="$(mktemp -d)"; chmod 755 "$TMP"
 PROMOVIDO_F="$TMP/.postgres_promovido"
+# Grafía en mayúsculas del superusuario del harness (caso 13e(f) y el trap).
+SU_MAYUS="$(printf '%s' "$SU_NAME" | tr '[:lower:]' '[:upper:]')"
 
 # LIMPIEZA DE LAS BASES EFÍMERAS. Este self-test crea ~90 bases por corrida y
 # durante un tiempo no borró ninguna: en la máquina de desarrollo se acumularon
@@ -141,6 +143,13 @@ limpiar() {
              "SELECT datname FROM pg_database WHERE datname LIKE 'gate_selftest_%'" 2>/dev/null \
            | grep "^gate_selftest_$$_")
   $PSQL "${TPL//\{db\}/postgres}" -q -c "DROP ROLE IF EXISTS gate_selftest_sonda" >/dev/null 2>&1 || true
+  # 13e(f) afirma que NO se precrea un rol "<SUPERUSUARIO EN MAYÚSCULAS>": un
+  # residuo de una corrida anterior (o de una regresión) lo haría fallar siempre.
+  [ -z "${SU_MAYUS:-}" ] || [ "$SU_MAYUS" = "$SU_NAME" ] \
+    || $PSQL "${TPL//\{db\}/postgres}" -q -c "DROP ROLE IF EXISTS \"$SU_MAYUS\"" >/dev/null 2>&1 || true
+  # 13f siembra membresía del aplicador en el superusuario: rancia, haría morir
+  # por la cuenta 1 a toda corrida posterior contra este cluster.
+  $PSQL "${TPL//\{db\}/postgres}" -q -c "DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='migration_gate_applier') THEN EXECUTE format('REVOKE %I FROM migration_gate_applier', '$SU_NAME'); END IF; END \$\$;" >/dev/null 2>&1 || true
   # 13h siembra membresía del aplicador (rol CLUSTER-WIDE) en roles de servidor:
   # quedarse ahí envenenaría toda corrida posterior contra este cluster.
   $PSQL "${TPL//\{db\}/postgres}" -q -c "DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='migration_gate_applier') THEN REVOKE pg_execute_server_program, pg_read_server_files, pg_write_server_files FROM migration_gate_applier; END IF; END \$\$;" >/dev/null 2>&1 || true
@@ -676,9 +685,9 @@ commit_mig "$R" "301_ok.sql" "SELECT 1;"
 F3B="$TMP/fake_rc3_baseline.py"; mk_fake_rc3 "$F3B" "baseline"
 OUT="$( cd "$R" && SQL_APPLY="$F3B" bash "$GATE" --target "$T" --baseline "$BASELINE" --base-ref HEAD~1 2>&1 )"; RC=$?
 must_fail_with "rc=3 en el baseline => se culpa a la CONEXIÓN" "$RC" "$OUT" "NO PUDO CONECTAR"
-echo "$OUT" | grep -q "GATE_APPLY_AS_SUPERUSER=1 asumiendo" \
-  && bad "una caída de conexión sigue empujando a desactivar el rol NOSUPERUSER" \
-  || ok "rc=3 en el baseline NO sugiere GATE_APPLY_AS_SUPERUSER"
+echo "$OUT" | grep -qE "PISTA 42501 AL CARGAR EL BASELINE|corre con GATE_APPLY_AS_SUPERUSER" \
+  && bad "una caída de conexión sigue imprimiendo la pista de privilegios del baseline" \
+  || ok "rc=3 en el baseline NO imprime la pista de privilegios (ni sugiere GATE_APPLY_AS_SUPERUSER)"
 echo "$OUT" | grep -q "el baseline de PROD no cargó" \
   && bad "rc=3 en el baseline sigue diciendo que el baseline no cargó" \
   || ok "rc=3 en el baseline no culpa al baseline"
@@ -1091,23 +1100,28 @@ CHK="$($PSQL "$T" -tAc "SELECT count(*) FROM pg_constraint WHERE conname='ventas
 #      Si un rol que el baseline NOMBRA es superusuario en el destino, cargar
 #      sus `FOR ROLE <rol>` exigiría hacer al aplicador miembro de un
 #      superusuario, y eso hereda las ACL de initdb. El gate tiene que MORIR
-#      nombrando el rol, ANTES de cargar el baseline, por las dos vías:
-#       (a) el baseline nombra al superusuario efímero (`FOR ROLE gate_super`);
-#       (b) el superusuario del destino se llama `postgres` (volver a
+#      nombrando el rol, ANTES de cargar el baseline, por las dos vías, y cada
+#      una con SU mensaje (el arreglo está en un lado distinto):
+#       (a) el baseline nombra al superusuario efímero (`FOR ROLE gate_super`)
+#           ⇒ `COLISIÓN DE NOMBRES (baseline)`;
+#       (b) ⇒ `COLISIÓN DE NOMBRES (destino)`: el superusuario del destino se
+#           llama `postgres` (volver a
 #           `POSTGRES_USER: postgres`). Se reproduce convirtiendo al rol
 #           cluster-wide `postgres` en SUPERUSER durante el caso —desde el
 #           catálogo, que es lo único que el gate mira, es exactamente ese
 #           estado— y se restaura al terminar (también en el trap de salida).
 #       (c) MUTACIÓN: sin la invariante, el mensaje de (b) desaparece ⇒ este
 #           caso se pondría rojo. Y afirma lo que la invariante NO aporta: el
-#           gate mutado SIGUE en rojo (el baseline muere con 42501 al cargar)
+#           gate mutado SIGUE en rojo (el baseline muere con SQLSTATE 42501 al
+#           cargar, y la pista de ese 42501 apunta a la contención y NO sugiere
+#           GATE_APPLY_AS_SUPERUSER)
 #           y el aplicador NO es miembro de `postgres` superusuario, porque
 #           quien impide esa membresía es el `WHERE NOT rolsuper`, no la
 #           invariante. Lo que la invariante aporta es el fallo TEMPRANO (antes
 #           de cargar nada) y NOMBRADO.
 #       (f) plegado de mayúsculas: `FOR ROLE GATE_SUPER` (sin comillas) ES el
 #           superusuario para Postgres; la derivación pliega igual ⇒ muere por
-#           la invariante nombrando el rol en minúsculas.
+#           la invariante (mensaje de baseline) nombrando el rol en minúsculas.
 #       (d) el peligro que vigila es REAL, reproducido tal cual lo cita la
 #           cabecera: un rol miembro del superusuario de `initdb` con `WITH SET
 #           FALSE` (sin poder SET ROLE) EJECUTA lo_import, y la cuenta de
@@ -1135,8 +1149,11 @@ assert_contiene "$BASE_SU" "FOR ROLE $SU_NAME IN SCHEMA" "el baseline del caso n
 R="$(mkrepo)"; T="$(newdb)"
 commit_mig "$R" "232_tras_colision_a.sql" "ALTER TABLE public.ventas ADD COLUMN col_a text;"
 OUT="$(run_gate "$R" "$T" "$BASE_SU")"; RC=$?
-must_fail_with "baseline con 'FOR ROLE $SU_NAME' (el superusuario efímero) => MUERE por COLISIÓN" \
-  "$RC" "$OUT" "COLISIÓN DE NOMBRES: el/los rol(es) '$SU_NAME'"
+must_fail_with "(a) baseline con 'FOR ROLE $SU_NAME' (el superusuario efímero) => MUERE por COLISIÓN, mensaje de BASELINE" \
+  "$RC" "$OUT" "COLISIÓN DE NOMBRES (baseline): el baseline nombra al superusuario del destino: '$SU_NAME'"
+echo "$OUT" | grep -q "COLISIÓN DE NOMBRES (destino)" \
+  && bad "(a) la colisión viene del baseline y el gate manda a cambiar el DESTINO (mensaje equivocado)" \
+  || ok "(a) no culpa al destino: la pista es la del baseline"
 N_TAB="$(TABLAS "$T")"
 [ "$N_TAB" = "0" ] && ! echo "$OUT" | grep -q "cargando esquema de PROD" \
   && ok "(a) el gate murió ANTES de cargar el baseline (0 tablas en el destino)" \
@@ -1147,8 +1164,11 @@ R="$(mkrepo)"; T="$(newdb)"
 commit_mig "$R" "233_tras_colision_b.sql" "ALTER TABLE public.ventas ADD COLUMN col_b text;"
 if promover_postgres; then
   OUT="$(run_gate "$R" "$T" "$BASE_ADP")"; RC=$?
-  must_fail_with "superusuario del destino llamado 'postgres' => MUERE por COLISIÓN" \
-    "$RC" "$OUT" "COLISIÓN DE NOMBRES: el/los rol(es) 'postgres'"
+  must_fail_with "(b) superusuario del destino llamado 'postgres' => MUERE por COLISIÓN, mensaje de DESTINO" \
+    "$RC" "$OUT" "COLISIÓN DE NOMBRES (destino): el superusuario del destino se llama como uno de los roles base de Supabase que el gate precrea como rol PLANO para cargar el baseline: 'postgres'"
+  echo "$OUT" | grep -q "COLISIÓN DE NOMBRES (baseline)" \
+    && bad "(b) la colisión es del destino y el gate culpa al baseline (mensaje equivocado)" \
+    || ok "(b) no culpa al baseline: la pista es cambiar el superusuario del destino"
   N_TAB="$(TABLAS "$T")"
   [ "$N_TAB" = "0" ] && ! echo "$OUT" | grep -q "cargando esquema de PROD" \
     && ok "(b) el gate murió ANTES de cargar el baseline (0 tablas en el destino)" \
@@ -1171,9 +1191,14 @@ if promover_postgres; then
       && bad "(c) el gate SIN invariante sigue diciendo COLISIÓN: la mutación no quitó nada y (b) no tiene dientes" \
       || ok "(c) sin la invariante, el mensaje de colisión desaparece: el caso (b) la caza"
     MIEMBRO_PG="$($PSQL "$T" -tAc "SELECT pg_has_role('migration_gate_applier', 'postgres', 'MEMBER')::text" 2>/dev/null | tr -d ' ')"
-    [ "$RC" -ne 0 ] && echo "$OUT" | grep -q "el baseline de PROD no cargó" && [ "$MIEMBRO_PG" = "false" ] \
-      && ok "(c) sin la invariante el gate SIGUE en rojo, pero TARDE y anónimo (el baseline no carga) y el aplicador NO es miembro de 'postgres' superusuario: la contención es el WHERE NOT rolsuper; la invariante aporta el fallo temprano y nombrado" \
-      || { bad "(c) sin la invariante: rc=$RC, miembro de postgres='$MIEMBRO_PG' — no es lo que el texto del gate afirma"; echo "$OUT" | tail -6 | sed 's/^/      /'; }
+    [ "$RC" -ne 0 ] && echo "$OUT" | grep -q "el baseline de PROD no cargó" && echo "$OUT" | grep -q 'SQLSTATE:  *42501' && [ "$MIEMBRO_PG" = "false" ] \
+      && ok "(c) sin la invariante el gate SIGUE en rojo, pero TARDE y anónimo (el baseline muere con SQLSTATE 42501) y el aplicador NO es miembro de 'postgres' superusuario: la contención es el WHERE NOT rolsuper; la invariante aporta el fallo temprano y nombrado" \
+      || { bad "(c) sin la invariante: rc=$RC, miembro de postgres='$MIEMBRO_PG', ¿42501? — no es lo que el texto del gate afirma"; echo "$OUT" | tail -12 | sed 's/^/      /'; }
+    # La pista de ese 42501 no puede empujar a desactivar la contención.
+    echo "$OUT" | grep -q "PISTA 42501 AL CARGAR EL BASELINE" && echo "$OUT" | grep -q "NO se arregla con GATE_APPLY_AS_SUPERUSER=1" \
+      && ! echo "$OUT" | grep -qiE "corre con GATE_APPLY_AS_SUPERUSER|asumiendo por escrito" \
+      && ok "(c) la pista del 42501 apunta a la contención/invariante y NO sugiere GATE_APPLY_AS_SUPERUSER" \
+      || { bad "(c) la pista del 42501 falta o empuja a GATE_APPLY_AS_SUPERUSER"; echo "$OUT" | grep -A12 "PISTA 42501" | sed 's/^/      /'; }
   fi
 
   # (d) el peligro es real: miembro del superusuario de initdb, WITH SET FALSE.
@@ -1220,16 +1245,18 @@ must_fail_with "(e) rol con caracteres fuera de [A-Za-z0-9_] en el baseline => M
 #     efímero. Antes la derivación lo guardaba en mayúsculas, la invariante no
 #     lo veía, se precreaba un rol espurio "GATE_SUPER" y el gate moría DESPUÉS
 #     con un 42501 anónimo. Ahora muere por la invariante, nombrándolo.
-SU_MAYUS="$(printf '%s' "$SU_NAME" | tr '[:lower:]' '[:upper:]')"
 BASE_MAYUS="$TMP/baseline_for_role_mayusculas.sql"
 cp "$BASE_ADP" "$BASE_MAYUS"
 printf 'ALTER DEFAULT PRIVILEGES FOR ROLE %s IN SCHEMA public GRANT ALL ON TABLES TO anon;\n' "$SU_MAYUS" >> "$BASE_MAYUS"
 chmod 644 "$BASE_MAYUS"
+# Residuo cluster-wide de otra corrida: sin esto el caso fallaría SIEMPRE por un
+# rol que no creó esta corrida.
+[ "$SU_MAYUS" = "$SU_NAME" ] || $PSQL "${TPL//\{db\}/postgres}" -q -c "DROP ROLE IF EXISTS \"$SU_MAYUS\"" >/dev/null 2>&1
 R="$(mkrepo)"; T="$(newdb)"
 commit_mig "$R" "234f_tras_mayusculas.sql" "ALTER TABLE public.ventas ADD COLUMN mayus text;"
 OUT="$(run_gate "$R" "$T" "$BASE_MAYUS")"; RC=$?
-must_fail_with "(f) 'FOR ROLE $SU_MAYUS' sin comillas => MUERE por COLISIÓN nombrando '$SU_NAME'" \
-  "$RC" "$OUT" "COLISIÓN DE NOMBRES: el/los rol(es) '$SU_NAME'"
+must_fail_with "(f) 'FOR ROLE $SU_MAYUS' sin comillas => MUERE por COLISIÓN (mensaje de BASELINE) nombrando '$SU_NAME'" \
+  "$RC" "$OUT" "COLISIÓN DE NOMBRES (baseline): el baseline nombra al superusuario del destino: '$SU_NAME'"
 [ "$(TABLAS "$T")" = "0" ] && [ "$($PSQL "$T" -tAc "SELECT count(*) FROM pg_roles WHERE rolname = '$SU_MAYUS'" 2>/dev/null | tr -d ' ')" = "0" ] \
   && ok "(f) murió ANTES de cargar el baseline y sin precrear un rol espurio '$SU_MAYUS'" \
   || bad "(f) llegó a cargar el baseline o precreó el rol espurio '$SU_MAYUS'"
