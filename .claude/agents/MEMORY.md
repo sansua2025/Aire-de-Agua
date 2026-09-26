@@ -297,6 +297,10 @@ de 47 nombres pierde contra uno que lee la fuente de verdad; antes de construir,
 cablearle la entrega.** La lección de `$vars` sigue viva para las allowlists legítimas (`EXPECTED_ACTIVE`,
 `EXPECTED`), que codifican una DECISIÓN ("esto debe estar prendido") y no un espejo de un directorio.
 
+## La descripción del PR afirma algo que el artefacto no contiene (#186 citas 081/136, #193 bullet ausente)
+Antes de abrir/actualizar un PR: `grep` de CADA afirmación del cuerpo (y del commit message) contra el
+blob del head (`git show <head>:<path> | grep …`). Si no aparece, se añade al artefacto o se quita del cuerpo.
+
 (Nota de poda: la lección "check-docstring-rpc-loop falso positivo con decimales narrativos" ya está
 GRADUADA — `scripts/agent/check-docstring-rpc-loop.sh` exige operador `+`/`-`/`*` inmediato antes de contar
 un decimal como delta, ver AIR-257 en `MEMORY.md` raíz. No repetir el análisis aquí.)
@@ -337,19 +341,41 @@ no una secuencia cortada al final) — bajo `pipefail` esto mata el paso ANTES d
 seguridad posterior. Corolario: en una cadena de defensas, la red de seguridad va ANTES del punto que
 puede morir, no después. Checklist aparte para un job que gana `issues:write`: cero interpolación de
 expresiones dentro de `run:` (todo por `env:`), reporte por `--body-file` nunca por línea de comando,
-trigger `schedule`+`workflow_dispatch` (no `pull_request_target`) — y el enmascarado de secrets de
+trigger `schedule`+`workflow_dispatch` (no `pull_request_target`), checkout de la rama default, secrets
+del sensor AUSENTES del paso que escribe el issue — y el enmascarado de secrets de
 Actions NO cubre el CUERPO de un issue si un mensaje de error los imprime en texto libre.
-`activeVersion` puede ser `null` (un solo grafo, sin copia) — confirmar antes de reportar divergencia (AIR-140).
+Invariante a atacar en todo canal de aviso: "¿existe algún dato del reporte que impida que el aviso
+salga?" — incluido el ORDEN (comentar ANTES de publicar la huella de dedupe) y los pasos fail-open.
+`activeVersion` puede ser `null` (un solo grafo, sin copia) — confirmar antes de reportar divergencia o de
+darla por comprobada (AIR-140: con `null` la paridad es vacua, no "verde").
 
-## AIR-276 (PR #186) — el mecanismo ya está en `CLAUDE.md` §"Disciplina de cambios a PROD" (colisión
-de nombres, `gate_super`, invariante de colisión, 3 cuentas, 2 canarios, self-test 169 aserciones).
+## AIR-276 (PR #186) — metodología de revisión de gates
+El mecanismo ya está en `CLAUDE.md` §"Disciplina de cambios a PROD" (colisión de nombres, `gate_super`,
+invariante de colisión, 3 cuentas, 2 canarios, self-test 169 aserciones).
 NO reescribir ese análisis aquí. Lo que queda es la METODOLOGÍA de revisión — reutilizable en
 cualquier gate SQL/CI futuro, no solo en este:
 
 - **Cuando la MISMA corrección falla ≥3 veces por clases DISTINTAS, el arreglo no es el 4º parche —
-  es quitar la NECESIDAD de la transformación.** Aquí: borrar el `sed` de normalización en vez de
-  seguir persiguiendo sus falsos verdes. Señal de que hace falta: un residual que se sostiene con
-  aserciones cada vez más finas.
+  es quitar la NECESIDAD de la transformación.** Aquí: borrar el `sed` que descartaba las ADP en vez
+  de seguir persiguiendo sus falsos verdes. Señal de que hace falta: un residual que se sostiene con
+  aserciones cada vez más finas. OJO: el gate NO quedó sin `sed` (ver residual siguiente).
+- **RESIDUAL ABIERTO (no está en CLAUDE.md; arreglo en issue aparte):** `migration-gate.sh:691-692`
+  (en `822ae50`) SIGUE con un `sed` sobre el baseline (`CREATE SCHEMA`→`IF NOT EXISTS` y borrado de
+  `\restrict`) que reescribe DENTRO de literales de comilla simple multilínea
+  (SEC de #193, GNU sed 4.9: un `CHECK (… 'x⏎\restrict abc⏎y')`
+  pierde la línea interior; un `DEFAULT 'p⏎CREATE SCHEMA q'` gana `IF NOT EXISTS`), justo debajo de un
+  comentario que afirma "Sin `sed` … imposible POR CONSTRUCCIÓN". Un CHECK/DEFAULT así cambia en silencio.
+- **`schema.sql` es un INPUT NO VERIFICADO.** Ningún job hace checksum de su CONTENIDO ni lo compara con
+  PROD (`migration-baseline-freshness` solo mira `PROD_MIGRATIONS`): un PR que edite `schema.sql` cambia
+  el destino contra el que se valida. Toda transformación sobre él debe ser fail-closed por sí misma.
+- **Receta para atacar una normalización textual (`sed`/regex) sobre un artefacto no verificado,
+  cuando NO se puede quitar:** (i) segunda sentencia pegada en la misma línea (`.*` codicioso se la
+  lleva y el conteo la oculta); (ii) el patrón DENTRO de un cuerpo dollar-quoted o de un literal de
+  comilla simple multilínea; (iii) borrar una sentencia rompe la SEMÁNTICA, no la gramática — el resto
+  carga en verde; todo comentario/residual que PROMETE un modo de fallo ("⇒ ROJO") es load-bearing:
+  construirlo y ejecutarlo antes de aceptarlo; (iv) exigir aserción fail-closed de que TODAS las
+  apariciones tienen la forma tratable (p.ej. `grep -c PAT == grep -cE '^PAT [^;]*;$'` o `die`) ANTES
+  de transformar.
 - **Al aceptar "por qué una aserción es SUFICIENTE", enumerar el dominio del cuantificador.** "Todo
   cuerpo cierra con `$`" era cierto solo para cuerpos dollar-quoted; un literal de comilla simple
   MULTILÍNEA (que `pg_dump` emite en `CHECK`/`DEFAULT`/`VIEW`/`POLICY`) cierra con `'` y coló un falso
@@ -360,7 +386,8 @@ cualquier gate SQL/CI futuro, no solo en este:
   DOMINIO prueban esas aserciones (aquí, las 4 de una ronda solo cubrían cuerpos dollar-quoted; un
   `LANGUAGE … AS '...'` de comilla simple no tenía ningún caso).
 - **Un conteo "derivado del efecto real" puede seguir mintiendo si cuenta LÍNEAS que casan un patrón
-  y no SENTENCIAS** ("3 descartadas" cuando solo 1 era sentencia y 2 eran comentarios).
+  y no SENTENCIAS** ("3 descartadas" cuando solo 1 era sentencia y 2 eran comentarios). Derivarlo de la
+  diferencia real antes/después y contrastarlo por una segunda vía.
 - **Auditar las CITAS de ejemplo, no solo la lógica.** "la forma que usan X, Y" con X e Y
   mencionándolo solo en un comentario `--` (no en código) es una cita falsa; barato de comprobar
   (`grep -n -A2 patrón archivo` y mirar si la línea empieza por `--`) — apareció idéntica en un
@@ -383,7 +410,16 @@ cualquier gate SQL/CI futuro, no solo en este:
   `check-data-rules.sh` (juicio semántico, no gramática grep-eable); queda como checklist manual: todo
   mensaje que nombre una causa necesita un caso de self-test que la produzca por OTRA vía y verifique
   el TEXTO, no solo el código de salida.
-- **`GRANT <rol> A <miembro>` sobre una membresía que YA EXISTE es un no-op con NOTICE** — no cambia
+- **Una pista de diagnóstico es superficie de seguridad** (el reverso de la anterior: no exculpa, EMPUJA
+  a desactivar la defensa). Caso real en #186: la pista de carga del baseline en `migration-gate.sh`
+  sugería `GATE_APPLY_AS_SUPERUSER=1` ante CUALQUIER fallo. Regla: condicionarla al SQLSTATE concreto
+  (42501), remitir PRIMERO a la contención (invariante/cuentas) y nombrar un escape hatch solo para
+  NEGAR que sea remedio — nunca terminar una pista en "corre con <flag que desactiva la contención>".
+  Una pista es una rama del gate: su caso comprueba el texto Y la ausencia del texto vecino.
+- **Una defensa cuyo token se puede quitar sin que nada se ponga rojo necesita una aserción en caliente**,
+  mutada en DOS direcciones: token fuera ⇒ el gate muere; token + guardas fuera ⇒ el peligro se
+  materializa (prueba que las guardas vigilan algo real). `pg_has_role(…,'MEMBER')` es transitiva (medido).
+- **`GRANT <rol> TO <miembro>` sobre una membresía que YA EXISTE es un no-op con NOTICE** — no cambia
   la opción `SET`. Un self-test que muta permisos de rol para verificar una guarda debe revocar la
   membresía ANTES de mutar, o el caso sale verde sin haber probado nada (típico en un cluster
   compartido entre corridas). Corolario: reproducir herencia de ACL de un superusuario de arranque
@@ -408,4 +444,11 @@ las aserciones en BAD como síntoma engañoso) — usar un `/tmp/<dir>` propio d
 `postgres`, que es la colisión que existe para cazar). pgvector disponible; sin él, `EXTENSIONS=""`.
 Un self-test que muta un catálogo de roles en un cluster COMPARTIDO entre corridas necesita revocar
 membresías rancias al inicio Y limpiar en un `trap` — un residuo de la mutación anterior tumba casos
-sin relación (confirmado: 112/57 en la primera corrida por contaminación, 169/0 tras limpiar).
+sin relación (reviewer de #186, issuecomment-5848096774: 112/57 en la 1ª corrida por el cluster sucio de
+su propia mutación, 169/0 tras limpiar).
+Trampas del método de mutación: un gate copiado a `$TMP` sin `SQL_APPLY="$REAL_APPLY"` muere por el motivo
+equivocado y el caso "debe morir" sale ok; un stub de aplicador debe fingir también el canario COPY; un
+archivo no sirve de observable (38000 "ejecutado y falló al escribir" ≠ 42501 "denegado"); una tirada
+limpia no descarta flakes: correr ≥3; editar el self-test mientras corre en background rompe la corrida
+(bash lee el script por trozos); el hook `validate-sql.sh` bloquea comandos que MENCIONAN borrar bases,
+incluso en texto — usar nombres nuevos en vez de borrar.
