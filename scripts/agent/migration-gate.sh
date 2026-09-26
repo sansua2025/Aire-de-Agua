@@ -74,8 +74,8 @@
 # │ CONTROLES POSITIVOS: antes de aplicar nada, el gate comprueba EN           │
 # │ CALIENTE que el servidor rechaza el metacomando canario `\!` (42601,       │
 # │ canal (a)) y que le NIEGA al aplicador `COPY (SELECT 1) TO PROGRAM         │
-# │ 'true'` (42501, canal (b)). Si alguno pasa, muere. La contención no se     │
-# │ supone: se demuestra en cada corrida.                                      │
+# │ 'cat >/dev/null'` (42501, canal (b)). Si alguno pasa, muere. La           │
+# │ contención no se supone: se demuestra en cada corrida.                     │
 # └───────────────────────────────────────────────────────────────────────────┘
 #
 # ┌─ EL SUPERUSUARIO EFÍMERO NO SE LLAMA `postgres` — Y SE AFIRMA ────────────┐
@@ -599,9 +599,12 @@ case "$CANARY_RC" in
 esac
 
 # ── 4b. SEGUNDO CONTROL POSITIVO: el canal (b), COPY … TO PROGRAM ───────────
-# El SERVIDOR debe negarle al aplicador `COPY (SELECT 1) TO PROGRAM 'true'` con
+# El SERVIDOR debe negarle al aplicador `COPY (SELECT 1) TO PROGRAM 'cat >/dev/null'` con
 # SQLSTATE 42501 (insufficient_privilege). Solo 42501 cuenta: un rc=1 por otra
 # causa no demuestra la contención.
+# Por qué `cat >/dev/null` y no `true`: `true` sale sin leer stdin y, si se lo
+# PERMITEN, Postgres escribe en una tubería ya cerrada ⇒ EPIPE/XX000 o rc=0 según
+# una carrera con el hijo; `cat` drena stdin y la rama permitida es determinista.
 #
 # HISTORIA. Este canario existió, y en 02b546b se RETIRÓ por tautológico: en
 # aquel diseño vigilaba lo mismo que la guarda `WITH SET FALSE` (que el
@@ -616,7 +619,7 @@ esac
 # escrito y el canario, que ejecutaría `true`, no demostraría nada.
 if [ "$APPLY_AS_SUPERUSER" != "1" ]; then
   COPY_CANARY="$(mktemp)"; COPY_CANARY_LOG="$(mktemp)"; TMPFILES+=("$COPY_CANARY" "$COPY_CANARY_LOG")
-  printf "COPY (SELECT 1) TO PROGRAM 'true';\n" > "$COPY_CANARY"; chmod 644 "$COPY_CANARY" 2>/dev/null || true
+  printf "COPY (SELECT 1) TO PROGRAM 'cat >/dev/null';\n" > "$COPY_CANARY"; chmod 644 "$COPY_CANARY" 2>/dev/null || true
   apply_sql "$COPY_CANARY" >"$COPY_CANARY_LOG" 2>&1
   COPY_CANARY_RC=$?
   die_si_no_es_del_archivo "$COPY_CANARY_RC" "$COPY_CANARY_LOG" "ejecutar el canario de COPY … TO PROGRAM"
